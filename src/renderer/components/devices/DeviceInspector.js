@@ -30,7 +30,7 @@ const linkState = (device, status, liveLocked) => {
     if (device.stale) {
         return 'stale';
     }
-    if (liveLocked) {
+    if (liveLocked || (status && status.live)) {
         return 'live';
     }
     if (status) {
@@ -58,6 +58,7 @@ const DeviceInspector = ({
     proto,
     fps,
     buf,
+    park,
     wifiSsid,
     wifiPassword,
     networks,
@@ -86,6 +87,7 @@ const DeviceInspector = ({
     onProtoChange,
     onFpsChange,
     onBufChange,
+    onParkChange,
     onWifiSsidChange,
     onWifiPasswordChange,
     onWifiScan,
@@ -101,14 +103,18 @@ const DeviceInspector = ({
     const universes = (device.universes && device.universes.length)
         ? device.universes.join(', ')
         : String(device.universe ?? 0);
-    const idle = Boolean(status) && !statusError && !device.stale && !liveLocked;
+    const httpUp = Boolean(status) && !statusError && !device.stale && !liveLocked;
+    const live = liveLocked || Boolean(status && status.live);
+    const playIdle = httpUp && !live;
     const play = status && status.play ? status.play : {};
     const fileList = Array.isArray(files) ? files : [];
     const dirList = Array.isArray(dirs) ? dirs : [];
     const sdOk = Boolean(status && status.sd && status.sd.ok);
-    const disabled = busy || !idle;
+    const setupDisabled = busy || !httpUp;
+    const playDisabled = busy || !playIdle;
+    const identifyDisabled = identifying || setupDisabled || live;
     const fileSelected = playSrc === 'file' && Boolean(playPath);
-    const playReady = idle && sdOk && (
+    const playReady = playIdle && sdOk && (
         playSrc === 'root' ||
         (playSrc === 'folder' && playPath) ||
         fileSelected
@@ -131,7 +137,7 @@ const DeviceInspector = ({
             key: `${src}:${path}`,
             type: 'button',
             className: `kv-row text-sm ${on ? 'is-active' : ''}`,
-            disabled: disabled || !sdOk,
+            disabled: playDisabled || !sdOk,
             onClick: () => onSelectPlay(src, path)
         },
             React.createElement('span', {
@@ -155,19 +161,19 @@ const DeviceInspector = ({
                 React.createElement('input', {
                     className: 'field text-sm font-medium',
                     value: nodeName,
-                    disabled,
+                    disabled: setupDisabled,
                     onChange: (event) => onNameChange(event.target.value)
                 }),
                 React.createElement('button', {
                     type: 'button',
                     className: 'btn-quiet flex-none',
-                    disabled: disabled || !String(nodeName || '').trim(),
+                    disabled: setupDisabled || !String(nodeName || '').trim(),
                     onClick: onSaveName
                 }, 'Save'),
                 React.createElement('button', {
                     type: 'button',
                     className: 'btn-primary flex-none',
-                    disabled: identifying || disabled,
+                    disabled: identifyDisabled,
                     onClick: onIdentify
                 }, identifying ? 'Identifying…' : 'Identify')
             ),
@@ -178,6 +184,9 @@ const DeviceInspector = ({
             liveLocked && React.createElement('p', {
                 className: 'text-xs text-amber-500'
             }, 'Live Art-Net/sACN is present. HTTP is parked — stop the stream for ~2 s to use Playback and Setup.'),
+            live && !liveLocked && React.createElement('p', {
+                className: 'text-xs text-amber-500'
+            }, 'Live input — Playback is parked. Setup stays available.'),
             !liveLocked && statusError && React.createElement('div', {
                 className: 'text-sm text-red-500'
             }, statusError)
@@ -203,14 +212,17 @@ const DeviceInspector = ({
                 }, 'Shows'),
                 liveLocked && React.createElement('p', {
                     className: 'text-xs text-zinc-500'
-                }, 'Shows and output settings return when live input goes silent.'),
-                !idle && !liveLocked && React.createElement('p', {
+                }, 'Shows return when live input goes silent (or set Park portal while live to No).'),
+                live && !liveLocked && React.createElement('p', {
+                    className: 'text-xs text-zinc-500'
+                }, 'Playback stays parked while live input is present.'),
+                !httpUp && !liveLocked && React.createElement('p', {
                     className: 'text-xs text-zinc-500'
                 }, 'Idle HTTP is required to list and play files on the node.'),
-                idle && !sdOk && React.createElement('p', {
+                httpUp && !sdOk && React.createElement('p', {
                     className: 'text-sm text-red-500'
                 }, 'No SD card mounted.'),
-                idle && sdOk && React.createElement(React.Fragment, null,
+                httpUp && sdOk && React.createElement(React.Fragment, null,
                     React.createElement('div', {
                         className: 'flex flex-col gap-1'
                     },
@@ -230,7 +242,7 @@ const DeviceInspector = ({
                         React.createElement('button', {
                             type: 'button',
                             className: 'btn-quiet',
-                            disabled: disabled || fileList.length === 0,
+                            disabled: playDisabled || fileList.length === 0,
                             onClick: onPrev
                         }, 'Prev'),
                         React.createElement('button', {
@@ -242,25 +254,25 @@ const DeviceInspector = ({
                         React.createElement('button', {
                             type: 'button',
                             className: 'btn-quiet',
-                            disabled,
+                            disabled: playDisabled,
                             onClick: onStop
                         }, 'Stop'),
                         React.createElement('button', {
                             type: 'button',
                             className: 'btn-quiet',
-                            disabled: disabled || fileList.length === 0,
+                            disabled: playDisabled || fileList.length === 0,
                             onClick: onNext
                         }, 'Next'),
                         React.createElement('button', {
                             type: 'button',
                             className: 'btn-quiet',
-                            disabled: disabled || !fileSelected,
+                            disabled: playDisabled || !fileSelected,
                             onClick: onRenameShow
                         }, 'Rename'),
                         React.createElement('button', {
                             type: 'button',
                             className: 'btn-quiet',
-                            disabled: disabled || !fileSelected,
+                            disabled: playDisabled || !fileSelected,
                             onClick: onPullShow
                         }, 'Pull to library')
                     ),
@@ -270,20 +282,20 @@ const DeviceInspector = ({
                         React.createElement('input', {
                             className: 'field',
                             value: renameDraft,
-                            disabled,
+                            disabled: playDisabled,
                             autoFocus: true,
                             onChange: (event) => onRenameDraftChange(event.target.value)
                         }),
                         React.createElement('button', {
                             type: 'button',
                             className: 'btn-primary flex-none',
-                            disabled: disabled || !String(renameDraft || '').trim(),
+                            disabled: playDisabled || !String(renameDraft || '').trim(),
                             onClick: onRenameConfirm
                         }, 'Save name'),
                         React.createElement('button', {
                             type: 'button',
                             className: 'btn-quiet flex-none',
-                            disabled,
+                            disabled: playDisabled,
                             onClick: onRenameCancel
                         }, 'Cancel')
                     ),
@@ -291,7 +303,7 @@ const DeviceInspector = ({
                         React.createElement('select', {
                             className: 'field',
                             value: fileLoop,
-                            disabled,
+                            disabled: playDisabled,
                             onChange: (event) => onFileLoopChange(event.target.value)
                         },
                             React.createElement('option', { value: 'one' }, 'This file'),
@@ -303,7 +315,7 @@ const DeviceInspector = ({
                             React.createElement('select', {
                                 className: 'field',
                                 value: folderRep,
-                                disabled,
+                                disabled: playDisabled,
                                 onChange: (event) => onFolderRepChange(event.target.value)
                             },
                                 React.createElement('option', { value: 'forever' }, 'Forever'),
@@ -317,7 +329,7 @@ const DeviceInspector = ({
                                 min: 1,
                                 max: 99,
                                 value: folderN,
-                                disabled,
+                                disabled: playDisabled,
                                 onChange: (event) => onFolderNChange(event.target.value)
                             })
                         )
@@ -339,19 +351,19 @@ const DeviceInspector = ({
                     React.createElement('button', {
                         type: 'button',
                         className: 'btn-quiet',
-                        disabled,
+                        disabled: setupDisabled,
                         onClick: onWifiScan
                     }, scanning ? 'Scanning…' : 'Scan'),
                     React.createElement('button', {
                         type: 'button',
                         className: 'btn-primary',
-                        disabled: disabled || !String(wifiSsid || '').trim(),
+                        disabled: setupDisabled || !String(wifiSsid || '').trim(),
                         onClick: onWifiConnect
                     }, 'Connect'),
                     React.createElement('button', {
                         type: 'button',
                         className: 'btn-quiet',
-                        disabled,
+                        disabled: setupDisabled,
                         onClick: onWifiForget
                     }, 'Forget')
                 ),
@@ -366,7 +378,7 @@ const DeviceInspector = ({
                             key: net.ssid,
                             type: 'button',
                             className: `kv-row text-sm ${wifiSsid === net.ssid ? 'is-active' : ''}`,
-                            disabled,
+                            disabled: setupDisabled,
                             onClick: () => onWifiSsidChange(net.ssid)
                         },
                             React.createElement('span', {
@@ -381,7 +393,7 @@ const DeviceInspector = ({
                     React.createElement('input', {
                         className: 'field',
                         value: wifiSsid,
-                        disabled,
+                        disabled: setupDisabled,
                         autoComplete: 'off',
                         onChange: (event) => onWifiSsidChange(event.target.value)
                     })
@@ -391,7 +403,7 @@ const DeviceInspector = ({
                         className: 'field',
                         type: 'password',
                         value: wifiPassword,
-                        disabled,
+                        disabled: setupDisabled,
                         autoComplete: 'off',
                         onChange: (event) => onWifiPasswordChange(event.target.value)
                     })
@@ -416,7 +428,7 @@ const DeviceInspector = ({
                             min: 0,
                             max: 255,
                             value: brightness,
-                            disabled,
+                            disabled: setupDisabled,
                             onChange: (event) => onBrightnessChange(event.target.value)
                         }),
                         React.createElement('input', {
@@ -425,7 +437,7 @@ const DeviceInspector = ({
                             min: 0,
                             max: 255,
                             value: brightness,
-                            disabled,
+                            disabled: setupDisabled,
                             onChange: (event) => onBrightnessChange(event.target.value)
                         })
                     )
@@ -440,7 +452,7 @@ const DeviceInspector = ({
                         React.createElement('select', {
                             className: 'field',
                             value: proto,
-                            disabled,
+                            disabled: setupDisabled,
                             onChange: (event) => onProtoChange(event.target.value)
                         },
                             React.createElement('option', { value: 'auto' }, 'Auto'),
@@ -452,7 +464,7 @@ const DeviceInspector = ({
                         React.createElement('select', {
                             className: 'field',
                             value: String(fps),
-                            disabled,
+                            disabled: setupDisabled,
                             onChange: (event) => onFpsChange(event.target.value)
                         },
                             [20, 30, 40, 60].map((value) => React.createElement('option', {
@@ -465,7 +477,7 @@ const DeviceInspector = ({
                         React.createElement('select', {
                             className: 'field',
                             value: String(buf),
-                            disabled,
+                            disabled: setupDisabled,
                             onChange: (event) => onBufChange(event.target.value)
                         },
                             React.createElement('option', { value: '0' }, '0 latest'),
@@ -473,6 +485,17 @@ const DeviceInspector = ({
                             React.createElement('option', { value: '2' }, '2 frames'),
                             React.createElement('option', { value: '3' }, '3 frames')
                         )
+                    )
+                ),
+                React.createElement(Field, { label: 'Park portal while live' },
+                    React.createElement('select', {
+                        className: 'field',
+                        value: park,
+                        disabled: setupDisabled,
+                        onChange: (event) => onParkChange(event.target.value)
+                    },
+                        React.createElement('option', { value: 'yes' }, 'Yes'),
+                        React.createElement('option', { value: 'no' }, 'No')
                     )
                 )
             )

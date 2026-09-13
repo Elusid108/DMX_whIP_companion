@@ -44,6 +44,7 @@ const DevicesPanel = () => {
     const [proto, setProto] = useState('auto');
     const [fps, setFps] = useState(40);
     const [buf, setBuf] = useState(0);
+    const [park, setPark] = useState('yes');
     const [wifiSsid, setWifiSsid] = useState('');
     const [wifiPassword, setWifiPassword] = useState('');
     const [networks, setNetworks] = useState([]);
@@ -61,6 +62,7 @@ const DevicesPanel = () => {
     const protoRef = useRef(proto);
     const fpsRef = useRef(fps);
     const bufRef = useRef(buf);
+    const parkRef = useRef(park);
     const nameDirtyRef = useRef(false);
     const playDirtyRef = useRef(false);
     const briDirtyRef = useRef(false);
@@ -78,6 +80,7 @@ const DevicesPanel = () => {
     protoRef.current = proto;
     fpsRef.current = fps;
     bufRef.current = buf;
+    parkRef.current = park;
 
     useEffect(() => {
         const handleUpdate = (event, payload = {}) => {
@@ -122,6 +125,7 @@ const DevicesPanel = () => {
         setFolderRep('forever');
         setFolderN(1);
         setNodeName('');
+        setPark('yes');
         setLiveLocked(false);
         setRenaming(false);
         setRenameDraft('');
@@ -189,6 +193,9 @@ const DevicesPanel = () => {
             if (next.buf != null) {
                 setBuf(next.buf);
             }
+            if (next.park) {
+                setPark(next.park);
+            }
         }
         if (!wifiDirtyRef.current && (next.ssid || next.saved)) {
             setWifiSsid(next.ssid || next.saved || '');
@@ -224,9 +231,6 @@ const DevicesPanel = () => {
                     setStatusError('');
                 }
             }
-            // #region agent log
-            fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b892c6'},body:JSON.stringify({sessionId:'b892c6',runId:'post-fix',hypothesisId:'D',location:'DevicesPanel.js:status',message:'device status',data:{ok:Boolean(result&&result.success),err:result&&result.error,ip:selectedIp,stale:selectedStale,liveLocked:/live|busy|lighting/i.test((result&&result.error)||'')},timestamp:Date.now()})}).catch(()=>{});
-            // #endregion
         };
 
         load();
@@ -423,6 +427,10 @@ const DevicesPanel = () => {
             setBuf(patch.buf);
             bufRef.current = patch.buf;
         }
+        if (patch.park !== undefined) {
+            setPark(patch.park);
+            parkRef.current = patch.park;
+        }
         if (!selectedIpRef.current) {
             return;
         }
@@ -436,7 +444,8 @@ const DevicesPanel = () => {
                 ip,
                 proto: protoRef.current,
                 fps: Number(fpsRef.current),
-                buf: Number(bufRef.current)
+                buf: Number(bufRef.current),
+                park: parkRef.current
             });
             if (result && result.success) {
                 liveDirtyRef.current = false;
@@ -550,6 +559,7 @@ const DevicesPanel = () => {
                     proto,
                     fps,
                     buf,
+                    park,
                     wifiSsid,
                     wifiPassword,
                     networks,
@@ -581,6 +591,7 @@ const DevicesPanel = () => {
                     onProtoChange: (value) => scheduleLive({ proto: value }),
                     onFpsChange: (value) => scheduleLive({ fps: Number(value) }),
                     onBufChange: (value) => scheduleLive({ buf: Number(value) }),
+                    onParkChange: (value) => scheduleLive({ park: value }),
                     onWifiSsidChange: (value) => {
                         wifiDirtyRef.current = true;
                         setWifiSsid(value);

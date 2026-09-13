@@ -90,9 +90,6 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         for (const [id, node] of devices) {
             const age = now - node.lastSeen;
             if (age > DROP_MS) {
-                // #region agent log
-                fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b892c6'},body:JSON.stringify({sessionId:'b892c6',runId:'vanish',hypothesisId:'A',location:'network.js:drop',message:'drop device',data:{id,ip:node.ip,age,lastSeen:node.lastSeen},timestamp:now})}).catch(()=>{});
-                // #endregion
                 devices.delete(id);
                 continue;
             }
@@ -118,9 +115,6 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     };
 
     const clearDevices = () => {
-        // #region agent log
-        fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b892c6'},body:JSON.stringify({sessionId:'b892c6',runId:'vanish',hypothesisId:'C',location:'network.js:clearDevices',message:'clear devices',data:{count:devices.size,nic:selectedNic.ip},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         devices.clear();
         emitDevices();
     };
@@ -130,20 +124,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         if (!id) {
             return;
         }
-        const reason = whipRejectReason(reply);
-        const accepted = !reason;
-        // #region agent log
-        const now = Date.now();
-        if (!ingestPollReply._lastLog) {
-            ingestPollReply._lastLog = new Map();
-        }
-        const prev = ingestPollReply._lastLog.get(id) || 0;
-        if (now - prev > 2000) {
-            ingestPollReply._lastLog.set(id, now);
-            fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b892c6'},body:JSON.stringify({sessionId:'b892c6',runId:'post-fix',hypothesisId:'B',location:'network.js:ingestPollReply',message:'artpoll reply',data:{id,ip:reply.ip,sourceIp:reply.sourceIp,shortName:reply.shortName,accepted,reason,oem:reply.oem,bindIndex:reply.bindIndex,portType:reply.portType,style:reply.style,nodeReport:reply.nodeReport,known:devices.has(id)},timestamp:now})}).catch(()=>{});
-        }
-        // #endregion
-        if (!accepted) {
+        if (!isWhipPollReply(reply)) {
             return;
         }
         devices.set(id, {
@@ -190,9 +171,6 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
 
     const setupReceivers = async (interfaceIp) => {
         const generation = ++setupGeneration;
-        // #region agent log
-        fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b892c6'},body:JSON.stringify({sessionId:'b892c6',runId:'vanish',hypothesisId:'C',location:'network.js:setupReceivers',message:'setup receivers',data:{interfaceIp,generation},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         selectedNic = nicInfo(interfaceIp);
         stopPoll();
         clearDevices();
@@ -345,8 +323,8 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         return postForm(ip, '/brightness', { v });
     });
 
-    ipcMain.handle('device-set-live', async (event, { ip, proto, fps, buf } = {}) => {
-        return postForm(ip, '/live', { proto, fps, buf });
+    ipcMain.handle('device-set-live', async (event, { ip, proto, fps, buf, park } = {}) => {
+        return postForm(ip, '/live', { proto, fps, buf, park });
     });
 
     ipcMain.handle('device-wifi-scan', async (event, { ip } = {}) => {
