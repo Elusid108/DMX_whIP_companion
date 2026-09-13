@@ -2,7 +2,7 @@
 
 Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN).
 
-**Version:** 0.3.1
+**Version:** 0.3.3
 
 ## How to run
 
@@ -11,7 +11,9 @@ npm install
 npm start
 ```
 
-Or double-click `start.bat` (writes output to `debug.log`).
+Or double-click `start.bat` for the normal app window (no debug tools).
+
+Double-click `startdev.bat` to log output to `debug.log` and open DevTools.
 
 ## How we work
 

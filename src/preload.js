@@ -12,8 +12,6 @@ const SEND = new Set([
     'update-selected-universes',
     'start-recording',
     'stop-recording',
-    'start-test-sacn',
-    'stop-test-sacn',
     'toggle-playback',
     'stop-playback'
 ]);
@@ -26,8 +24,7 @@ const RECEIVE = new Set([
     'file-loaded',
     'playback-stats',
     'recording-stats-update',
-    'recording-error',
-    'test-sacn-stopped'
+    'recording-error'
 ]);
 
 contextBridge.exposeInMainWorld('dmx', {

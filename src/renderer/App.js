@@ -88,8 +88,6 @@ const App = () => {
                 // Recording Controls Row
                 React.createElement('div', { className: 'border-t pt-4' },
                     React.createElement(RecordingControls, {
-                        selectedNic,
-                        networkInterfaces,
                         selectedUniverses
                     }),
                     React.createElement(PlaybackControls, {

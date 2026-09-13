@@ -2,7 +2,7 @@ const React = require('react');
 const { useState, useEffect, useRef } = React;
 const ipcRenderer = require('../../ipc');
 
-const RecordingControls = ({ selectedUniverses, selectedNic }) => {
+const RecordingControls = ({ selectedUniverses }) => {
     const [isRecording, setIsRecording] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
@@ -12,7 +12,6 @@ const RecordingControls = ({ selectedUniverses, selectedNic }) => {
     const [frameCount, setFrameCount] = useState(0);
     const [recordingFps, setRecordingFps] = useState(0);
     const [droppedFrames, setDroppedFrames] = useState(0);
-    const [testSacnActive, setTestSacnActive] = useState(false);
     const recordingStartTime = useRef(null);
     const durationTimer = useRef(null);
 
@@ -48,10 +47,6 @@ const RecordingControls = ({ selectedUniverses, selectedNic }) => {
             setDroppedFrames(stats.droppedFrames || 0);
         };
 
-        const handleTestSacnStopped = () => {
-            setTestSacnActive(false);
-        };
-
         const handleRecordingError = (event, result = {}) => {
             setIsRecording(false);
             clearInterval(durationTimer.current);
@@ -59,12 +54,10 @@ const RecordingControls = ({ selectedUniverses, selectedNic }) => {
         };
 
         ipcRenderer.on('recording-stats-update', handleFrameRecorded);
-        ipcRenderer.on('test-sacn-stopped', handleTestSacnStopped);
         ipcRenderer.on('recording-error', handleRecordingError);
 
         return () => {
             ipcRenderer.removeListener('recording-stats-update', handleFrameRecorded);
-            ipcRenderer.removeListener('test-sacn-stopped', handleTestSacnStopped);
             ipcRenderer.removeListener('recording-error', handleRecordingError);
         };
     }, []);
@@ -162,19 +155,6 @@ const RecordingControls = ({ selectedUniverses, selectedNic }) => {
                 disabled: isRecording || isLoading,
                 style: { pointerEvents: isLoading ? 'none' : 'auto' }
             }, isLoading ? 'Loading...' : 'Load Recording'),
-
-            React.createElement('button', {
-                onClick: () => {
-                    if (testSacnActive) {
-                        ipcRenderer.send('stop-test-sacn');
-                    } else {
-                        ipcRenderer.send('start-test-sacn', { interfaceIp: selectedNic });
-                    }
-                    setTestSacnActive(!testSacnActive);
-                },
-                className: `px-4 py-2 rounded ${testSacnActive ? 'bg-red-500' : 'bg-green-500'} text-white`,
-                disabled: isRecording || isPlaying
-            }, testSacnActive ? 'Stop Test sACN' : 'Test sACN'),
 
             recordingFileName && React.createElement('span', {
                 className: 'text-sm text-gray-600'
