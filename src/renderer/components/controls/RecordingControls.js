@@ -2,24 +2,12 @@ const React = require('react');
 const { useState, useEffect, useRef } = React;
 const { ipcRenderer } = require('electron');
 
-// Simple debounce utility
-const debounce = (func, wait) => {
-    let timeout;
-    return (...args) => {
-        if (timeout) {
-            clearTimeout(timeout);
-        }
-        timeout = setTimeout(() => {
-            func.apply(null, args);
-            timeout = null;
-        }, wait);
-    };
-};
-
-const RecordingControls = ({ selectedUniverses, isPlaying, selectedNic }) => {
+const RecordingControls = ({ selectedUniverses, selectedNic }) => {
     const [isRecording, setIsRecording] = useState(false);
+    const [isPlaying, setIsPlaying] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
-    const loadClickTime = useRef(0);  // Track last click time
+    const [recordingPath, setRecordingPath] = useState(null);
+    const [loadError, setLoadError] = useState('');
     const [recordingDuration, setRecordingDuration] = useState(0);
     const [frameCount, setFrameCount] = useState(0);
     const [recordingFps, setRecordingFps] = useState(0);
@@ -29,19 +17,32 @@ const RecordingControls = ({ selectedUniverses, isPlaying, selectedNic }) => {
     const durationTimer = useRef(null);
 
     useEffect(() => {
-        const handleFileLoaded = () => {
+        const handleFileLoaded = (event, result = {}) => {
             setIsLoading(false);
+            if (result.success) {
+                setLoadError('');
+            } else if (result.error && result.error !== 'No file selected') {
+                setLoadError(result.error);
+            }
+        };
+
+        const handlePlaybackStats = (event, stats = {}) => {
+            setIsPlaying(Boolean(stats.isPlaying));
+            if (stats.isReset) {
+                setIsPlaying(false);
+            }
         };
 
         ipcRenderer.on('file-loaded', handleFileLoaded);
+        ipcRenderer.on('playback-stats', handlePlaybackStats);
         return () => {
             ipcRenderer.removeListener('file-loaded', handleFileLoaded);
+            ipcRenderer.removeListener('playback-stats', handlePlaybackStats);
         };
     }, []);
 
     useEffect(() => {
         const handleFrameRecorded = (event, stats = {}) => {
-            console.log('Recording stats update:', stats); // Debug log
             setFrameCount(stats.totalFrames || 0);
             setRecordingFps(stats.currentFps || 0);
             setDroppedFrames(stats.droppedFrames || 0);
@@ -51,12 +52,20 @@ const RecordingControls = ({ selectedUniverses, isPlaying, selectedNic }) => {
             setTestSacnActive(false);
         };
 
+        const handleRecordingError = (event, result = {}) => {
+            setIsRecording(false);
+            clearInterval(durationTimer.current);
+            setLoadError(result.error || 'Recording failed');
+        };
+
         ipcRenderer.on('recording-stats-update', handleFrameRecorded);
         ipcRenderer.on('test-sacn-stopped', handleTestSacnStopped);
+        ipcRenderer.on('recording-error', handleRecordingError);
 
         return () => {
             ipcRenderer.removeListener('recording-stats-update', handleFrameRecorded);
             ipcRenderer.removeListener('test-sacn-stopped', handleTestSacnStopped);
+            ipcRenderer.removeListener('recording-error', handleRecordingError);
         };
     }, []);
 
@@ -67,16 +76,42 @@ const RecordingControls = ({ selectedUniverses, isPlaying, selectedNic }) => {
         return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}:${milliseconds.toString().padStart(2, '0')}`;
     };
 
+    const recordingFileName = recordingPath
+        ? recordingPath.split(/[\\/]/).pop()
+        : '';
+
+    const handleNewFile = async () => {
+        if (isRecording) {
+            return;
+        }
+        try {
+            const result = await ipcRenderer.invoke('new-recording-file');
+            if (result && result.success) {
+                setRecordingPath(result.filePath);
+                setLoadError('');
+            } else if (result && result.error && result.error !== 'No file selected') {
+                setLoadError(result.error);
+            }
+        } catch (error) {
+            setLoadError(error.message);
+        }
+    };
+
     const handleStartRecording = () => {
+        if (!recordingPath) {
+            return;
+        }
         setIsRecording(true);
         recordingStartTime.current = Date.now();
+        setRecordingDuration(0);
         setFrameCount(0);
         setDroppedFrames(0);
-        
+        setLoadError('');
+
         durationTimer.current = setInterval(() => {
             setRecordingDuration(Date.now() - recordingStartTime.current);
         }, 10);
-        
+
         ipcRenderer.send('start-recording');
     };
 
@@ -88,41 +123,46 @@ const RecordingControls = ({ selectedUniverses, isPlaying, selectedNic }) => {
 
     const handleLoadFile = async () => {
         if (isLoading) return;
-        
+
         try {
             setIsLoading(true);
-            console.log('Load file clicked'); // Debug
-            await ipcRenderer.invoke('load-recording');
+            setLoadError('');
+            const result = await ipcRenderer.invoke('load-recording');
+            if (result && !result.success && result.error && result.error !== 'No file selected') {
+                setLoadError(result.error);
+            }
         } catch (error) {
-            console.error('Error loading file:', error);
+            setLoadError(error.message);
         } finally {
             setIsLoading(false);
         }
     };
 
-    return React.createElement('div', { 
+    return React.createElement('div', {
         className: 'flex flex-col gap-4'
     },
-        // Main controls row
-        React.createElement('div', { 
-            className: 'flex items-center gap-4'
+        React.createElement('div', {
+            className: 'flex items-center gap-4 flex-wrap'
         },
-            // Record button
             React.createElement('button', {
+                onClick: handleNewFile,
+                className: 'px-4 py-2 rounded bg-gray-700 text-white',
+                disabled: isRecording || isPlaying
+            }, 'New File'),
+
+            recordingPath && React.createElement('button', {
                 onClick: isRecording ? handleStopRecording : handleStartRecording,
                 className: `px-4 py-2 rounded ${isRecording ? 'bg-red-500' : 'bg-green-500'} text-white`,
                 disabled: isPlaying || (!isRecording && (!selectedUniverses || selectedUniverses.size === 0))
             }, isRecording ? 'Stop Recording' : 'Start Recording Selected'),
 
-            // Load file button
             React.createElement('button', {
                 onClick: handleLoadFile,
                 className: `px-4 py-2 rounded bg-blue-500 text-white ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`,
                 disabled: isRecording || isLoading,
-                style: { pointerEvents: isLoading ? 'none' : 'auto' }  // Additional click prevention
+                style: { pointerEvents: isLoading ? 'none' : 'auto' }
             }, isLoading ? 'Loading...' : 'Load Recording'),
 
-            // Test sACN button
             React.createElement('button', {
                 onClick: () => {
                     if (testSacnActive) {
@@ -134,20 +174,27 @@ const RecordingControls = ({ selectedUniverses, isPlaying, selectedNic }) => {
                 },
                 className: `px-4 py-2 rounded ${testSacnActive ? 'bg-red-500' : 'bg-green-500'} text-white`,
                 disabled: isRecording || isPlaying
-            }, testSacnActive ? 'Stop Test sACN' : 'Test sACN')
+            }, testSacnActive ? 'Stop Test sACN' : 'Test sACN'),
+
+            recordingFileName && React.createElement('span', {
+                className: 'text-sm text-gray-600'
+            }, `File: ${recordingFileName}`)
         ),
 
-        // Recording stats row
-        isRecording && React.createElement('div', { 
+        loadError && React.createElement('div', {
+            className: 'text-sm text-red-600'
+        }, loadError),
+
+        isRecording && React.createElement('div', {
             className: 'flex gap-4'
         },
-            React.createElement('span', { 
+            React.createElement('span', {
                 className: 'text-sm'
             }, `Duration: ${formatDuration(recordingDuration)}`),
-            React.createElement('span', { 
+            React.createElement('span', {
                 className: 'text-sm'
             }, `FPS: ${recordingFps}`),
-            React.createElement('span', { 
+            React.createElement('span', {
                 className: 'text-sm'
             }, `Frames: ${frameCount}`),
             React.createElement('span', {

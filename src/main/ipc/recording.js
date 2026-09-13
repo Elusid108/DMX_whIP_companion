@@ -1,166 +1,218 @@
-const { ipcMain } = require('electron');
+const { ipcMain, dialog, app } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { dialog, app } = require('electron');
+const {
+    CHUNK_TARGET,
+    createHeader,
+    encodeFrame
+} = require('../../services/shared/dmxRecording');
+
+const sendSafe = (mainWindow, channel, payload) => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+        return;
+    }
+    mainWindow.webContents.send(channel, payload);
+};
+
+const findNextScenePath = () => {
+    let sceneNum = 1;
+    while (true) {
+        const testPath = path.join(app.getPath('documents'), `scene_${sceneNum}.dmx`);
+        if (!fs.existsSync(testPath)) {
+            return testPath;
+        }
+        sceneNum += 1;
+    }
+};
 
 function setupRecordingHandlers(mainWindow) {
     let isRecording = false;
-    let recordingBuffer = [];
+    let recordingPath = null;
+    let fd = null;
+    let frameCount = 0;
     let recordingStartTime = null;
-    let lastFrameTime = null;
+    let pending = [];
+    let pendingBytes = 0;
+    let lastStatsSent = 0;
+    let fpsTimes = [];
     let droppedFrames = 0;
+    let lastFrameTime = null;
 
-    // Enhanced frame tracking system
-    const frameTracker = {
-        frames: [],
-        lastCalculation: 0,
-        currentFps: 0,
-        maxFps: 0,
-        minInterval: 1000 / 200, // Support up to 200 FPS
-        calculationInterval: 50,
-        intervals: [],
-        maxIntervalSamples: 50,
-
-        addFrame(timestamp) {
-            const now = timestamp || Date.now();
-            
-            // Track frame intervals for adaptive timing
-            if (lastFrameTime) {
-                const interval = now - lastFrameTime;
-                this.intervals.push(interval);
-                if (this.intervals.length > this.maxIntervalSamples) {
-                    this.intervals.shift();
-                }
-                
-                // Calculate average interval
-                const avgInterval = this.intervals.reduce((a, b) => a + b, 0) / this.intervals.length;
-                
-                // Only count dropped frames if we have enough samples
-                if (this.intervals.length >= 10 && interval > avgInterval * 2) {
-                    const expectedFrames = Math.round(interval / avgInterval);
-                    droppedFrames += expectedFrames - 1;
-                    console.log('Dropped frames detected:', {
-                        interval,
-                        avgInterval,
-                        expectedFrames: expectedFrames - 1
-                    });
-                }
-            }
-            lastFrameTime = now;
-            
-            // Track frames for FPS calculation
-            this.frames.push(now);
-            const oneSecondAgo = now - 1000;
-            this.frames = this.frames.filter(time => time > oneSecondAgo);
-            
-            // Update FPS calculations
-            if (now - this.lastCalculation >= this.calculationInterval) {
-                const instantFps = this.frames.length;
-                this.currentFps = instantFps;
-                this.maxFps = Math.max(this.maxFps, instantFps);
-                this.lastCalculation = now;
-                
-                // Debug logging
-                console.log('Frame stats:', {
-                    currentFps: this.currentFps,
-                    maxFps: this.maxFps,
-                    droppedFrames,
-                    bufferSize: recordingBuffer.length
-                });
-            }
-            
-            return this.currentFps;
-        },
-
-        reset() {
-            console.log('Resetting frame tracker');
-            this.frames = [];
-            this.intervals = [];
-            this.lastCalculation = 0;
-            this.currentFps = 0;
-            this.maxFps = 0;
-            lastFrameTime = null;
-            droppedFrames = 0;
+    const closeFd = () => {
+        if (fd == null) {
+            return;
         }
+        try {
+            fs.closeSync(fd);
+        } catch (err) {
+            console.error('Error closing recording file:', err);
+        }
+        fd = null;
     };
 
-    ipcMain.on('start-recording', () => {
-        console.log('Starting recording...');
-        isRecording = true;
-        recordingStartTime = Date.now();
-        recordingBuffer = [];
-        frameTracker.reset();
-    });
+    const writeFrameCount = () => {
+        if (fd == null) {
+            return;
+        }
+        const countBuf = Buffer.alloc(4);
+        countBuf.writeUInt32LE(frameCount >>> 0);
+        fs.writeSync(fd, countBuf, 0, 4, 6);
+    };
 
-    ipcMain.on('stop-recording', async () => {
-        console.log('Stopping recording...');
-        if (!isRecording) return;
-        
-        isRecording = false;
-        
-        const findNextSceneNumber = () => {
-            let sceneNum = 1;
-            while (true) {
-                const testPath = path.join(app.getPath('documents'), `scene_${sceneNum}.dmx`);
-                if (!fs.existsSync(testPath)) {
-                    return sceneNum;
-                }
-                sceneNum++;
-            }
-        };
+    const flushChunk = () => {
+        if (fd == null || pendingBytes === 0) {
+            return;
+        }
+        fs.writeSync(fd, Buffer.concat(pending, pendingBytes));
+        pending = [];
+        pendingBytes = 0;
+        writeFrameCount();
+    };
+
+    const resetSession = () => {
+        pending = [];
+        pendingBytes = 0;
+        frameCount = 0;
+        recordingStartTime = null;
+        lastStatsSent = 0;
+        fpsTimes = [];
+        droppedFrames = 0;
+        lastFrameTime = null;
+    };
+
+    const sendStats = (force = false) => {
+        const now = Date.now();
+        if (!force && now - lastStatsSent < 100) {
+            return;
+        }
+        lastStatsSent = now;
+        const cutoff = now - 1000;
+        fpsTimes = fpsTimes.filter((time) => time > cutoff);
+        sendSafe(mainWindow, 'recording-stats-update', {
+            currentFps: fpsTimes.length,
+            totalFrames: frameCount,
+            droppedFrames
+        });
+    };
+
+    const createRecordingFile = (filePath) => {
+        fs.writeFileSync(filePath, createHeader(0));
+        recordingPath = filePath;
+        return filePath;
+    };
+
+    ipcMain.handle('new-recording-file', async () => {
+        if (isRecording) {
+            return { success: false, error: 'Stop recording before creating a new file' };
+        }
 
         try {
-            const nextScene = findNextSceneNumber();
             const { filePath, canceled } = await dialog.showSaveDialog({
-                title: 'Save Recording',
-                defaultPath: path.join(app.getPath('documents'), `scene_${nextScene}.dmx`),
+                title: 'New Recording',
+                defaultPath: findNextScenePath(),
                 filters: [{ name: 'DMX Recordings', extensions: ['dmx'] }]
             });
 
-            if (!canceled && filePath) {
-                console.log('Saving recording to:', filePath);
-                console.log('Frame count:', recordingBuffer.length);
-                
-                const header = Buffer.from('DMXREC');
-                const countBuffer = Buffer.alloc(4);
-                countBuffer.writeUInt32LE(recordingBuffer.length);
-                
-                fs.writeFileSync(filePath, header);
-                fs.appendFileSync(filePath, countBuffer);
-                
-                recordingBuffer.forEach((frame, index) => {
-                    const frameBuffer = Buffer.alloc(4 + 4 + 2 + 512);
-                    frameBuffer.writeUInt32LE(Math.min(frame.timestamp, 4294967295), 0);
-                    frameBuffer.writeUInt32LE(frame.universe, 4);
-                    frameBuffer.writeUInt16LE(frame.protocol === 'artnet' ? 0 : 1, 8);
-                    Buffer.from(frame.data).copy(frameBuffer, 10);
-                    fs.appendFileSync(filePath, frameBuffer);
-                });
-
-                console.log('Recording saved successfully');
-                mainWindow.webContents.send('recording-saved', filePath);
+            if (canceled || !filePath) {
+                return { success: false, error: 'No file selected' };
             }
+
+            createRecordingFile(filePath);
+            return { success: true, filePath };
         } catch (error) {
-            console.error('Error saving recording:', error);
+            console.error('Error creating recording file:', error);
+            return { success: false, error: error.message };
         }
-        
-        recordingBuffer = [];
+    });
+
+    ipcMain.on('start-recording', () => {
+        if (isRecording) {
+            return;
+        }
+        if (!recordingPath) {
+            sendSafe(mainWindow, 'recording-error', { error: 'Create a recording file first' });
+            return;
+        }
+
+        try {
+            closeFd();
+            resetSession();
+            fd = fs.openSync(recordingPath, 'w');
+            fs.writeSync(fd, createHeader(0));
+            isRecording = true;
+            recordingStartTime = Date.now();
+            sendStats(true);
+        } catch (error) {
+            closeFd();
+            isRecording = false;
+            console.error('Error starting recording:', error);
+            sendSafe(mainWindow, 'recording-error', { error: error.message });
+        }
+    });
+
+    ipcMain.on('stop-recording', () => {
+        if (!isRecording) {
+            return;
+        }
+
+        isRecording = false;
+        try {
+            flushChunk();
+            writeFrameCount();
+        } catch (error) {
+            console.error('Error finalizing recording:', error);
+        }
+        closeFd();
+        sendStats(true);
+        sendSafe(mainWindow, 'recording-saved', {
+            filePath: recordingPath,
+            totalFrames: frameCount
+        });
     });
 
     return {
         isRecording: () => isRecording,
         addFrame: (frame) => {
-            if (isRecording) {
-                const timestamp = recordingBuffer.length === 0 ? 0 : Date.now() - recordingStartTime;
-                recordingBuffer.push({...frame, timestamp});
-                const currentFps = frameTracker.addFrame(Date.now());
-                mainWindow.webContents.send('recording-stats-update', {
-                    currentFps,
-                    totalFrames: recordingBuffer.length,
-                    droppedFrames,
-                    maxFps: frameTracker.maxFps
-                });
+            if (!isRecording || fd == null) {
+                return;
             }
+
+            const now = Date.now();
+            const timestamp = frameCount === 0 ? 0 : now - recordingStartTime;
+            const encoded = encodeFrame({
+                timestamp,
+                universe: frame.universe,
+                protocol: frame.protocol,
+                data: frame.data
+            });
+
+            pending.push(encoded);
+            pendingBytes += encoded.length;
+            frameCount += 1;
+
+            if (lastFrameTime && now - lastFrameTime > 100) {
+                droppedFrames += 1;
+            }
+            lastFrameTime = now;
+            fpsTimes.push(now);
+
+            if (pendingBytes >= CHUNK_TARGET) {
+                flushChunk();
+            }
+
+            sendStats(false);
+        },
+        close: () => {
+            if (isRecording) {
+                isRecording = false;
+                try {
+                    flushChunk();
+                    writeFrameCount();
+                } catch (error) {
+                    console.error('Error closing recording:', error);
+                }
+            }
+            closeFd();
         }
     };
 }

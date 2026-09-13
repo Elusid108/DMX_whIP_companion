@@ -1,20 +1,20 @@
 const { ipcMain } = require('electron');
 const ArtNetReceiver = require('../../services/artnet/receiver');
 const SacnReceiver = require('../../services/sacn/receiver');
-const SacnSender = require('../../services/sacn/sender');
+const { SacnOutput } = require('../../services/sacn/output');
 const { getNetworkInterfaces } = require('../../services/shared/networkUtils');
 const UniverseMonitor = require('../monitor/universeMonitor');
 
 let artnetReceiver = null;
 let sacnReceiver = null;
-let testSacnSender = null;
+let testSacnOutput = null;
 let testSendInterval = null;
 let testDiscoveryInterval = null;
 let testSacnUniverses = [];
 let selectedUniverses = new Set();
 let setupGeneration = 0;
 
-function setupNetworkHandlers(mainWindow) {
+function setupNetworkHandlers(mainWindow, recordingHandler) {
     const monitor = new UniverseMonitor();
 
     const sendToRenderer = (channel, payload) => {
@@ -64,6 +64,20 @@ function setupNetworkHandlers(mainWindow) {
             artnetReceiver = nextArtnet;
             sacnReceiver = nextSacn;
 
+            const maybeRecord = (protocol, universe, dmxData) => {
+                if (!recordingHandler || !recordingHandler.isRecording()) {
+                    return;
+                }
+                if (!selectedUniverses.has(`${protocol}-${universe}`)) {
+                    return;
+                }
+                recordingHandler.addFrame({
+                    protocol,
+                    universe,
+                    data: dmxData
+                });
+            };
+
             artnetReceiver.onDmxData('main', (data) => {
                 monitor.ingest({
                     protocol: 'artnet',
@@ -71,6 +85,7 @@ function setupNetworkHandlers(mainWindow) {
                     sourceIp: data.sourceIp,
                     dmxData: data.dmxData
                 });
+                maybeRecord('artnet', data.universe, data.dmxData);
             });
 
             sacnReceiver.onDmxData('main', (data) => {
@@ -81,6 +96,7 @@ function setupNetworkHandlers(mainWindow) {
                     sourceName: data.sourceName,
                     dmxData: data.dmxData
                 });
+                maybeRecord('sacn', data.universe, data.dmxData);
             });
         } catch (error) {
             nextArtnet.stop();
@@ -109,28 +125,31 @@ function setupNetworkHandlers(mainWindow) {
 
         try {
             clearTestSacnTimers();
-            if (testSacnSender) {
-                testSacnSender.stop();
-                testSacnSender = null;
+            if (testSacnOutput) {
+                testSacnOutput.close();
+                testSacnOutput = null;
             }
 
-            const sender = new SacnSender({
+            const output = new SacnOutput({
                 sourceName: 'Test sACN Sender',
+                iface: interfaceIp,
                 priority: 100
             });
-            await sender.start(interfaceIp);
+            await output.start();
 
-            testSacnSender = sender;
+            testSacnOutput = output;
             testSacnUniverses = [];
             for (let universe = 1; universe <= UNIVERSES_NEEDED; universe++) {
                 testSacnUniverses.push(universe);
+                output.ensureSender(universe);
             }
+            await output.ready();
 
             const sendDiscovery = () => {
-                if (!testSacnSender) {
+                if (!testSacnOutput) {
                     return;
                 }
-                testSacnSender.sendDiscovery(testSacnUniverses).catch((error) => {
+                testSacnOutput.sendDiscovery(testSacnUniverses).catch((error) => {
                     console.error('Error sending sACN universe discovery:', error);
                 });
             };
@@ -140,7 +159,7 @@ function setupNetworkHandlers(mainWindow) {
 
             testSendInterval = setInterval(() => {
                 try {
-                    if (!testSacnSender) {
+                    if (!testSacnOutput) {
                         return;
                     }
                     for (const universe of testSacnUniverses) {
@@ -158,7 +177,7 @@ function setupNetworkHandlers(mainWindow) {
                             channelData[baseChannel + 2] = INTENSITY;
                         }
 
-                        testSacnSender.send(universe, channelData);
+                        testSacnOutput.send(universe, channelData);
                     }
                 } catch (error) {
                     console.error('Error sending test sACN data:', error);
@@ -167,9 +186,9 @@ function setupNetworkHandlers(mainWindow) {
         } catch (error) {
             console.error('Error initializing test sACN:', error);
             clearTestSacnTimers();
-            if (testSacnSender) {
-                testSacnSender.stop();
-                testSacnSender = null;
+            if (testSacnOutput) {
+                testSacnOutput.close();
+                testSacnOutput = null;
             }
         }
     };
@@ -177,20 +196,18 @@ function setupNetworkHandlers(mainWindow) {
     const stopTestSacn = async () => {
         clearTestSacnTimers();
 
-        if (testSacnSender) {
+        if (testSacnOutput) {
             try {
                 const zeroData = new Uint8Array(512).fill(0);
                 for (const universe of testSacnUniverses) {
-                    for (let i = 0; i < 3; i++) {
-                        await testSacnSender.send(universe, zeroData, { priority: 0 });
-                    }
+                    testSacnOutput.send(universe, zeroData, { priority: 0 });
                 }
-                await testSacnSender.sendDiscovery([]);
+                await testSacnOutput.sendDiscovery([]);
             } catch (error) {
                 console.error('Error closing test sACN sender:', error);
             }
-            testSacnSender.stop();
-            testSacnSender = null;
+            testSacnOutput.close();
+            testSacnOutput = null;
             testSacnUniverses = [];
         }
 
@@ -227,9 +244,9 @@ function setupNetworkHandlers(mainWindow) {
         if (artnetReceiver) artnetReceiver.stop();
         if (sacnReceiver) sacnReceiver.stop();
         clearTestSacnTimers();
-        if (testSacnSender) {
-            testSacnSender.stop();
-            testSacnSender = null;
+        if (testSacnOutput) {
+            testSacnOutput.close();
+            testSacnOutput = null;
         }
     };
 }

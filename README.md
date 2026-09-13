@@ -2,7 +2,7 @@
 
 Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN).
 
-**Version:** 0.2.0
+**Version:** 0.3.0
 
 ## How to run
 
@@ -25,7 +25,7 @@ That means: plan only the first `###` section that still has unchecked items. Do
 
 ## Current state
 
-The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recording UI exists but frames are never stored, so saved `.dmx` files are empty. Playback can crash on those files, and Stop has no main-process handler. Treat this as a prototype restart, not a shipping 1.0.
+The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks after New File; playback is clock-based with a working Stop control and legal sACN via the `sacn` package. Treat this as a prototype restart, not a shipping 1.0.
 
 ---
 
@@ -49,14 +49,14 @@ The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, 
 
 ### Phase B — Record and play
 
-- [ ] Wire receiver callbacks to `recordingHandler.addFrame()` in the main process
-- [ ] Send selected universes from the renderer to main and record only those
-- [ ] Create the `.dmx` file before recording starts (“New File”); hide Start Recording until a file exists
-- [ ] Stream recording to disk in chunks instead of holding the whole clip in RAM and `appendFileSync` per frame
-- [ ] One `load-recording` API; reject or explain empty/invalid files instead of crashing
-- [ ] Implement `stop-playback` in the main process
-- [ ] Clock-based playback (start time + elapsed), not chained `setTimeout` deltas with `await` on every UDP send
-- [ ] Send valid sACN (use the existing `sacn` package) so playback and the test sender are legal E1.31
+- [x] Wire receiver callbacks to `recordingHandler.addFrame()` in the main process
+- [x] Send selected universes from the renderer to main and record only those
+- [x] Create the `.dmx` file before recording starts (“New File”); hide Start Recording until a file exists
+- [x] Stream recording to disk in chunks instead of holding the whole clip in RAM and `appendFileSync` per frame
+- [x] One `load-recording` API; reject or explain empty/invalid files instead of crashing
+- [x] Implement `stop-playback` in the main process
+- [x] Clock-based playback (start time + elapsed), not chained `setTimeout` deltas with `await` on every UDP send
+- [x] Send valid sACN (use the existing `sacn` package) so playback and the test sender are legal E1.31
 
 ### Phase C — Project hygiene
 

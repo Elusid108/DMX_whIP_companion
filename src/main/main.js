@@ -31,12 +31,13 @@ function createWindow() {
     }
 
     // Set up IPC handlers
-    const cleanupNetwork = setupNetworkHandlers(mainWindow);
     const recordingHandler = setupRecordingHandlers(mainWindow);
+    const cleanupNetwork = setupNetworkHandlers(mainWindow, recordingHandler);
     setupPlaybackHandlers(mainWindow);
 
     mainWindow.on('closed', () => {
         if (cleanupNetwork) cleanupNetwork();
+        if (recordingHandler && recordingHandler.close) recordingHandler.close();
         mainWindow = null;
     });
 }

@@ -1,6 +1,6 @@
 {
   "name": "dmx-monitor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DMX protocol monitor for Art-Net and sACN",
   "main": "src/main/main.js",
   "scripts": {

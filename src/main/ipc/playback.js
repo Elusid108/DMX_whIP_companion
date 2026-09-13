@@ -1,203 +1,218 @@
 const { ipcMain, dialog } = require('electron');
 const fs = require('fs');
 const ArtNetSender = require('../../services/artnet/sender');
-const SacnSender = require('../../services/sacn/sender');
-
-let playbackData = null;
-let isPlaying = false;
-let isPaused = false;
-let currentPlaybackFrame = 0;
-let pausedFrame = null;
-let playbackStartTime = null;
-let artnetSender = null;
-let sacnSender = null;
-let pauseInterval = null;
+const { SacnOutput } = require('../../services/sacn/output');
+const { parseRecording } = require('../../services/shared/dmxRecording');
 
 function setupPlaybackHandlers(mainWindow) {
+    let playbackData = null;
+    let isPlaying = false;
+    let isPaused = false;
+    let currentPlaybackFrame = 0;
+    let playbackOrigin = 0;
+    let pausedElapsed = 0;
+    let lastSentFrame = null;
+    let playTimeout = null;
+    let pauseInterval = null;
+    let discoveryInterval = null;
+    let artnetSender = null;
+    let sacnOutput = null;
+    let loopEnabled = false;
+    let activeNetwork = '0.0.0.0';
+    let lastStatsSent = 0;
+    let framesSentWindow = [];
+
+    const sendSafe = (channel, payload) => {
+        if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+            return;
+        }
+        mainWindow.webContents.send(channel, payload);
+    };
+
+    const sacnUniversesInClip = () => {
+        const universes = new Set();
+        if (!playbackData) {
+            return [];
+        }
+        for (const frame of playbackData) {
+            if (frame.protocol === 'sacn') {
+                universes.add(frame.universe);
+            }
+        }
+        return [...universes];
+    };
+
+    const cleanupSenders = () => {
+        if (discoveryInterval) {
+            clearInterval(discoveryInterval);
+            discoveryInterval = null;
+        }
+        if (artnetSender) {
+            artnetSender.stop();
+            artnetSender = null;
+        }
+        if (sacnOutput) {
+            sacnOutput.close();
+            sacnOutput = null;
+        }
+    };
+
+    const emitStats = (extra = {}) => {
+        const now = Date.now();
+        const cutoff = now - 1000;
+        framesSentWindow = framesSentWindow.filter((time) => time > cutoff);
+        const lastTimestamp = lastSentFrame ? lastSentFrame.timestamp : 0;
+        sendSafe('playback-stats', {
+            currentFrame: currentPlaybackFrame,
+            totalFrames: playbackData ? playbackData.length : 0,
+            clipTime: lastTimestamp,
+            totalPlayTime: isPlaying ? now - playbackOrigin : pausedElapsed,
+            fps: framesSentWindow.length,
+            isPlaying,
+            isPaused,
+            loop: loopEnabled,
+            ...extra
+        });
+    };
+
+    const sendDiscovery = () => {
+        if (!sacnOutput) {
+            return;
+        }
+        const universes = sacnUniversesInClip();
+        if (universes.length === 0) {
+            return;
+        }
+        sacnOutput.sendDiscovery(universes).catch((err) => {
+            console.error('Playback discovery error:', err);
+        });
+    };
+
     const initializeSenders = async (playbackNetwork) => {
+        cleanupSenders();
+        activeNetwork = playbackNetwork || '0.0.0.0';
+
         artnetSender = new ArtNetSender();
-        sacnSender = new SacnSender({ sourceName: 'DMX Monitor Playback' });
-        
-        await artnetSender.start(playbackNetwork);
-        await sacnSender.start(playbackNetwork);
-    };
+        await artnetSender.start(activeNetwork);
 
-    const cleanupSenders = async () => {
-        if (artnetSender) artnetSender.stop();
-        if (sacnSender) sacnSender.stop();
-        artnetSender = null;
-        sacnSender = null;
-    };
-
-    const handlePlayback = async (frames, loop = false, playbackNetwork, startFrame = 0) => {
-        await initializeSenders(playbackNetwork);
-        let lastFrameTime = startFrame > 0 ? frames[startFrame].timestamp : 0;
-        currentPlaybackFrame = startFrame;
-        playbackStartTime = Date.now() - (startFrame > 0 ? frames[startFrame].timestamp : 0);
-
-        const playNextFrame = async () => {
-            if (!isPlaying) return;
-
-            if (currentPlaybackFrame >= frames.length) {
-                if (loop) {
-                    currentPlaybackFrame = 0;
-                    lastFrameTime = 0;
-                    playbackStartTime = Date.now();
-                } else {
-                    isPlaying = false;
-                    await cleanupSenders();
-                    mainWindow.webContents.send('playback-stats', {
-                        currentFrame: frames.length,
-                        totalFrames: frames.length,
-                        clipTime: frames[frames.length - 1].timestamp,
-                        totalPlayTime: Date.now() - playbackStartTime,
-                        fps: 0,
-                        isPlaying: false,
-                        loop: false
-                    });
-                    return;
-                }
+        const universes = sacnUniversesInClip();
+        if (universes.length > 0) {
+            sacnOutput = new SacnOutput({
+                sourceName: 'DMX whIP Playback',
+                iface: activeNetwork
+            });
+            await sacnOutput.start();
+            for (const universe of universes) {
+                sacnOutput.ensureSender(universe);
             }
-
-            const frame = frames[currentPlaybackFrame];
-            const elapsedTime = Date.now() - playbackStartTime;
-            const timeUntilNextFrame = frame.timestamp - lastFrameTime;
-
-            try {
-                if (frame.protocol === 'artnet') {
-                    await artnetSender.send(frame.universe, frame.data);
-                } else {
-                    await sacnSender.send(frame.universe, frame.data);
-                }
-
-                if (currentPlaybackFrame % 5 === 0) {
-                    mainWindow.webContents.send('playback-stats', {
-                        currentFrame: currentPlaybackFrame + 1,
-                        totalFrames: frames.length,
-                        clipTime: frame.timestamp,
-                        totalPlayTime: elapsedTime,
-                        fps: Math.round(1000 / timeUntilNextFrame),
-                        isPlaying: true,
-                        loop
-                    });
-                }
-
-                lastFrameTime = frame.timestamp;
-                currentPlaybackFrame++;
-
-                if (isPlaying) {
-                    setTimeout(playNextFrame, Math.max(0, timeUntilNextFrame));
-                }
-            } catch (error) {
-                console.error('Playback error:', error);
-                if (isPlaying) {
-                    setTimeout(playNextFrame, Math.max(0, timeUntilNextFrame));
-                }
-            }
-        };
-
-        return playNextFrame;
+            await sacnOutput.ready();
+            sendDiscovery();
+            discoveryInterval = setInterval(sendDiscovery, 10000);
+        }
     };
 
-    const continuePausedOutput = async (frame, playbackNetwork) => {
-        if (!frame) return;
-        
-        await initializeSenders(playbackNetwork);
-        
-        pauseInterval = setInterval(async () => {
-            if (!isPaused) {
-                clearInterval(pauseInterval);
-                await cleanupSenders();
+    const sendFrame = (frame) => {
+        lastSentFrame = frame;
+        framesSentWindow.push(Date.now());
+        if (frame.protocol === 'artnet') {
+            if (artnetSender) {
+                artnetSender.send(frame.universe, frame.data).catch((err) => {
+                    console.error('Art-Net playback send error:', err);
+                });
+            }
+            return;
+        }
+        if (sacnOutput) {
+            sacnOutput.send(frame.universe, frame.data);
+        }
+    };
+
+    const clearPlayTimeout = () => {
+        if (playTimeout) {
+            clearTimeout(playTimeout);
+            playTimeout = null;
+        }
+    };
+
+    const stopHoldOutput = () => {
+        if (pauseInterval) {
+            clearInterval(pauseInterval);
+            pauseInterval = null;
+        }
+    };
+
+    const scheduleTick = () => {
+        clearPlayTimeout();
+        if (!isPlaying || !playbackData) {
+            return;
+        }
+
+        const elapsed = Date.now() - playbackOrigin;
+        while (
+            currentPlaybackFrame < playbackData.length &&
+            playbackData[currentPlaybackFrame].timestamp <= elapsed
+        ) {
+            sendFrame(playbackData[currentPlaybackFrame]);
+            currentPlaybackFrame += 1;
+        }
+
+        const now = Date.now();
+        if (now - lastStatsSent >= 100) {
+            lastStatsSent = now;
+            emitStats();
+        }
+
+        if (currentPlaybackFrame >= playbackData.length) {
+            if (loopEnabled) {
+                currentPlaybackFrame = 0;
+                lastSentFrame = null;
+                playbackOrigin = Date.now();
+                playTimeout = setTimeout(scheduleTick, 0);
                 return;
             }
+            stopPlaybackInternal(true);
+            return;
+        }
 
-            try {
-                if (frame.protocol === 'artnet') {
-                    await artnetSender.send(frame.universe, frame.data);
-                } else {
-                    await sacnSender.send(frame.universe, frame.data);
-                }
-            } catch (error) {
-                console.error('Pause output error:', error);
+        const wait = playbackData[currentPlaybackFrame].timestamp - elapsed;
+        playTimeout = setTimeout(scheduleTick, Math.max(0, wait));
+    };
+
+    const startHoldOutput = () => {
+        stopHoldOutput();
+        if (!lastSentFrame) {
+            return;
+        }
+        pauseInterval = setInterval(() => {
+            if (!isPaused || !lastSentFrame) {
+                stopHoldOutput();
+                return;
             }
+            sendFrame(lastSentFrame);
         }, 100);
     };
 
-    ipcMain.on('load-recording', async () => {
-        const { filePaths } = await dialog.showOpenDialog({
-            title: 'Load Recording',
-            filters: [{ name: 'DMX Recordings', extensions: ['dmx'] }],
-            properties: ['openFile']
+    const stopPlaybackInternal = (naturalEnd = false) => {
+        isPlaying = false;
+        isPaused = false;
+        clearPlayTimeout();
+        stopHoldOutput();
+        currentPlaybackFrame = 0;
+        pausedElapsed = 0;
+        lastSentFrame = null;
+        framesSentWindow = [];
+        cleanupSenders();
+        emitStats({
+            isPlaying: false,
+            isPaused: false,
+            isReset: true,
+            fps: 0,
+            currentFrame: naturalEnd && playbackData ? playbackData.length : 0,
+            totalPlayTime: naturalEnd ? Date.now() - playbackOrigin : 0
         });
-
-        if (filePaths.length > 0) {
-            try {
-                const fileData = fs.readFileSync(filePaths[0]);
-                const header = fileData.slice(0, 6).toString();
-                
-                if (header !== 'DMXREC') {
-                    throw new Error('Invalid file format');
-                }
-
-                const frameCount = fileData.readUInt32LE(6);
-                let offset = 10;
-                playbackData = [];
-
-                for (let i = 0; i < frameCount; i++) {
-                    playbackData.push({
-                        timestamp: fileData.readUInt32LE(offset),
-                        universe: fileData.readUInt32LE(offset + 4),
-                        protocol: fileData.readUInt16LE(offset + 8) === 0 ? 'artnet' : 'sacn',
-                        data: Array.from(fileData.slice(offset + 10, offset + 522))
-                    });
-                    offset += 522;
-                }
-
-                mainWindow.webContents.send('file-loaded', { success: true, filePath: filePaths[0] });
-            } catch (error) {
-                console.error('Error loading recording:', error);
-                mainWindow.webContents.send('file-loaded', { success: false, error: error.message });
-            }
-        }
-    });
-
-    ipcMain.on('toggle-playback', async (event, { loop, playbackNetwork }) => {
-        if (!playbackData) return;
-
-        if (isPaused) {
-            isPaused = false;
-            isPlaying = true;
-            if (pauseInterval) clearInterval(pauseInterval);
-            const player = await handlePlayback(playbackData, loop, playbackNetwork, currentPlaybackFrame);
-            if (player) await player();
-        } else if (isPlaying) {
-            isPaused = true;
-            isPlaying = false;
-            pausedFrame = playbackData[currentPlaybackFrame];
-            if (pausedFrame) {
-                continuePausedOutput(pausedFrame, playbackNetwork);
-                mainWindow.webContents.send('playback-stats', {
-                    currentFrame: currentPlaybackFrame + 1,
-                    totalFrames: playbackData.length,
-                    clipTime: pausedFrame.timestamp,
-                    totalPlayTime: Date.now() - playbackStartTime,
-                    fps: 0,
-                    isPlaying: false,
-                    isPaused: true,
-                    loop
-                });
-            }
-        } else {
-            isPlaying = true;
-            currentPlaybackFrame = 0;
-            playbackStartTime = Date.now();
-            const player = await handlePlayback(playbackData, loop, playbackNetwork);
-            if (player) await player();
-        }
-    });
+    };
 
     ipcMain.handle('load-recording', async () => {
-        console.log('Load recording request received'); // Debug log
         try {
             const { filePaths, canceled } = await dialog.showOpenDialog({
                 title: 'Load Recording',
@@ -206,54 +221,78 @@ function setupPlaybackHandlers(mainWindow) {
             });
 
             if (canceled || !filePaths || filePaths.length === 0) {
-                console.log('File selection cancelled or no file selected');
-                return { success: false, error: 'No file selected' };
+                const result = { success: false, error: 'No file selected' };
+                sendSafe('file-loaded', result);
+                return result;
             }
 
-            console.log('Selected file:', filePaths[0]); // Debug log
+            const fileData = await fs.promises.readFile(filePaths[0]);
+            playbackData = parseRecording(fileData);
+            stopPlaybackInternal(false);
 
-            try {
-                const fileData = await fs.promises.readFile(filePaths[0]);
-                const header = fileData.slice(0, 6).toString();
-                
-                if (header !== 'DMXREC') {
-                    throw new Error('Invalid file format');
-                }
-
-                const frameCount = fileData.readUInt32LE(6);
-                let offset = 10;
-                playbackData = [];
-
-                console.log('Loading', frameCount, 'frames'); // Debug log
-
-                for (let i = 0; i < frameCount; i++) {
-                    playbackData.push({
-                        timestamp: fileData.readUInt32LE(offset),
-                        universe: fileData.readUInt32LE(offset + 4),
-                        protocol: fileData.readUInt16LE(offset + 8) === 0 ? 'artnet' : 'sacn',
-                        data: Array.from(fileData.slice(offset + 10, offset + 522))
-                    });
-                    offset += 522;
-                }
-
-                console.log('Successfully loaded', playbackData.length, 'frames'); // Debug log
-                mainWindow.webContents.send('file-loaded', { 
-                    success: true, 
-                    filePath: filePaths[0] 
-                });
-                return { success: true };
-            } catch (error) {
-                console.error('Error loading recording:', error);
-                mainWindow.webContents.send('file-loaded', { 
-                    success: false, 
-                    error: error.message 
-                });
-                return { success: false, error: error.message };
-            }
+            const result = {
+                success: true,
+                filePath: filePaths[0],
+                frameCount: playbackData.length
+            };
+            sendSafe('file-loaded', result);
+            return result;
         } catch (error) {
-            console.error('Error in file dialog:', error);
-            return { success: false, error: error.message };
+            console.error('Error loading recording:', error);
+            stopPlaybackInternal(false);
+            playbackData = null;
+            const result = { success: false, error: error.message };
+            sendSafe('file-loaded', result);
+            return result;
         }
+    });
+
+    ipcMain.on('toggle-playback', async (event, { loop, playbackNetwork } = {}) => {
+        if (!playbackData || playbackData.length === 0) {
+            return;
+        }
+
+        loopEnabled = Boolean(loop);
+
+        if (isPaused) {
+            stopHoldOutput();
+            isPaused = false;
+            isPlaying = true;
+            playbackOrigin = Date.now() - pausedElapsed;
+            scheduleTick();
+            emitStats();
+            return;
+        }
+
+        if (isPlaying) {
+            pausedElapsed = Date.now() - playbackOrigin;
+            isPlaying = false;
+            isPaused = true;
+            clearPlayTimeout();
+            startHoldOutput();
+            emitStats();
+            return;
+        }
+
+        try {
+            currentPlaybackFrame = 0;
+            lastSentFrame = null;
+            pausedElapsed = 0;
+            framesSentWindow = [];
+            await initializeSenders(playbackNetwork);
+            isPlaying = true;
+            isPaused = false;
+            playbackOrigin = Date.now();
+            scheduleTick();
+            emitStats();
+        } catch (error) {
+            console.error('Error starting playback:', error);
+            stopPlaybackInternal(false);
+        }
+    });
+
+    ipcMain.on('stop-playback', () => {
+        stopPlaybackInternal(false);
     });
 }
 

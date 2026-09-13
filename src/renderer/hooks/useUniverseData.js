@@ -105,6 +105,10 @@ const useUniverseData = () => {
         });
     }, [artnetUniverses, sacnUniverses, selectedUniverse, selectedProtocol]);
 
+    useEffect(() => {
+        ipcRenderer.send('update-selected-universes', Array.from(selectedUniverses));
+    }, [selectedUniverses]);
+
     const handleUniverseSelect = (universeId, protocol) => {
         setSelectedUniverses(prev => {
             const newSet = new Set(prev);

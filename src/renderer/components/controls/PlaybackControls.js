@@ -22,22 +22,20 @@ const PlaybackControls = ({
 
     useEffect(() => {
         const handleFileLoaded = (event, { success, filePath, error }) => {
-            console.log('File loaded:', { success, filePath, error }); // Debug log
             if (success) {
                 setIsFileLoaded(true);
-                setLoadedFileName(filePath.split(/[\\/]/).pop()); // Extract filename from path
-            } else {
-                console.error('Error loading file:', error);
-                // You might want to show an error message to the user here
+                setLoadedFileName(filePath.split(/[\\/]/).pop());
+            } else if (error && error !== 'No file selected') {
+                setIsFileLoaded(false);
+                setLoadedFileName('');
             }
         };
 
         const handlePlaybackStats = (event, stats) => {
-            console.log('Playback stats:', stats); // Debug log
             setPlaybackStats(stats);
-            setIsPlaying(stats.isPlaying);
-            setIsPaused(stats.isPaused);
-            
+            setIsPlaying(Boolean(stats.isPlaying));
+            setIsPaused(Boolean(stats.isPaused));
+
             if (stats.isReset) {
                 setIsPlaying(false);
                 setIsPaused(false);
@@ -54,7 +52,6 @@ const PlaybackControls = ({
     }, []);
 
     const handlePlayback = () => {
-        console.log('Playback button clicked:', { isFileLoaded, isPlaying, isPaused });
         if (isFileLoaded) {
             ipcRenderer.send('toggle-playback', {
                 loop: isLoopEnabled,
