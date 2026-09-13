@@ -52,7 +52,8 @@ const RECEIVE = new Set([
     'recording-stats-update',
     'recording-error',
     'library-updated',
-    'devices-update'
+    'devices-update',
+    'device-push-progress'
 ]);
 
 contextBridge.exposeInMainWorld('dmx', {

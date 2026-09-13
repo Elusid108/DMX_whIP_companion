@@ -18,13 +18,13 @@ function setupRecordingHandlers(mainWindow) {
     let recordingPath = null;
     let fd = null;
     let frameCount = 0;
-    let recordingStartTime = null;
+    let recordingOriginNs = null;
     let pending = [];
     let pendingBytes = 0;
     let lastStatsSent = 0;
     let fpsTimes = [];
     let droppedFrames = 0;
-    let lastFrameTime = null;
+    let lastFrameNs = null;
 
     const closeFd = () => {
         if (fd == null) {
@@ -61,11 +61,11 @@ function setupRecordingHandlers(mainWindow) {
         pending = [];
         pendingBytes = 0;
         frameCount = 0;
-        recordingStartTime = null;
+        recordingOriginNs = null;
         lastStatsSent = 0;
         fpsTimes = [];
         droppedFrames = 0;
-        lastFrameTime = null;
+        lastFrameNs = null;
     };
 
     const sendStats = (force = false) => {
@@ -98,7 +98,7 @@ function setupRecordingHandlers(mainWindow) {
             fd = fs.openSync(recordingPath, 'w');
             fs.writeSync(fd, createHeader(0));
             isRecording = true;
-            recordingStartTime = Date.now();
+            recordingOriginNs = process.hrtime.bigint();
             sendStats(true);
         } catch (error) {
             closeFd();
@@ -143,8 +143,10 @@ function setupRecordingHandlers(mainWindow) {
                 return;
             }
 
-            const now = Date.now();
-            const timestamp = frameCount === 0 ? 0 : now - recordingStartTime;
+            const nowNs = process.hrtime.bigint();
+            const timestamp = frameCount === 0
+                ? 0
+                : Number((nowNs - recordingOriginNs) / 1000000n);
             const encoded = encodeFrame({
                 timestamp,
                 universe: frame.universe,
@@ -156,11 +158,11 @@ function setupRecordingHandlers(mainWindow) {
             pendingBytes += encoded.length;
             frameCount += 1;
 
-            if (lastFrameTime && now - lastFrameTime > 100) {
+            if (lastFrameNs && nowNs - lastFrameNs > 100000000n) {
                 droppedFrames += 1;
             }
-            lastFrameTime = now;
-            fpsTimes.push(now);
+            lastFrameNs = nowNs;
+            fpsTimes.push(Date.now());
 
             if (pendingBytes >= CHUNK_TARGET) {
                 flushChunk();

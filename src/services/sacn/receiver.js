@@ -7,6 +7,7 @@ const {
 
 const DISCOVERY_TIMEOUT_MS = 20000;
 const DISCOVERY_SWEEP_MS = 1000;
+const RECV_BUFFER = 1024 * 1024;
 
 const membershipIface = (interfaceIp) => {
     if (!interfaceIp || interfaceIp === '0.0.0.0') {
@@ -43,6 +44,12 @@ class SacnReceiver {
 
                 this.socket.on('listening', () => {
                     console.log('sACN receiver listening on port 5568');
+
+                    try {
+                        this.socket.setRecvBufferSize(RECV_BUFFER);
+                    } catch (err) {
+                        // OS may clamp the buffer
+                    }
 
                     try {
                         this.socket.setBroadcast(true);

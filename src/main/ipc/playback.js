@@ -4,15 +4,18 @@ const ArtNetSender = require('../../services/artnet/sender');
 const { SacnOutput } = require('../../services/sacn/output');
 const { parseRecording } = require('../../services/shared/dmxRecording');
 
+const IMMEDIATE_MS = 4;
+
 function setupPlaybackHandlers(mainWindow) {
     let playbackData = null;
     let isPlaying = false;
     let isPaused = false;
     let currentPlaybackFrame = 0;
-    let playbackOrigin = 0;
+    let playbackOriginNs = 0n;
     let pausedElapsed = 0;
     let lastSentFrame = null;
     let playTimeout = null;
+    let playImmediate = null;
     let pauseInterval = null;
     let discoveryInterval = null;
     let artnetSender = null;
@@ -57,6 +60,8 @@ function setupPlaybackHandlers(mainWindow) {
         }
     };
 
+    const elapsedMs = () => Number((process.hrtime.bigint() - playbackOriginNs) / 1000000n);
+
     const emitStats = (extra = {}) => {
         const now = Date.now();
         const cutoff = now - 1000;
@@ -66,7 +71,7 @@ function setupPlaybackHandlers(mainWindow) {
             currentFrame: currentPlaybackFrame,
             totalFrames: playbackData ? playbackData.length : 0,
             clipTime: lastTimestamp,
-            totalPlayTime: isPlaying ? now - playbackOrigin : pausedElapsed,
+            totalPlayTime: isPlaying ? elapsedMs() : pausedElapsed,
             fps: framesSentWindow.length,
             isPlaying,
             isPaused,
@@ -132,6 +137,18 @@ function setupPlaybackHandlers(mainWindow) {
             clearTimeout(playTimeout);
             playTimeout = null;
         }
+        if (playImmediate) {
+            clearImmediate(playImmediate);
+            playImmediate = null;
+        }
+    };
+
+    const armTick = (waitMs) => {
+        if (waitMs < IMMEDIATE_MS) {
+            playImmediate = setImmediate(scheduleTick);
+            return;
+        }
+        playTimeout = setTimeout(scheduleTick, Math.max(1, waitMs - 1));
     };
 
     const stopHoldOutput = () => {
@@ -147,7 +164,7 @@ function setupPlaybackHandlers(mainWindow) {
             return;
         }
 
-        const elapsed = Date.now() - playbackOrigin;
+        const elapsed = elapsedMs();
         while (
             currentPlaybackFrame < playbackData.length &&
             playbackData[currentPlaybackFrame].timestamp <= elapsed
@@ -166,8 +183,8 @@ function setupPlaybackHandlers(mainWindow) {
             if (loopEnabled) {
                 currentPlaybackFrame = 0;
                 lastSentFrame = null;
-                playbackOrigin = Date.now();
-                playTimeout = setTimeout(scheduleTick, 0);
+                playbackOriginNs = process.hrtime.bigint();
+                armTick(0);
                 return;
             }
             stopPlaybackInternal(true);
@@ -175,7 +192,7 @@ function setupPlaybackHandlers(mainWindow) {
         }
 
         const wait = playbackData[currentPlaybackFrame].timestamp - elapsed;
-        playTimeout = setTimeout(scheduleTick, Math.max(0, wait));
+        armTick(wait);
     };
 
     const startHoldOutput = () => {
@@ -193,6 +210,7 @@ function setupPlaybackHandlers(mainWindow) {
     };
 
     const stopPlaybackInternal = (naturalEnd = false) => {
+        const endedAt = isPlaying ? elapsedMs() : pausedElapsed;
         isPlaying = false;
         isPaused = false;
         clearPlayTimeout();
@@ -208,7 +226,7 @@ function setupPlaybackHandlers(mainWindow) {
             isReset: true,
             fps: 0,
             currentFrame: naturalEnd && playbackData ? playbackData.length : 0,
-            totalPlayTime: naturalEnd ? Date.now() - playbackOrigin : 0
+            totalPlayTime: naturalEnd ? endedAt : 0
         });
     };
 
@@ -266,14 +284,14 @@ function setupPlaybackHandlers(mainWindow) {
             stopHoldOutput();
             isPaused = false;
             isPlaying = true;
-            playbackOrigin = Date.now() - pausedElapsed;
+            playbackOriginNs = process.hrtime.bigint() - BigInt(pausedElapsed) * 1000000n;
             scheduleTick();
             emitStats();
             return;
         }
 
         if (isPlaying) {
-            pausedElapsed = Date.now() - playbackOrigin;
+            pausedElapsed = elapsedMs();
             isPlaying = false;
             isPaused = true;
             clearPlayTimeout();
@@ -290,7 +308,7 @@ function setupPlaybackHandlers(mainWindow) {
             await initializeSenders(playbackNetwork);
             isPlaying = true;
             isPaused = false;
-            playbackOrigin = Date.now();
+            playbackOriginNs = process.hrtime.bigint();
             scheduleTick();
             emitStats();
         } catch (error) {

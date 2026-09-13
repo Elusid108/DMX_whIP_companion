@@ -156,7 +156,56 @@ const destUploadPath = (filePath) => {
     return dest;
 };
 
-const postUpload = (ip, filePath) => {
+const UPLOAD_IDLE_MS = 60000;
+const UPLOAD_MIN_BUDGET_MS = 10 * 60 * 1000;
+
+const uploadBudgetMs = (size) => Math.max(
+    UPLOAD_MIN_BUDGET_MS,
+    Math.ceil(Math.max(0, size) / 8192) * 1000
+);
+
+const formatUploadBytes = (bytes) => {
+    const value = Number(bytes) || 0;
+    if (value < 1024) {
+        return `${value} B`;
+    }
+    if (value < 1024 * 1024) {
+        return `${(value / 1024).toFixed(1)} KB`;
+    }
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const formatUploadElapsed = (ms) => {
+    const total = Math.max(0, Math.round(Number(ms) / 1000));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+};
+
+const isImmediateConnectFail = (err) => {
+    const code = err && err.code;
+    const msg = String((err && err.message) || '');
+    return code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EHOSTUNREACH'
+        || /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH/.test(msg);
+};
+
+const uploadFail = (err, sent, total) => {
+    const msg = err && err.message ? String(err.message) : 'Upload failed';
+    if (/timed out/i.test(msg) || msg === 'timeout') {
+        return {
+            success: false,
+            error: /sent /.test(msg)
+                ? msg
+                : `Upload timed out — sent ${formatUploadBytes(sent)} of ${formatUploadBytes(total)}`
+        };
+    }
+    if (isImmediateConnectFail(err)) {
+        return { success: false, error: `Could not reach the node (${msg})` };
+    }
+    return { success: false, error: msg };
+};
+
+const postUpload = (ip, filePath, onProgress) => {
     if (!isIpv4(ip)) {
         return Promise.resolve({ success: false, error: 'Invalid device IP' });
     }
@@ -169,7 +218,34 @@ const postUpload = (ip, filePath) => {
 
     const destPath = destUploadPath(filePath);
     const stat = fs.statSync(filePath);
-    const hosts = hostsFor(ip);
+    const startedAt = Date.now();
+    let lastPhase = '';
+    let lastEmit = 0;
+    let lastSent = 0;
+    let lastTotal = stat.size;
+
+    const emit = (payload) => {
+        if (payload.sent != null) {
+            lastSent = payload.sent;
+        }
+        if (payload.total != null) {
+            lastTotal = payload.total;
+        }
+        if (typeof onProgress !== 'function') {
+            return;
+        }
+        const now = Date.now();
+        if (payload.phase === lastPhase && payload.phase === 'sending' && now - lastEmit < 100) {
+            return;
+        }
+        lastPhase = payload.phase;
+        lastEmit = now;
+        onProgress({
+            dest: destPath,
+            startedAt,
+            ...payload
+        });
+    };
 
     const sendTo = (host) => new Promise((resolve, reject) => {
         const boundary = `----whip${Date.now().toString(16)}`;
@@ -182,6 +258,34 @@ const postUpload = (ip, filePath) => {
             `Content-Type: application/octet-stream\r\n\r\n`
         );
         const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
+        const total = header.length + stat.size + footer.length;
+        let sent = 0;
+        let settled = false;
+        const budgetMs = uploadBudgetMs(stat.size);
+
+        const finish = (fn) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(budgetTimer);
+            fn();
+        };
+
+        const timeoutError = () => new Error(
+            `Upload timed out after ${formatUploadElapsed(Date.now() - startedAt)} — sent ${formatUploadBytes(sent)} of ${formatUploadBytes(total)}`
+        );
+
+        const bumpIdle = () => {
+            if (req.socket) {
+                req.socket.setTimeout(UPLOAD_IDLE_MS);
+            } else {
+                req.setTimeout(UPLOAD_IDLE_MS);
+            }
+        };
+
+        emit({ phase: 'connecting', sent: 0, total });
+
         const req = http.request({
             host,
             port: 80,
@@ -189,12 +293,13 @@ const postUpload = (ip, filePath) => {
             method: 'POST',
             headers: {
                 'Content-Type': `multipart/form-data; boundary=${boundary}`,
-                'Content-Length': header.length + stat.size + footer.length
-            },
-            timeout: 120000
+                'Content-Length': total
+            }
         }, (res) => {
+            bumpIdle();
             let data = '';
             res.on('data', (chunk) => {
+                bumpIdle();
                 data += chunk;
             });
             res.on('end', () => {
@@ -203,56 +308,93 @@ const postUpload = (ip, filePath) => {
                     try {
                         json = JSON.parse(data);
                     } catch (err) {
-                        reject(new Error('Invalid JSON from node'));
+                        finish(() => reject(new Error('Invalid JSON from node')));
                         return;
                     }
                 }
-                resolve({ statusCode: res.statusCode, json });
+                finish(() => resolve({ statusCode: res.statusCode, json, sent, total }));
             });
+        });
+
+        const budgetTimer = setTimeout(() => {
+            req.destroy();
+            finish(() => reject(timeoutError()));
+        }, budgetMs);
+
+        req.setTimeout(UPLOAD_IDLE_MS);
+        req.on('socket', (socket) => {
+            socket.setTimeout(UPLOAD_IDLE_MS);
         });
         req.on('timeout', () => {
             req.destroy();
-            reject(new Error('timeout'));
+            finish(() => reject(timeoutError()));
         });
-        req.on('error', reject);
+        req.on('error', (err) => {
+            finish(() => reject(err));
+        });
 
         req.write(header);
+        sent = header.length;
+        emit({ phase: 'sending', sent, total });
+        bumpIdle();
+
         const stream = fs.createReadStream(filePath);
         stream.on('error', (err) => {
             req.destroy();
-            reject(err);
+            finish(() => reject(err));
         });
         stream.on('data', (chunk) => {
+            sent += chunk.length;
+            emit({ phase: 'sending', sent, total });
+            bumpIdle();
             if (!req.write(chunk)) {
                 stream.pause();
-                req.once('drain', () => stream.resume());
+                req.once('drain', () => {
+                    bumpIdle();
+                    stream.resume();
+                });
             }
         });
         stream.on('end', () => {
             req.end(footer);
+            sent = total;
+            emit({ phase: 'waiting', sent, total });
+            bumpIdle();
         });
     });
 
+    const mapResult = (result) => {
+        if (result.statusCode === 503 || (result.json && result.json.error === 'live')) {
+            emit({ phase: 'error', sent: result.sent || 0, total: result.total || 0 });
+            return busyError();
+        }
+        if (result.statusCode >= 200 && result.statusCode < 300) {
+            emit({ phase: 'done', sent: result.total || result.sent || 0, total: result.total || 0 });
+            return { success: true, result: result.json, via: result.via };
+        }
+        emit({ phase: 'error', sent: result.sent || 0, total: result.total || 0 });
+        return mapNodeError(result.json, result.statusCode);
+    };
+
     return (async () => {
-        let lastError = null;
-        for (const host of hosts) {
-            try {
-                const result = await sendTo(host);
-                if (result.statusCode === 503 || (result.json && result.json.error === 'live')) {
-                    return busyError();
+        try {
+            const result = await sendTo(ip);
+            result.via = ip;
+            return mapResult(result);
+        } catch (err) {
+            if (ip !== SOFTAP_IP && isImmediateConnectFail(err) && lastSent === 0) {
+                try {
+                    const result = await sendTo(SOFTAP_IP);
+                    result.via = SOFTAP_IP;
+                    return mapResult(result);
+                } catch (apErr) {
+                    emit({ phase: 'error', sent: lastSent, total: lastTotal });
+                    return uploadFail(apErr, lastSent, lastTotal);
                 }
-                if (result.statusCode >= 200 && result.statusCode < 300) {
-                    return { success: true, result: result.json, via: host };
-                }
-                return mapNodeError(result.json, result.statusCode);
-            } catch (err) {
-                lastError = err;
             }
+            emit({ phase: 'error', sent: lastSent, total: lastTotal });
+            return uploadFail(err, lastSent, lastTotal);
         }
-        if (lastError && lastError.message === 'Invalid JSON from node') {
-            return { success: false, error: lastError.message };
-        }
-        return busyError();
     })();
 };
 

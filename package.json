@@ -1,6 +1,6 @@
 {
   "name": "dmx-whip-companion",
-  "version": "0.10.0",
+  "version": "0.10.2",
   "description": "Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN)",
   "main": "src/main/main.js",
   "scripts": {

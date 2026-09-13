@@ -269,7 +269,9 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     ipcMain.handle('device-push-show', async (event, { ip, filePath } = {}) => {
         try {
             assertInLibrary(filePath);
-            return await postUpload(ip, filePath);
+            return await postUpload(ip, filePath, (progress) => {
+                sendToRenderer('device-push-progress', progress);
+            });
         } catch (error) {
             return { success: false, error: error.message };
         }

@@ -18,6 +18,7 @@ const LibraryPanel = () => {
     const [targetId, setTargetId] = useState(null);
     const [pushing, setPushing] = useState(false);
     const [pushError, setPushError] = useState('');
+    const [pushProgress, setPushProgress] = useState(null);
     const [renaming, setRenaming] = useState(false);
     const [renameDraft, setRenameDraft] = useState('');
     const saveTimer = useRef(null);
@@ -29,6 +30,16 @@ const LibraryPanel = () => {
     selectedRef.current = selectedPath;
     nameRef.current = name;
     notesRef.current = notes;
+
+    useEffect(() => {
+        const handleProgress = (event, progress = {}) => {
+            setPushProgress(progress);
+        };
+        ipcRenderer.on('device-push-progress', handleProgress);
+        return () => {
+            ipcRenderer.removeListener('device-push-progress', handleProgress);
+        };
+    }, []);
 
     useEffect(() => {
         dirtyRef.current = false;
@@ -277,6 +288,7 @@ const LibraryPanel = () => {
         }
         setPushing(true);
         setPushError('');
+        setPushProgress({ phase: 'connecting', sent: 0, total: 0 });
         ipcRenderer.invoke('device-push-show', {
             ip: target.ip,
             filePath: selectedPath
@@ -291,6 +303,7 @@ const LibraryPanel = () => {
             setPushError(err.message);
         }).finally(() => {
             setPushing(false);
+            setPushProgress(null);
         });
     };
 
@@ -378,6 +391,7 @@ const LibraryPanel = () => {
                     devices,
                     targetId,
                     pushing,
+                    pushProgress,
                     pushError,
                     onTargetChange: setTargetId,
                     onPush: handlePush

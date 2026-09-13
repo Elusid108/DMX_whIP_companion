@@ -1,6 +1,8 @@
 const dgram = require('dgram');
 const { parseArtNetPacket, createArtPollPacket } = require('./utils');
 
+const RECV_BUFFER = 1024 * 1024;
+
 class ArtNetReceiver {
     constructor() {
         this.socket = null;
@@ -23,6 +25,11 @@ class ArtNetReceiver {
 
                 this.socket.on('listening', () => {
                     console.log('Art-Net receiver listening on port 6454');
+                    try {
+                        this.socket.setRecvBufferSize(RECV_BUFFER);
+                    } catch (err) {
+                        // OS may clamp the buffer
+                    }
                     this.socket.setBroadcast(true);
                     resolve();
                 });

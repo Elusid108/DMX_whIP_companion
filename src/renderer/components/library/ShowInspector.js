@@ -64,6 +64,7 @@ const ShowInspector = ({
     devices,
     targetId,
     pushing,
+    pushProgress,
     pushError,
     onNameChange,
     onNotesChange,
@@ -88,6 +89,30 @@ const ShowInspector = ({
     const playable = Boolean(show.playable);
     const targets = (devices || []).filter((device) => device && device.ip && !device.stale);
     const canPush = playable && Boolean(targetId) && targets.some((device) => device.id === targetId);
+    const sent = Number(pushProgress && pushProgress.sent) || 0;
+    const total = Number(pushProgress && pushProgress.total) || 0;
+    const percent = total > 0 ? Math.min(100, Math.round((sent / total) * 100)) : 0;
+    const phase = pushProgress && pushProgress.phase;
+    const phaseLabel = phase === 'connecting'
+        ? 'Connecting…'
+        : phase === 'waiting'
+            ? 'Waiting for the node…'
+            : phase === 'sending'
+                ? 'Sending…'
+                : '';
+    const elapsed = pushProgress && pushProgress.startedAt
+        ? Date.now() - pushProgress.startedAt
+        : 0;
+    let etaLabel = '';
+    if (phase === 'sending' && sent > 256 * 1024 && elapsed > 1000 && sent < total) {
+        const remainMs = ((total - sent) / sent) * elapsed;
+        const remainSec = Math.max(1, Math.round(remainMs / 1000));
+        const minutes = Math.floor(remainSec / 60);
+        const seconds = remainSec % 60;
+        etaLabel = minutes > 0
+            ? `~${minutes} min ${seconds}s left`
+            : `~${seconds}s left`;
+    }
 
     return React.createElement('div', {
         className: 'overflow-y-auto h-full'
@@ -235,6 +260,25 @@ const ShowInspector = ({
                     disabled: busy || pushing || !canPush,
                     onClick: onPush
                 }, pushing ? 'Pushing…' : 'Push to SD'),
+                pushing && React.createElement('div', {
+                    className: 'flex flex-col gap-1'
+                },
+                    React.createElement('div', {
+                        className: 'h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden'
+                    },
+                        React.createElement('div', {
+                            className: 'h-full bg-cyan-500',
+                            style: { width: `${percent}%` }
+                        })
+                    ),
+                    React.createElement('p', {
+                        className: 'readout'
+                    }, [
+                        total > 0 ? `${percent}% · ${formatBytes(sent)} / ${formatBytes(total)}` : phaseLabel || 'Connecting…',
+                        total > 0 ? phaseLabel : null,
+                        etaLabel
+                    ].filter(Boolean).join(' · '))
+                ),
                 React.createElement('p', {
                     className: 'text-xs text-zinc-500'
                 }, 'Copies this .dmx onto the node SD. Load on this PC uses the toolbar; device Play/Stop live on Devices.'),
