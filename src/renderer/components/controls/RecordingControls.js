@@ -78,7 +78,7 @@ const RecordingControls = ({ selectedUniverses }) => {
             return;
         }
         try {
-            const result = await ipcRenderer.invoke('new-recording-file');
+            const result = await ipcRenderer.invoke('library-new-file');
             if (result && result.success) {
                 setRecordingPath(result.filePath);
                 setLoadError('');

@@ -212,31 +212,39 @@ function setupPlaybackHandlers(mainWindow) {
         });
     };
 
-    ipcMain.handle('load-recording', async () => {
-        try {
-            const { filePaths, canceled } = await dialog.showOpenDialog({
-                title: 'Load Recording',
-                filters: [{ name: 'DMX Recordings', extensions: ['dmx'] }],
-                properties: ['openFile']
-            });
+    const loadFromPath = async (filePath) => {
+        const fileData = await fs.promises.readFile(filePath);
+        playbackData = parseRecording(fileData);
+        stopPlaybackInternal(false);
 
-            if (canceled || !filePaths || filePaths.length === 0) {
-                const result = { success: false, error: 'No file selected' };
-                sendSafe('file-loaded', result);
-                return result;
+        const result = {
+            success: true,
+            filePath,
+            frameCount: playbackData.length
+        };
+        sendSafe('file-loaded', result);
+        return result;
+    };
+
+    ipcMain.handle('load-recording', async (event, payload = {}) => {
+        try {
+            let filePath = payload && payload.filePath;
+            if (!filePath) {
+                const { filePaths, canceled } = await dialog.showOpenDialog({
+                    title: 'Load Recording',
+                    filters: [{ name: 'DMX Recordings', extensions: ['dmx'] }],
+                    properties: ['openFile']
+                });
+
+                if (canceled || !filePaths || filePaths.length === 0) {
+                    const result = { success: false, error: 'No file selected' };
+                    sendSafe('file-loaded', result);
+                    return result;
+                }
+                filePath = filePaths[0];
             }
 
-            const fileData = await fs.promises.readFile(filePaths[0]);
-            playbackData = parseRecording(fileData);
-            stopPlaybackInternal(false);
-
-            const result = {
-                success: true,
-                filePath: filePaths[0],
-                frameCount: playbackData.length
-            };
-            sendSafe('file-loaded', result);
-            return result;
+            return await loadFromPath(filePath);
         } catch (error) {
             console.error('Error loading recording:', error);
             stopPlaybackInternal(false);

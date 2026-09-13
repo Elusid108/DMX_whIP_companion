@@ -4,9 +4,13 @@ const DmxGrid = require('./components/dmx/DmxGrid');
 const NetworkSelect = require('./components/controls/NetworkSelect');
 const RecordingControls = require('./components/controls/RecordingControls');
 const PlaybackControls = require('./components/controls/PlaybackControls');
+const LibraryPanel = require('./components/library/LibraryPanel');
 const useUniverseData = require('./hooks/useUniverseData');
 const useDmxMonitor = require('./hooks/useDmxMonitor');
 const { version } = require('../../package.json');
+
+const tabClass = (active) =>
+    `px-4 py-2 rounded-t font-medium ${active ? 'bg-white text-blue-700' : 'bg-gray-200 text-gray-600'}`;
 
 const App = () => {
     const {
@@ -33,6 +37,8 @@ const App = () => {
         handleGridDimensionsChange,
         toggleAnimations
     } = useDmxMonitor(selectedUniverse, selectedProtocol);
+
+    const [mainView, setMainView] = React.useState('monitor');
 
     return React.createElement('div', { className: 'h-screen flex flex-col bg-gray-100 p-4' },
         // Options Bar
@@ -97,9 +103,22 @@ const App = () => {
                 )
             )
         ),
-        // Main Content
-        React.createElement('div', { className: 'flex gap-4 flex-1 min-h-0' },
-            // Universe Lists Container
+        React.createElement('div', {
+            className: 'flex gap-2 px-1'
+        },
+            React.createElement('button', {
+                type: 'button',
+                className: tabClass(mainView === 'monitor'),
+                onClick: () => setMainView('monitor')
+            }, 'Monitor'),
+            React.createElement('button', {
+                type: 'button',
+                className: tabClass(mainView === 'library'),
+                onClick: () => setMainView('library')
+            }, 'Library')
+        ),
+        mainView === 'monitor'
+            ? React.createElement('div', { className: 'flex gap-4 flex-1 min-h-0' },
             React.createElement('div', { className: 'w-64 flex flex-col gap-4 overflow-y-auto' },
                 React.createElement(UniverseList, {
                     protocol: 'artnet',
@@ -138,6 +157,7 @@ const App = () => {
                 showAnimations
             })
         )
+            : React.createElement(LibraryPanel)
     );
 };
 

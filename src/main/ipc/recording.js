@@ -1,5 +1,4 @@
-const { ipcMain, dialog, app } = require('electron');
-const path = require('path');
+const { ipcMain } = require('electron');
 const fs = require('fs');
 const {
     CHUNK_TARGET,
@@ -12,17 +11,6 @@ const sendSafe = (mainWindow, channel, payload) => {
         return;
     }
     mainWindow.webContents.send(channel, payload);
-};
-
-const findNextScenePath = () => {
-    let sceneNum = 1;
-    while (true) {
-        const testPath = path.join(app.getPath('documents'), `scene_${sceneNum}.dmx`);
-        if (!fs.existsSync(testPath)) {
-            return testPath;
-        }
-        sceneNum += 1;
-    }
 };
 
 function setupRecordingHandlers(mainWindow) {
@@ -95,36 +83,6 @@ function setupRecordingHandlers(mainWindow) {
         });
     };
 
-    const createRecordingFile = (filePath) => {
-        fs.writeFileSync(filePath, createHeader(0));
-        recordingPath = filePath;
-        return filePath;
-    };
-
-    ipcMain.handle('new-recording-file', async () => {
-        if (isRecording) {
-            return { success: false, error: 'Stop recording before creating a new file' };
-        }
-
-        try {
-            const { filePath, canceled } = await dialog.showSaveDialog({
-                title: 'New Recording',
-                defaultPath: findNextScenePath(),
-                filters: [{ name: 'DMX Recordings', extensions: ['dmx'] }]
-            });
-
-            if (canceled || !filePath) {
-                return { success: false, error: 'No file selected' };
-            }
-
-            createRecordingFile(filePath);
-            return { success: true, filePath };
-        } catch (error) {
-            console.error('Error creating recording file:', error);
-            return { success: false, error: error.message };
-        }
-    });
-
     ipcMain.on('start-recording', () => {
         if (isRecording) {
             return;
@@ -172,6 +130,14 @@ function setupRecordingHandlers(mainWindow) {
 
     return {
         isRecording: () => isRecording,
+        getRecordingPath: () => recordingPath,
+        setRecordingPath: (filePath) => {
+            if (isRecording) {
+                return false;
+            }
+            recordingPath = filePath || null;
+            return true;
+        },
         addFrame: (frame) => {
             if (!isRecording || fd == null) {
                 return;

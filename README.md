@@ -2,7 +2,7 @@
 
 Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN).
 
-**Version:** 0.3.4
+**Version:** 0.4.0
 
 ## How to run
 
@@ -27,7 +27,7 @@ That means: plan only the first `###` section that still has unchecked items. Do
 
 ## Current state
 
-The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks after New File; playback is clock-based with a working Stop control and legal sACN via the `sacn` package. The renderer is isolated (`contextIsolation`) with a local Tailwind build. There is no show library yet; files are opened through dialogs. ESP32 nodes live in the sibling repo `DMX_whIP_embedded` (ArtPollReply, SoftAP portal `/status`, idle SD playback of companion `DMXREC`). Treat this as a prototype restart, not a shipping 1.0.
+The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks into `Documents/DMX whIP/Shows` after New File; a Library tab lists shows with sidecar notes and inspector stats. Playback is clock-based with a working Stop control and legal sACN via the `sacn` package. The renderer is isolated (`contextIsolation`) with a local Tailwind build. ESP32 nodes live in the sibling repo `DMX_whIP_embedded` (ArtPollReply, SoftAP portal `/status`, idle SD playback of companion `DMXREC`). Treat this as a prototype restart, not a shipping 1.0.
 
 ---
 
@@ -73,12 +73,12 @@ The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, 
 
 One library folder plus import/export. Display name and notes live in a sidecar JSON next to each `.dmx`, never inside the recording. Scan the binary for inspector stats; do not load every frame into RAM just to fill the panel.
 
-- [ ] App-managed library folder (e.g. `Documents/DMX whIP/Shows`); New File / recordings land there
-- [ ] Library list of `.dmx` shows (watch the folder)
-- [ ] Inspector from the file: duration, frame count, size, dates, universes, protocol(s), packet rate and per-universe rate, woken channel counts
-- [ ] Sidecar JSON for display name and notes (companion-only; firmware keeps reading plain `DMXREC`)
-- [ ] Import a `.dmx` into the library; export a copy out of the library
-- [ ] Play, rename, and delete from the list (main path; keep a file picker only as a fallback)
+- [x] App-managed library folder (e.g. `Documents/DMX whIP/Shows`); New File / recordings land there
+- [x] Library list of `.dmx` shows (watch the folder)
+- [x] Inspector from the file: duration, frame count, size, dates, universes, protocol(s), packet rate and per-universe rate, woken channel counts
+- [x] Sidecar JSON for display name and notes (companion-only; firmware keeps reading plain `DMXREC`)
+- [x] Import a `.dmx` into the library; export a copy out of the library
+- [x] Play, rename, and delete from the list (main path; keep a file picker only as a fallback)
 
 ### Phase E — Device discovery
 

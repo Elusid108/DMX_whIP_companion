@@ -2,7 +2,14 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const INVOKE = new Set([
     'get-network-interfaces',
-    'new-recording-file',
+    'library-list',
+    'library-new-file',
+    'library-inspect',
+    'library-save-meta',
+    'library-import',
+    'library-export',
+    'library-rename',
+    'library-delete',
     'load-recording'
 ]);
 
@@ -24,7 +31,8 @@ const RECEIVE = new Set([
     'file-loaded',
     'playback-stats',
     'recording-stats-update',
-    'recording-error'
+    'recording-error',
+    'library-updated'
 ]);
 
 contextBridge.exposeInMainWorld('dmx', {

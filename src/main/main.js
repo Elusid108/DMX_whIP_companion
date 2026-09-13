@@ -4,12 +4,13 @@ const { version } = require('../../package.json');
 const setupNetworkHandlers = require('./ipc/network');
 const setupRecordingHandlers = require('./ipc/recording');
 const setupPlaybackHandlers = require('./ipc/playback');
+const { setupLibraryHandlers } = require('./ipc/library');
 
 let mainWindow = null;
 
 function createWindow() {
     mainWindow = new BrowserWindow({
-        width: 1200,
+        width: 1280,
         height: 800,
         title: `DMX whIP Companion v${version}`,
         webPreferences: {
@@ -35,9 +36,11 @@ function createWindow() {
     const recordingHandler = setupRecordingHandlers(mainWindow);
     const cleanupNetwork = setupNetworkHandlers(mainWindow, recordingHandler);
     setupPlaybackHandlers(mainWindow);
+    const cleanupLibrary = setupLibraryHandlers(mainWindow, recordingHandler);
 
     mainWindow.on('closed', () => {
         if (cleanupNetwork) cleanupNetwork();
+        if (cleanupLibrary) cleanupLibrary();
         if (recordingHandler && recordingHandler.close) recordingHandler.close();
         mainWindow = null;
     });
