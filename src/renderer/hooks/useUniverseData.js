@@ -1,5 +1,14 @@
-const { useState, useEffect } = require('react');
+const { useState, useEffect, useRef } = require('react');
 const { ipcRenderer } = require('electron');
+
+const toUniverseMap = (rows = []) => {
+    const next = new Map();
+    for (const row of rows) {
+        const id = row.id ?? row.universe;
+        next.set(id, row);
+    }
+    return next;
+};
 
 const useUniverseData = () => {
     const [artnetUniverses, setArtnetUniverses] = useState(new Map());
@@ -7,112 +16,19 @@ const useUniverseData = () => {
     const [selectedUniverse, setSelectedUniverse] = useState(null);
     const [selectedProtocol, setSelectedProtocol] = useState(null);
     const [selectedUniverses, setSelectedUniverses] = useState(new Set());
-    const [lastUpdate] = useState(new Map());
-
-    // Clean stale universes that haven't been updated recently
-    const cleanStaleUniverses = () => {
-        const now = Date.now();
-        const STALE_THRESHOLD = 250; // 250ms
-        const REMOVE_THRESHOLD = 5000; // 5 seconds - only remove after longer period of no updates
-
-        setArtnetUniverses(prev => {
-            const newUniverses = new Map(prev);
-            for (const [key, value] of newUniverses.entries()) {
-                const timeSinceLastSeen = now - value.lastSeen;
-                if (timeSinceLastSeen > REMOVE_THRESHOLD) {
-                    newUniverses.delete(key);
-                } else if (timeSinceLastSeen > STALE_THRESHOLD) {
-                    // Mark as stale but preserve the maximum channel count
-                    newUniverses.set(key, {
-                        ...value,
-                        sourceIp: 'Disconnected',
-                        stale: true
-                    });
-                }
-            }
-            return newUniverses;
-        });
-
-        setSacnUniverses(prev => {
-            const newUniverses = new Map(prev);
-            for (const [key, value] of newUniverses.entries()) {
-                const timeSinceLastSeen = now - value.lastSeen;
-                if (timeSinceLastSeen > REMOVE_THRESHOLD) {
-                    newUniverses.delete(key);
-                } else if (timeSinceLastSeen > STALE_THRESHOLD) {
-                    // Mark as stale but preserve the maximum channel count
-                    newUniverses.set(key, {
-                        ...value,
-                        sourceIp: 'Disconnected',
-                        stale: true
-                    });
-                }
-            }
-            return newUniverses;
-        });
-    };
+    const knownUniversesRef = useRef(new Set());
 
     useEffect(() => {
-        const cleanupInterval = setInterval(cleanStaleUniverses, 100);
-        return () => clearInterval(cleanupInterval);
-    }, []);
+        ipcRenderer.send('select-monitor-universe', {
+            protocol: selectedProtocol,
+            universe: selectedUniverse
+        });
+    }, [selectedProtocol, selectedUniverse]);
 
     useEffect(() => {
-        const handleUniverseUpdated = (event, universeInfo) => {
-            const { protocol, universe, sourceIp, sourceName, dmxData } = universeInfo;
-            
-            // Calculate active channels - find the highest channel with non-zero value
-            const currentActiveChannels = dmxData ? 
-                dmxData.reduce((highest, val, index) => val > 0 ? index + 1 : highest, 0) : 0;
-
-            // Get existing universe data to compare with previous max channels
-            const existingData = protocol === 'artnet' ? 
-                artnetUniverses.get(universe) : 
-                sacnUniverses.get(universe);
-
-            // Keep the higher channel count
-            const activeChannels = Math.max(
-                currentActiveChannels,
-                existingData?.activeChannels || 0
-            );
-            
-            const universeData = {
-                id: universe,
-                universe,
-                sourceIp,
-                sourceName,
-                activeChannels,
-                protocol,
-                lastSeen: Date.now()
-            };
-
-            if (protocol === 'artnet') {
-                setArtnetUniverses(prev => {
-                    const newUniverses = new Map(prev);
-                    newUniverses.set(universe, universeData);
-                    return newUniverses;
-                });
-
-                // Auto-select newly discovered universes
-                setSelectedUniverses(prev => {
-                    const newSet = new Set(prev);
-                    newSet.add(`${protocol}-${universe}`);
-                    return newSet;
-                });
-            } else if (protocol === 'sacn') {
-                setSacnUniverses(prev => {
-                    const newUniverses = new Map(prev);
-                    newUniverses.set(universe, universeData);
-                    return newUniverses;
-                });
-
-                // Auto-select newly discovered universes
-                setSelectedUniverses(prev => {
-                    const newSet = new Set(prev);
-                    newSet.add(`${protocol}-${universe}`);
-                    return newSet;
-                });
-            }
+        const handleSnapshot = (event, snapshot = {}) => {
+            setArtnetUniverses(toUniverseMap(snapshot.artnet));
+            setSacnUniverses(toUniverseMap(snapshot.sacn));
         };
 
         const handleUniverseRemoved = (event, { protocol, id }) => {
@@ -132,6 +48,7 @@ const useUniverseData = () => {
         };
 
         const handleClearUniverses = () => {
+            knownUniversesRef.current = new Set();
             setArtnetUniverses(new Map());
             setSacnUniverses(new Map());
             setSelectedUniverse(null);
@@ -139,23 +56,22 @@ const useUniverseData = () => {
             setSelectedUniverses(new Set());
         };
 
-        ipcRenderer.on('universe-updated', handleUniverseUpdated);
+        ipcRenderer.on('universes-snapshot', handleSnapshot);
         ipcRenderer.on('universe-removed', handleUniverseRemoved);
         ipcRenderer.on('clear-universes', handleClearUniverses);
 
         return () => {
-            ipcRenderer.removeListener('universe-updated', handleUniverseUpdated);
+            ipcRenderer.removeListener('universes-snapshot', handleSnapshot);
             ipcRenderer.removeListener('universe-removed', handleUniverseRemoved);
             ipcRenderer.removeListener('clear-universes', handleClearUniverses);
         };
     }, []);
 
     useEffect(() => {
-        // Auto-select first discovered universe if none is selected
         if (!selectedUniverse && !selectedProtocol) {
             const artnetUniverseIds = Array.from(artnetUniverses.keys());
             const sacnUniverseIds = Array.from(sacnUniverses.keys());
-            
+
             if (artnetUniverseIds.length > 0) {
                 setSelectedUniverse(artnetUniverseIds[0]);
                 setSelectedProtocol('artnet');
@@ -165,19 +81,28 @@ const useUniverseData = () => {
             }
         }
 
-        // Select all universes by default
-        const newSelectedUniverses = new Set();
-        artnetUniverses.forEach((_, universe) => {
-            newSelectedUniverses.add(`artnet-${universe}`);
-        });
-        sacnUniverses.forEach((_, universe) => {
-            newSelectedUniverses.add(`sacn-${universe}`);
-        });
-        
-        // Only update if there are changes to avoid infinite loop
-        if (newSelectedUniverses.size !== selectedUniverses.size) {
-            setSelectedUniverses(newSelectedUniverses);
+        const presentKeys = new Set();
+        artnetUniverses.forEach((_, universe) => presentKeys.add(`artnet-${universe}`));
+        sacnUniverses.forEach((_, universe) => presentKeys.add(`sacn-${universe}`));
+
+        for (const key of [...knownUniversesRef.current]) {
+            if (!presentKeys.has(key)) {
+                knownUniversesRef.current.delete(key);
+            }
         }
+
+        setSelectedUniverses(prev => {
+            const next = new Set(prev);
+            let changed = false;
+            for (const key of presentKeys) {
+                if (!knownUniversesRef.current.has(key)) {
+                    knownUniversesRef.current.add(key);
+                    next.add(key);
+                    changed = true;
+                }
+            }
+            return changed ? next : prev;
+        });
     }, [artnetUniverses, sacnUniverses, selectedUniverse, selectedProtocol]);
 
     const handleUniverseSelect = (universeId, protocol) => {
@@ -197,25 +122,23 @@ const useUniverseData = () => {
         setSelectedUniverses(prev => {
             const newSet = new Set(prev);
             const universes = protocol === 'artnet' ? artnetUniverses : sacnUniverses;
-            
-            const allSelected = Array.from(universes.keys()).every(id => 
+
+            const allSelected = Array.from(universes.keys()).every(id =>
                 newSet.has(`${protocol}-${id}`)
             );
-            
+
             if (allSelected) {
-                // Remove all universes of this protocol
                 Array.from(newSet).forEach(key => {
                     if (key.startsWith(protocol)) {
                         newSet.delete(key);
                     }
                 });
             } else {
-                // Add all universes of this protocol
                 universes.forEach((_, id) => {
                     newSet.add(`${protocol}-${id}`);
                 });
             }
-            
+
             return newSet;
         });
     };

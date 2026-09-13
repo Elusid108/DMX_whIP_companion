@@ -50,7 +50,7 @@ const UniverseCell = ({
                 sourceName && React.createElement('div', { 
                     className: 'text-sm text-gray-500'
                 }, `Name: ${sourceName}`),
-                fps && React.createElement('div', { 
+                typeof fps === 'number' && React.createElement('div', { 
                     className: 'text-sm text-gray-500'
                 }, `FPS: ${fps}`)
             )

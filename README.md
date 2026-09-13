@@ -2,7 +2,7 @@
 
 Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN).
 
-**Version:** 0.1.1
+**Version:** 0.2.0
 
 ## How to run
 
@@ -25,7 +25,7 @@ That means: plan only the first `###` section that still has unchecked items. Do
 
 ## Current state
 
-The Electron app boots and can bind Art-Net (UDP 6454) and sACN (UDP 5568). Universe auto-detect and the 512-channel grid are partly real. Recording UI exists but frames are never stored, so saved `.dmx` files are empty. Playback can crash on those files, and Stop has no main-process handler. Treat this as a prototype restart, not a shipping 1.0.
+The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recording UI exists but frames are never stored, so saved `.dmx` files are empty. Playback can crash on those files, and Stop has no main-process handler. Treat this as a prototype restart, not a shipping 1.0.
 
 ---
 
@@ -39,13 +39,13 @@ The Electron app boots and can bind Art-Net (UDP 6454) and sACN (UDP 5568). Univ
 
 ### Phase A — Trustworthy monitor
 
-- [ ] Remove the duplicate `set-protocol` IPC handler so Art-Net/sACN sockets bind once
-- [ ] Stop filtering the DMX grid by comparing packet `sourceIp` to the local NIC; bind on the chosen adapter and show sources in the UI
-- [ ] Persist “woken” channels (not dark grey) until that universe vanishes and reappears
-- [ ] Fix universe channel-count stale closure so the count is channels that have woken, not the highest non-zero in the current packet
-- [ ] Throttle grid IPC updates (keep packet handling in the main process; do not push every frame to React at line rate)
-- [ ] Receive sACN universes beyond 1–64 (join on demand or use E1.31 Universe Discovery)
-- [ ] Compute and display universe FPS in the main process
+- [x] Remove the duplicate `set-protocol` IPC handler so Art-Net/sACN sockets bind once
+- [x] Stop filtering the DMX grid by comparing packet `sourceIp` to the local NIC; bind on the chosen adapter and show sources in the UI
+- [x] Persist “woken” channels (not dark grey) until that universe vanishes and reappears
+- [x] Fix universe channel-count stale closure so the count is channels that have woken, not the highest non-zero in the current packet
+- [x] Throttle grid IPC updates (keep packet handling in the main process; do not push every frame to React at line rate)
+- [x] Receive sACN universes beyond 1–64 (join on demand or use E1.31 Universe Discovery)
+- [x] Compute and display universe FPS in the main process
 
 ### Phase B — Record and play
 

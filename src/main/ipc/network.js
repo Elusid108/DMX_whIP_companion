@@ -3,51 +3,100 @@ const ArtNetReceiver = require('../../services/artnet/receiver');
 const SacnReceiver = require('../../services/sacn/receiver');
 const SacnSender = require('../../services/sacn/sender');
 const { getNetworkInterfaces } = require('../../services/shared/networkUtils');
+const UniverseMonitor = require('../monitor/universeMonitor');
 
 let artnetReceiver = null;
 let sacnReceiver = null;
 let testSacnSender = null;
 let testSendInterval = null;
+let testDiscoveryInterval = null;
+let testSacnUniverses = [];
 let selectedUniverses = new Set();
+let setupGeneration = 0;
 
 function setupNetworkHandlers(mainWindow) {
-    const setupReceivers = async (interfaceIp) => {
-        // Clean up existing receivers
-        if (artnetReceiver) artnetReceiver.stop();
-        if (sacnReceiver) sacnReceiver.stop();
+    const monitor = new UniverseMonitor();
 
-        // Initialize new receivers
-        artnetReceiver = new ArtNetReceiver();
-        sacnReceiver = new SacnReceiver();
+    const sendToRenderer = (channel, payload) => {
+        if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+            return;
+        }
+        mainWindow.webContents.send(channel, payload);
+    };
+
+    monitor.start(
+        (snapshot) => sendToRenderer('universes-snapshot', snapshot),
+        (grid) => sendToRenderer('dmx-data-update', grid)
+    );
+
+    const setupReceivers = async (interfaceIp) => {
+        const generation = ++setupGeneration;
+
+        if (artnetReceiver) {
+            artnetReceiver.stop();
+            artnetReceiver = null;
+        }
+        if (sacnReceiver) {
+            sacnReceiver.stop();
+            sacnReceiver = null;
+        }
+
+        monitor.clear();
+        sendToRenderer('clear-universes');
+
+        const nextArtnet = new ArtNetReceiver();
+        const nextSacn = new SacnReceiver();
 
         try {
-            await artnetReceiver.start(interfaceIp);
-            await sacnReceiver.start(interfaceIp);
+            await nextArtnet.start(interfaceIp);
+            if (generation !== setupGeneration) {
+                nextArtnet.stop();
+                return;
+            }
 
-            // Set up callbacks
+            await nextSacn.start(interfaceIp);
+            if (generation !== setupGeneration) {
+                nextArtnet.stop();
+                nextSacn.stop();
+                return;
+            }
+
+            artnetReceiver = nextArtnet;
+            sacnReceiver = nextSacn;
+
             artnetReceiver.onDmxData('main', (data) => {
-                mainWindow.webContents.send('universe-updated', data);
-                mainWindow.webContents.send('dmx-data-update', {
+                monitor.ingest({
                     protocol: 'artnet',
                     universe: data.universe,
                     sourceIp: data.sourceIp,
-                    data: data.dmxData
+                    dmxData: data.dmxData
                 });
             });
 
             sacnReceiver.onDmxData('main', (data) => {
-                mainWindow.webContents.send('universe-updated', data);
-                mainWindow.webContents.send('dmx-data-update', {
+                monitor.ingest({
                     protocol: 'sacn',
                     universe: data.universe,
                     sourceIp: data.sourceIp,
                     sourceName: data.sourceName,
-                    data: data.dmxData,
-                    priority: data.priority
+                    dmxData: data.dmxData
                 });
             });
         } catch (error) {
+            nextArtnet.stop();
+            nextSacn.stop();
             console.error('Error setting up receivers:', error);
+        }
+    };
+
+    const clearTestSacnTimers = () => {
+        if (testSendInterval) {
+            clearInterval(testSendInterval);
+            testSendInterval = null;
+        }
+        if (testDiscoveryInterval) {
+            clearInterval(testDiscoveryInterval);
+            testDiscoveryInterval = null;
         }
     };
 
@@ -59,29 +108,42 @@ function setupNetworkHandlers(mainWindow) {
         const UNIVERSES_NEEDED = Math.ceil(TOTAL_PIXELS / PIXELS_PER_UNIVERSE);
 
         try {
+            clearTestSacnTimers();
             if (testSacnSender) {
-                clearInterval(testSendInterval);
-                for (const [universe, sender] of testSacnSender) {
-                    await sender.close();
-                }
+                testSacnSender.stop();
                 testSacnSender = null;
             }
 
-            let senders = new Map();
+            const sender = new SacnSender({
+                sourceName: 'Test sACN Sender',
+                priority: 100
+            });
+            await sender.start(interfaceIp);
+
+            testSacnSender = sender;
+            testSacnUniverses = [];
             for (let universe = 1; universe <= UNIVERSES_NEEDED; universe++) {
-                const sender = new SacnSender({
-                    sourceName: 'Test sACN Sender',
-                    priority: 100
-                });
-                await sender.start(interfaceIp);
-                senders.set(universe, sender);
+                testSacnUniverses.push(universe);
             }
 
-            testSacnSender = senders;
+            const sendDiscovery = () => {
+                if (!testSacnSender) {
+                    return;
+                }
+                testSacnSender.sendDiscovery(testSacnUniverses).catch((error) => {
+                    console.error('Error sending sACN universe discovery:', error);
+                });
+            };
+
+            sendDiscovery();
+            testDiscoveryInterval = setInterval(sendDiscovery, 10000);
 
             testSendInterval = setInterval(() => {
                 try {
-                    for (let [universe, sender] of senders) {
+                    if (!testSacnSender) {
+                        return;
+                    }
+                    for (const universe of testSacnUniverses) {
                         const channelData = new Uint8Array(512).fill(0);
                         const startPixel = (universe - 1) * PIXELS_PER_UNIVERSE;
                         const pixelsInThisUniverse = Math.min(
@@ -96,53 +158,55 @@ function setupNetworkHandlers(mainWindow) {
                             channelData[baseChannel + 2] = INTENSITY;
                         }
 
-                        sender.send(universe, channelData);
+                        testSacnSender.send(universe, channelData);
                     }
                 } catch (error) {
                     console.error('Error sending test sACN data:', error);
                 }
             }, Math.floor(1000 / REFRESH_RATE));
-
         } catch (error) {
             console.error('Error initializing test sACN:', error);
+            clearTestSacnTimers();
             if (testSacnSender) {
-                clearInterval(testSendInterval);
+                testSacnSender.stop();
                 testSacnSender = null;
             }
         }
     };
 
     const stopTestSacn = async () => {
-        if (testSendInterval) {
-            clearInterval(testSendInterval);
-            testSendInterval = null;
-        }
+        clearTestSacnTimers();
 
         if (testSacnSender) {
             try {
                 const zeroData = new Uint8Array(512).fill(0);
-                for (const [universe, sender] of testSacnSender) {
+                for (const universe of testSacnUniverses) {
                     for (let i = 0; i < 3; i++) {
-                        await sender.send(universe, zeroData, { priority: 0 });
+                        await testSacnSender.send(universe, zeroData, { priority: 0 });
                     }
-                    await sender.stop();
                 }
+                await testSacnSender.sendDiscovery([]);
             } catch (error) {
                 console.error('Error closing test sACN sender:', error);
             }
+            testSacnSender.stop();
             testSacnSender = null;
+            testSacnUniverses = [];
         }
 
-        mainWindow.webContents.send('test-sacn-stopped');
+        sendToRenderer('test-sacn-stopped');
     };
 
-    // IPC Handlers
     ipcMain.handle('get-network-interfaces', () => {
         return getNetworkInterfaces();
     });
 
     ipcMain.on('set-protocol', async (event, { interfaceIp }) => {
         await setupReceivers(interfaceIp);
+    });
+
+    ipcMain.on('select-monitor-universe', (event, { protocol, universe } = {}) => {
+        monitor.setSelected(protocol, universe);
     });
 
     ipcMain.on('update-selected-universes', (event, universes) => {
@@ -157,20 +221,15 @@ function setupNetworkHandlers(mainWindow) {
         stopTestSacn();
     });
 
-    ipcMain.on('set-protocol', async (event, { interfaceIp }) => {
-        mainWindow.webContents.send('network-interface-changed', { interfaceIp });
-        await setupReceivers(interfaceIp);
-    });
-
-    // Clean up function
     return () => {
+        setupGeneration += 1;
+        monitor.stop();
         if (artnetReceiver) artnetReceiver.stop();
         if (sacnReceiver) sacnReceiver.stop();
+        clearTestSacnTimers();
         if (testSacnSender) {
-            clearInterval(testSendInterval);
-            for (const [_, sender] of testSacnSender) {
-                sender.stop();
-            }
+            testSacnSender.stop();
+            testSacnSender = null;
         }
     };
 }
