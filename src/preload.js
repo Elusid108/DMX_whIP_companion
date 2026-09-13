@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const INVOKE = new Set([
     'get-network-interfaces',
+    'get-settings',
+    'set-theme',
     'library-list',
     'library-new-file',
     'library-inspect',
@@ -10,6 +12,7 @@ const INVOKE = new Set([
     'library-export',
     'library-rename',
     'library-delete',
+    'library-choose-dir',
     'load-recording'
 ]);
 

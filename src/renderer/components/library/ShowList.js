@@ -8,7 +8,7 @@ const ShowList = ({
 }) => {
     if (!shows.length) {
         return React.createElement('div', {
-            className: 'text-sm text-gray-500 italic p-3'
+            className: 'text-sm text-zinc-500 italic p-2'
         }, 'No shows in the library yet. Use New File or Import.');
     }
 
@@ -22,18 +22,18 @@ const ShowList = ({
                 key: show.filePath,
                 type: 'button',
                 onClick: () => onSelect(show.filePath),
-                className: `text-left p-2 rounded border ${
-                    isSelected
-                        ? 'bg-blue-100 border-blue-300'
-                        : 'bg-white border-transparent hover:bg-gray-50'
-                }`
+                className: `kv-row ${isSelected ? 'is-active' : ''}`
             },
                 React.createElement('div', {
-                    className: 'font-medium truncate'
-                }, show.displayName),
-                React.createElement('div', {
-                    className: 'text-xs text-gray-500 truncate'
-                }, isLoaded ? `${show.filename} · loaded` : show.filename)
+                    className: 'min-w-0'
+                },
+                    React.createElement('div', {
+                        className: 'font-medium truncate text-sm'
+                    }, show.displayName),
+                    React.createElement('div', {
+                        className: 'text-xs text-zinc-500 truncate'
+                    }, isLoaded ? `${show.filename} · loaded` : show.filename)
+                )
             );
         })
     );

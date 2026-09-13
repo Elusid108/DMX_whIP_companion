@@ -1,4 +1,5 @@
 const React = require('react');
+const { displayUniverse } = require('../../universeDisplay');
 
 const UniverseCell = ({
     universe,
@@ -8,50 +9,44 @@ const UniverseCell = ({
     onSelect,
     onClick
 }) => {
-    const protocolStyle = protocol === 'artnet' 
-        ? { selected: 'bg-blue-100 border border-blue-300', normal: 'bg-gray-50' }
-        : { selected: 'bg-green-100 border border-green-300', normal: 'bg-gray-50' };
-
-    // Ensure we have valid universe data
     const universeId = universe?.id ?? universe?.universe ?? 'undefined';
     const channels = universe?.activeChannels ?? 0;
     const sourceIp = universe?.sourceIp ?? 'unknown';
     const sourceName = universe?.sourceName;
     const fps = universe?.fps;
     const isStale = universe?.stale;
+    const label = displayUniverse(protocol, universeId);
 
     return React.createElement('div', {
-        className: `p-2 rounded ${isSelected ? protocolStyle.selected : protocolStyle.normal}`
+        className: `kv-row ${isSelected ? 'is-active' : ''}`
     },
-        React.createElement('div', { 
-            className: 'flex items-center gap-2'
+        React.createElement('div', {
+            className: 'flex items-center gap-2 w-full min-w-0'
         },
-            // Checkbox
             React.createElement('input', {
                 type: 'checkbox',
                 checked: isChecked,
                 onChange: onSelect,
-                className: 'h-4 w-4'
+                className: 'h-3.5 w-3.5 flex-none accent-cyan-400'
             }),
-            // Universe Info
             React.createElement('div', {
-                className: 'flex-grow cursor-pointer',
+                className: 'flex-grow cursor-pointer min-w-0',
                 onClick: onClick
             },
-                React.createElement('div', { 
-                    className: 'font-medium'
-                }, `Universe ${universeId}${isStale ? ' (Inactive)' : ''}`),
-                React.createElement('div', { 
-                    className: 'text-sm text-gray-500'
+                React.createElement('div', {
+                    className: 'font-medium text-sm'
+                }, `Universe ${label}${isStale ? ' (Inactive)' : ''}`),
+                React.createElement('div', {
+                    className: 'text-xs text-zinc-500'
                 }, `Channels: ${channels}`),
-                React.createElement('div', { 
-                    className: 'text-sm text-gray-500'
+                React.createElement('div', {
+                    className: 'text-xs text-zinc-500 truncate'
                 }, `Source: ${sourceIp}`),
-                sourceName && React.createElement('div', { 
-                    className: 'text-sm text-gray-500'
+                sourceName && React.createElement('div', {
+                    className: 'text-xs text-zinc-500 truncate'
                 }, `Name: ${sourceName}`),
-                typeof fps === 'number' && React.createElement('div', { 
-                    className: 'text-sm text-gray-500'
+                typeof fps === 'number' && React.createElement('div', {
+                    className: 'text-xs text-zinc-500'
                 }, `FPS: ${fps}`)
             )
         )

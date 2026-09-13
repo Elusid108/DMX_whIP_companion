@@ -1,3 +1,111 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  html.light {
+    color-scheme: light;
+  }
+
+  html.dark select option {
+    background-color: #18181b;
+    color: #e4e4e7;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #f4f4f5;
+  }
+
+  html.dark ::-webkit-scrollbar-track {
+    background: #09090b;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #d4d4d8;
+    border-radius: 4px;
+  }
+
+  html.dark ::-webkit-scrollbar-thumb {
+    background: #3f3f46;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a1a1aa;
+  }
+
+  html.dark ::-webkit-scrollbar-thumb:hover {
+    background: #52525b;
+  }
+}
+
+@layer components {
+  .field {
+    @apply w-full rounded-lg border px-2.5 py-1.5 text-sm outline-none
+      bg-white border-zinc-300 text-zinc-900
+      dark:bg-zinc-950 dark:border-zinc-800 dark:text-zinc-200
+      focus:border-cyan-600 dark:focus:border-cyan-400
+      disabled:opacity-50;
+  }
+
+  .btn-quiet {
+    @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg
+      bg-white border border-zinc-300 text-zinc-700
+      dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300
+      hover:border-zinc-500 hover:text-zinc-900
+      dark:hover:border-zinc-600 dark:hover:text-white
+      disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg
+      bg-cyan-600 text-white
+      dark:bg-cyan-400 dark:text-zinc-950
+      hover:bg-cyan-500 dark:hover:bg-cyan-300
+      disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg
+      bg-red-600 text-white
+      hover:bg-red-500
+      disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .kv-row {
+    @apply flex items-center gap-3 w-full text-left px-3 py-2 rounded-lg border
+      border-zinc-200 bg-white
+      dark:border-zinc-800 dark:bg-zinc-900;
+  }
+
+  .kv-row.is-active {
+    @apply border-cyan-600 bg-cyan-50 dark:border-cyan-400/40 dark:bg-zinc-800;
+    box-shadow: inset 2px 0 0 #22d3ee;
+  }
+
+  .tab-btn {
+    @apply px-3 py-2 text-sm font-medium border-b-2 border-transparent text-zinc-500;
+  }
+
+  .tab-btn.is-active {
+    @apply text-cyan-600 border-cyan-600 dark:text-cyan-400 dark:border-cyan-400;
+  }
+}

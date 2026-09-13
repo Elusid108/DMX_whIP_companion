@@ -6,16 +6,16 @@ const NetworkSelect = ({ selectedNic, networkInterfaces, onChange }) => {
         onChange(newNic);
     };
 
-    return React.createElement('div', { 
-        className: 'flex flex-col min-w-fit' 
+    return React.createElement('div', {
+        className: 'flex flex-col min-w-fit'
     },
-        React.createElement('label', { 
-            className: 'block text-sm font-medium text-gray-700 mb-1'
-        }, 'Network Interface'),
+        React.createElement('label', {
+            className: 'text-xs font-medium text-zinc-500 mb-0.5'
+        }, 'NIC'),
         React.createElement('select', {
             value: selectedNic,
             onChange: handleChange,
-            className: 'border rounded p-2 w-fit'
+            className: 'field w-auto min-w-[10rem] py-1'
         },
             networkInterfaces.map(nic =>
                 React.createElement('option', {

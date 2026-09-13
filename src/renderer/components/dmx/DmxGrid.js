@@ -1,5 +1,6 @@
 const React = require('react');
 const DmxCell = require('./DmxCell');
+const { displayUniverse } = require('../../universeDisplay');
 
 const GRID_STYLES = {
     '16x32': {
@@ -12,6 +13,16 @@ const GRID_STYLES = {
     }
 };
 
+const protocolTitle = (protocol) => {
+    if (protocol === 'artnet') {
+        return 'Art-Net';
+    }
+    if (protocol === 'sacn') {
+        return 'sACN';
+    }
+    return protocol ? String(protocol).toUpperCase() : '';
+};
+
 const DmxGrid = React.memo(({
     dmxData,
     selectedUniverse,
@@ -20,19 +31,19 @@ const DmxGrid = React.memo(({
     gridDimensions = '16x32',
     showAnimations
 }) => {
-    const gridStyle = React.useMemo(() => 
-        GRID_STYLES[gridDimensions], 
+    const gridStyle = React.useMemo(() =>
+        GRID_STYLES[gridDimensions],
     [gridDimensions]);
 
-    return React.createElement('div', { 
-            className: 'flex-1 bg-white p-4 rounded-lg shadow-md overflow-auto min-h-0'
+    const title = selectedUniverse !== null
+        ? `DMX Channels — ${protocolTitle(selectedProtocol)} Universe ${displayUniverse(selectedProtocol, selectedUniverse)}`
+        : 'DMX Channels — No Universe Selected';
+
+    return React.createElement('div', {
+            className: 'flex-1 p-3 overflow-auto min-h-0 bg-white dark:bg-zinc-900 border-l border-zinc-200 dark:border-zinc-800'
         },
-        React.createElement('h3', { className: 'font-bold mb-2' },
-            selectedUniverse !== null 
-                ? `DMX Channels - ${selectedProtocol.toUpperCase()} Universe ${selectedUniverse}`
-                : 'DMX Channels - No Universe Selected'
-        ),
-        React.createElement('div', { 
+        React.createElement('h3', { className: 'text-sm font-semibold mb-2' }, title),
+        React.createElement('div', {
             className: 'gap-1 w-full',
             style: gridStyle
         },
@@ -49,7 +60,6 @@ const DmxGrid = React.memo(({
         )
     );
 }, (prev, next) => {
-    // Custom comparison to prevent unnecessary re-renders
     return (
         prev.selectedUniverse === next.selectedUniverse &&
         prev.selectedProtocol === next.selectedProtocol &&

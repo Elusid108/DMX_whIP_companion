@@ -132,54 +132,47 @@ const RecordingControls = ({ selectedUniverses }) => {
     };
 
     return React.createElement('div', {
-        className: 'flex flex-col gap-4'
+        className: 'flex flex-col gap-1 min-w-0'
     },
         React.createElement('div', {
-            className: 'flex items-center gap-4 flex-wrap'
+            className: 'flex items-center gap-1.5 flex-wrap'
         },
             React.createElement('button', {
                 onClick: handleNewFile,
-                className: 'px-4 py-2 rounded bg-gray-700 text-white',
+                className: 'btn-quiet',
                 disabled: isRecording || isPlaying
             }, 'New File'),
 
             recordingPath && React.createElement('button', {
                 onClick: isRecording ? handleStopRecording : handleStartRecording,
-                className: `px-4 py-2 rounded ${isRecording ? 'bg-red-500' : 'bg-green-500'} text-white`,
+                className: isRecording ? 'btn-danger' : 'btn-primary',
                 disabled: isPlaying || (!isRecording && (!selectedUniverses || selectedUniverses.size === 0))
-            }, isRecording ? 'Stop Recording' : 'Start Recording Selected'),
+            }, isRecording ? 'Stop Recording' : 'Record'),
 
             React.createElement('button', {
                 onClick: handleLoadFile,
-                className: `px-4 py-2 rounded bg-blue-500 text-white ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`,
-                disabled: isRecording || isLoading,
-                style: { pointerEvents: isLoading ? 'none' : 'auto' }
-            }, isLoading ? 'Loading...' : 'Load Recording'),
+                className: 'btn-quiet',
+                disabled: isRecording || isLoading
+            }, isLoading ? 'Loading...' : 'Load'),
 
             recordingFileName && React.createElement('span', {
-                className: 'text-sm text-gray-600'
-            }, `File: ${recordingFileName}`)
+                className: 'text-xs text-zinc-500 truncate max-w-[12rem]'
+            }, recordingFileName)
         ),
 
         loadError && React.createElement('div', {
-            className: 'text-sm text-red-600'
+            className: 'text-xs text-red-500'
         }, loadError),
 
         isRecording && React.createElement('div', {
-            className: 'flex gap-4'
+            className: 'flex gap-3 text-xs text-zinc-500'
         },
+            React.createElement('span', null, formatDuration(recordingDuration)),
+            React.createElement('span', null, `${recordingFps} fps`),
+            React.createElement('span', null, `${frameCount} frames`),
             React.createElement('span', {
-                className: 'text-sm'
-            }, `Duration: ${formatDuration(recordingDuration)}`),
-            React.createElement('span', {
-                className: 'text-sm'
-            }, `FPS: ${recordingFps}`),
-            React.createElement('span', {
-                className: 'text-sm'
-            }, `Frames: ${frameCount}`),
-            React.createElement('span', {
-                className: 'text-sm text-red-500'
-            }, `Dropped: ${droppedFrames}`)
+                className: 'text-red-500'
+            }, `Dropped ${droppedFrames}`)
         )
     );
 };

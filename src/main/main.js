@@ -5,6 +5,7 @@ const setupNetworkHandlers = require('./ipc/network');
 const setupRecordingHandlers = require('./ipc/recording');
 const setupPlaybackHandlers = require('./ipc/playback');
 const { setupLibraryHandlers } = require('./ipc/library');
+const setupSettingsHandlers = require('./ipc/settings');
 
 let mainWindow = null;
 
@@ -25,25 +26,26 @@ function createWindow() {
         event.preventDefault();
     });
 
+    const recordingHandler = setupRecordingHandlers(mainWindow);
+    const cleanupNetwork = setupNetworkHandlers(mainWindow, recordingHandler);
+    setupPlaybackHandlers(mainWindow);
+    const cleanupLibrary = setupLibraryHandlers(mainWindow, recordingHandler);
+    const cleanupSettings = setupSettingsHandlers();
+
+    mainWindow.on('closed', () => {
+        if (cleanupNetwork) cleanupNetwork();
+        if (cleanupLibrary) cleanupLibrary();
+        if (cleanupSettings) cleanupSettings();
+        if (recordingHandler && recordingHandler.close) recordingHandler.close();
+        mainWindow = null;
+    });
+
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
         .catch(err => console.error('Error loading index.html:', err));
 
     if (process.env.DEBUG) {
         mainWindow.webContents.openDevTools();
     }
-
-    // Set up IPC handlers
-    const recordingHandler = setupRecordingHandlers(mainWindow);
-    const cleanupNetwork = setupNetworkHandlers(mainWindow, recordingHandler);
-    setupPlaybackHandlers(mainWindow);
-    const cleanupLibrary = setupLibraryHandlers(mainWindow, recordingHandler);
-
-    mainWindow.on('closed', () => {
-        if (cleanupNetwork) cleanupNetwork();
-        if (cleanupLibrary) cleanupLibrary();
-        if (recordingHandler && recordingHandler.close) recordingHandler.close();
-        mainWindow = null;
-    });
 }
 
 app.whenReady().then(createWindow);

@@ -157,6 +157,16 @@ const LibraryPanel = () => {
         }
     };
 
+    const handleChangeFolder = () => runAction(async () => {
+        const result = await ipcRenderer.invoke('library-choose-dir');
+        if (result && result.success) {
+            setLibraryDir(result.libraryDir || '');
+            applyList(result.shows || []);
+        } else if (result && result.error && result.error !== 'No file selected') {
+            setError(result.error);
+        }
+    });
+
     const handleImport = () => runAction(async () => {
         const result = await ipcRenderer.invoke('library-import');
         if (result && result.success) {
@@ -231,29 +241,40 @@ const LibraryPanel = () => {
     });
 
     return React.createElement('div', {
-        className: 'flex-1 bg-white rounded-lg shadow-md min-h-0 flex flex-col overflow-hidden'
+        className: 'flex-1 min-h-0 flex flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950'
     },
         React.createElement('div', {
-            className: 'flex items-center justify-between gap-2 p-3 border-b'
+            className: 'flex items-center justify-between gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800'
         },
             React.createElement('div', {
-                className: 'text-sm text-gray-600 truncate'
-            }, libraryDir ? `Library: ${libraryDir}` : 'Library'),
-            React.createElement('button', {
-                type: 'button',
-                className: 'px-3 py-2 rounded bg-gray-700 text-white disabled:opacity-50',
-                disabled: busy,
-                onClick: handleImport
-            }, 'Import')
+                className: 'text-xs text-zinc-500 truncate',
+                title: libraryDir
+            }, libraryDir || 'Library'),
+            React.createElement('div', {
+                className: 'flex items-center gap-1.5 flex-none'
+            },
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet',
+                    disabled: busy,
+                    onClick: handleChangeFolder
+                }, 'Change folder'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet',
+                    disabled: busy,
+                    onClick: handleImport
+                }, 'Import')
+            )
         ),
         error && React.createElement('div', {
-            className: 'px-3 pt-2 text-sm text-red-600'
+            className: 'px-3 pt-2 text-sm text-red-500'
         }, error),
         React.createElement('div', {
             className: 'flex flex-1 min-h-0'
         },
             React.createElement('div', {
-                className: 'w-72 border-r p-2 overflow-y-auto'
+                className: 'w-72 border-r border-zinc-200 dark:border-zinc-800 p-2 overflow-y-auto'
             },
                 React.createElement(ShowList, {
                     shows,
@@ -263,7 +284,7 @@ const LibraryPanel = () => {
                 })
             ),
             React.createElement('div', {
-                className: 'flex-1 p-4 min-h-0'
+                className: 'flex-1 p-3 min-h-0 overflow-hidden'
             },
                 React.createElement(ShowInspector, {
                     show: inspect,

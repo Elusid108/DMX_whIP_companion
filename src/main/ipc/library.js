@@ -1,7 +1,8 @@
-const { ipcMain, dialog, app } = require('electron');
+const { ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { createHeader, scanRecording } = require('../../services/shared/dmxRecording');
+const { getLibraryDir, saveSettings } = require('../settings');
 
 const INVALID_NAME = new RegExp('[<>:"/\\\\|?*\\x00-\\x1f]', 'g');
 
@@ -11,8 +12,6 @@ const sendSafe = (mainWindow, channel, payload) => {
     }
     mainWindow.webContents.send(channel, payload);
 };
-
-const getLibraryDir = () => path.join(app.getPath('documents'), 'DMX whIP', 'Shows');
 
 const ensureLibrary = () => {
     const dir = getLibraryDir();
@@ -226,7 +225,8 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
         'library-import',
         'library-export',
         'library-rename',
-        'library-delete'
+        'library-delete',
+        'library-choose-dir'
     ];
 
     ipcMain.handle('library-list', async () => {
@@ -366,6 +366,30 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
 
             return { success: true, filePath: dest };
         } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('library-choose-dir', async () => {
+        try {
+            const { filePaths, canceled } = await dialog.showOpenDialog({
+                title: 'Choose library folder',
+                defaultPath: getLibraryDir(),
+                properties: ['openDirectory', 'createDirectory']
+            });
+            if (canceled || !filePaths || filePaths.length === 0) {
+                return { success: false, error: 'No file selected' };
+            }
+
+            const libraryDir = filePaths[0];
+            fs.mkdirSync(libraryDir, { recursive: true });
+            saveSettings({ libraryDir });
+            inspectCache.clear();
+            startWatch();
+            emitList();
+            return { success: true, libraryDir, shows: listShows() };
+        } catch (error) {
+            console.error('Error choosing library folder:', error);
             return { success: false, error: error.message };
         }
     });

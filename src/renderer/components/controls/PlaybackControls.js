@@ -72,84 +72,63 @@ const PlaybackControls = ({
         return null;
     }
 
-    return React.createElement('div', { 
-        className: 'flex flex-col gap-2'
+    return React.createElement('div', {
+        className: 'flex flex-col gap-1 min-w-0'
     },
-        // Controls Row
-        React.createElement('div', { 
-            className: 'flex items-center gap-4'
+        React.createElement('div', {
+            className: 'flex items-center gap-1.5 flex-wrap'
         },
-            // Play/Pause button
             React.createElement('button', {
                 onClick: handlePlayback,
-                className: `px-4 py-2 rounded ${isPlaying ? 'bg-yellow-500' : 'bg-blue-500'} text-white`
+                className: 'btn-primary'
             }, isPlaying ? 'Pause' : 'Play'),
 
-            // Stop button
             React.createElement('button', {
                 onClick: () => {
                     ipcRenderer.send('stop-playback');
                 },
-                className: 'px-4 py-2 rounded bg-red-500 text-white'
+                className: 'btn-danger'
             }, 'Stop'),
 
-            // Loop checkbox
-            React.createElement('label', { 
-                className: 'flex items-center gap-2'
+            React.createElement('label', {
+                className: 'flex items-center gap-1.5 text-xs text-zinc-500'
             },
                 React.createElement('input', {
                     type: 'checkbox',
                     checked: isLoopEnabled,
                     onChange: (e) => setIsLoopEnabled(e.target.checked),
-                    className: 'form-checkbox'
+                    className: 'h-3.5 w-3.5 accent-cyan-400'
                 }),
-                'Loop Playback'
+                'Loop'
             ),
 
-            // Network selector
-            React.createElement('div', { 
-                className: 'flex flex-col min-w-fit'
+            React.createElement('select', {
+                value: playbackNetwork,
+                onChange: (e) => setPlaybackNetwork(e.target.value),
+                className: 'field w-auto min-w-[8rem] py-1',
+                title: 'Playback Network'
             },
-                React.createElement('label', {
-                    className: 'text-sm text-gray-600'
-                }, 'Playback Network'),
-                React.createElement('select', {
-                    value: playbackNetwork,
-                    onChange: (e) => setPlaybackNetwork(e.target.value),
-                    className: 'border rounded p-1'
-                },
-                    networkInterfaces.map(nic =>
-                        React.createElement('option', {
-                            key: nic.ip,
-                            value: nic.ip
-                        }, `${nic.name} (${nic.ip})`)
-                    )
+                networkInterfaces.map(nic =>
+                    React.createElement('option', {
+                        key: nic.ip,
+                        value: nic.ip
+                    }, `${nic.name} (${nic.ip})`)
                 )
             ),
 
-            // Loaded filename
             loadedFileName && React.createElement('span', {
-                className: 'text-sm text-gray-600 ml-2'
-            }, `Loaded: ${loadedFileName}`)
+                className: 'text-xs text-zinc-500 truncate max-w-[10rem]'
+            }, loadedFileName)
         ),
 
-        // Stats Row
-        (isPlaying || isPaused) && playbackStats.currentFrame !== null && 
-        React.createElement('div', { 
-            className: 'flex gap-4 ml-4'
+        (isPlaying || isPaused) && playbackStats.currentFrame !== null &&
+        React.createElement('div', {
+            className: 'flex gap-3 text-xs text-zinc-500'
         },
-            React.createElement('span', {
-                className: 'text-sm'
-            }, `Clip: ${formatDuration(playbackStats.clipTime)}`),
-            React.createElement('span', {
-                className: 'text-sm'
-            }, `Total: ${formatDuration(playbackStats.totalPlayTime)}`),
-            React.createElement('span', {
-                className: 'text-sm'
-            }, `Frame: ${playbackStats.currentFrame}/${playbackStats.totalFrames}`),
-            React.createElement('span', {
-                className: 'text-sm'
-            }, `FPS: ${playbackStats.fps}`)
+            React.createElement('span', null, `Clip ${formatDuration(playbackStats.clipTime)}`),
+            React.createElement('span', null, `Total ${formatDuration(playbackStats.totalPlayTime)}`),
+            React.createElement('span', null, `${playbackStats.currentFrame}/${playbackStats.totalFrames}`),
+            React.createElement('span', null, `${playbackStats.fps} fps`)
         )
     );
 };
