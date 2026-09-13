@@ -395,6 +395,7 @@ const downloadFile = async (ip, sdPath, destPath) => {
 
 module.exports = {
     SOFTAP_IP,
+    isIpv4,
     destUploadPath,
     downloadFile,
     fetchStatus,

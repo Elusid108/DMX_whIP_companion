@@ -1,4 +1,4 @@
-const { ipcMain } = require('electron');
+const { ipcMain, shell } = require('electron');
 const ArtNetReceiver = require('../../services/artnet/receiver');
 const SacnReceiver = require('../../services/sacn/receiver');
 const { getNetworkInterfaces } = require('../../services/shared/networkUtils');
@@ -7,6 +7,7 @@ const { assertInLibrary, sanitizeBaseName, uniqueDmxPath, writeSidecar, ensureLi
 const {
     downloadFile,
     fetchStatus,
+    isIpv4,
     postForm,
     postIdentify,
     postUpload,
@@ -299,6 +300,18 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         }
     });
 
+    ipcMain.handle('device-open-portal', async (event, { ip } = {}) => {
+        if (!isIpv4(ip)) {
+            return { success: false, error: 'Invalid device IP' };
+        }
+        try {
+            await shell.openExternal(`http://${String(ip).trim()}/`);
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.handle('device-pull-show', async (event, { ip, path: sdPath } = {}) => {
         try {
             const display = sdDisplayName(sdPath) || 'show';
@@ -356,6 +369,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('device-wifi-forget');
         ipcMain.removeHandler('device-set-name');
         ipcMain.removeHandler('device-rename-show');
+        ipcMain.removeHandler('device-open-portal');
         ipcMain.removeHandler('device-pull-show');
         ipcMain.removeListener('devices-scan', handleScan);
     };

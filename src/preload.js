@@ -27,6 +27,7 @@ const INVOKE = new Set([
     'device-wifi-forget',
     'device-set-name',
     'device-rename-show',
+    'device-open-portal',
     'device-pull-show'
 ]);
 

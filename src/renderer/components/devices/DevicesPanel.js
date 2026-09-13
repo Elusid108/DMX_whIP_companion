@@ -343,7 +343,13 @@ const DevicesPanel = () => {
                             : device
                     )),
                     selectedId,
-                    onSelect: setSelectedId
+                    onSelect: setSelectedId,
+                    onOpenPortal: (device) => {
+                        if (!device || !device.ip) {
+                            return;
+                        }
+                        ipcRenderer.invoke('device-open-portal', { ip: device.ip });
+                    }
                 })
             ),
             React.createElement('div', {
