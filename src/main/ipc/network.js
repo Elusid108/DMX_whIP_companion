@@ -243,11 +243,44 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         }
     });
 
-    ipcMain.handle('device-play', async (event, { ip, path: sdPath } = {}) => {
-        if (!sdPath || !String(sdPath).startsWith('/') || !/\.dmx$/i.test(sdPath)) {
-            return { success: false, error: 'Select a .dmx on the node SD' };
+    ipcMain.handle('device-play', async (event, {
+        ip,
+        src = 'file',
+        path: sdPath,
+        file_loop,
+        folder_rep,
+        n
+    } = {}) => {
+        const playSrc = String(src || 'file');
+        if (playSrc === 'stop') {
+            return postForm(ip, '/play', { src: 'stop' });
         }
-        return postForm(ip, '/play', { src: 'file', path: sdPath, file_loop: 'one' });
+        const fields = { src: playSrc };
+        if (playSrc === 'root') {
+            fields.path = '/';
+        } else if (playSrc === 'folder') {
+            if (!sdPath || !String(sdPath).startsWith('/')) {
+                return { success: false, error: 'Select a folder on the node SD' };
+            }
+            fields.path = sdPath;
+        } else if (playSrc === 'file') {
+            if (!sdPath || !String(sdPath).startsWith('/') || !/\.dmx$/i.test(sdPath)) {
+                return { success: false, error: 'Select a .dmx on the node SD' };
+            }
+            fields.path = sdPath;
+        } else {
+            return { success: false, error: 'Bad play source' };
+        }
+        if (file_loop) {
+            fields.file_loop = file_loop;
+        }
+        if (folder_rep) {
+            fields.folder_rep = folder_rep;
+        }
+        if (n != null && n !== '') {
+            fields.n = n;
+        }
+        return postForm(ip, '/play', fields);
     });
 
     ipcMain.handle('device-stop', async (event, { ip } = {}) => {

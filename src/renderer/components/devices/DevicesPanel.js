@@ -14,6 +14,14 @@ const sortShows = (paths) => paths.slice().sort((a, b) =>
     showSortName(a).localeCompare(showSortName(b), undefined, { numeric: true, sensitivity: 'base' })
 );
 
+const clampBri = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+        return null;
+    }
+    return Math.max(0, Math.min(255, Math.round(n)));
+};
+
 const DevicesPanel = () => {
     const [devices, setDevices] = useState([]);
     const [nic, setNic] = useState({ name: '', ip: '' });
@@ -22,8 +30,14 @@ const DevicesPanel = () => {
     const [statusError, setStatusError] = useState('');
     const [identifying, setIdentifying] = useState(false);
     const [busy, setBusy] = useState(false);
-    const [sdPath, setSdPath] = useState(null);
+    const [faceTab, setFaceTab] = useState('playback');
+    const [playSrc, setPlaySrc] = useState('root');
+    const [playPath, setPlayPath] = useState('/');
     const [files, setFiles] = useState([]);
+    const [dirs, setDirs] = useState([]);
+    const [fileLoop, setFileLoop] = useState('one');
+    const [folderRep, setFolderRep] = useState('forever');
+    const [folderN, setFolderN] = useState(1);
     const [nodeName, setNodeName] = useState('');
     const [brightness, setBrightness] = useState(10);
     const [proto, setProto] = useState('auto');
@@ -35,11 +49,34 @@ const DevicesPanel = () => {
     const [scanning, setScanning] = useState(false);
     const [renaming, setRenaming] = useState(false);
     const [renameDraft, setRenameDraft] = useState('');
+
     const selectedRef = useRef(null);
-    const dirtyRef = useRef(false);
+    const selectedIpRef = useRef(null);
+    const playSrcRef = useRef(playSrc);
+    const playPathRef = useRef(playPath);
+    const fileLoopRef = useRef(fileLoop);
+    const folderRepRef = useRef(folderRep);
+    const folderNRef = useRef(folderN);
+    const protoRef = useRef(proto);
+    const fpsRef = useRef(fps);
+    const bufRef = useRef(buf);
     const nameDirtyRef = useRef(false);
+    const playDirtyRef = useRef(false);
+    const briDirtyRef = useRef(false);
+    const liveDirtyRef = useRef(false);
+    const wifiDirtyRef = useRef(false);
+    const briTimerRef = useRef(null);
+    const liveTimerRef = useRef(null);
 
     selectedRef.current = selectedId;
+    playSrcRef.current = playSrc;
+    playPathRef.current = playPath;
+    fileLoopRef.current = fileLoop;
+    folderRepRef.current = folderRep;
+    folderNRef.current = folderN;
+    protoRef.current = proto;
+    fpsRef.current = fps;
+    bufRef.current = buf;
 
     useEffect(() => {
         const handleUpdate = (event, payload = {}) => {
@@ -64,39 +101,73 @@ const DevicesPanel = () => {
     const selected = devices.find((device) => device.id === selectedId) || null;
     const selectedIp = selected ? selected.ip : null;
     const selectedStale = Boolean(selected && selected.stale);
+    selectedIpRef.current = selectedIp;
 
     useEffect(() => {
-        dirtyRef.current = false;
         nameDirtyRef.current = false;
+        playDirtyRef.current = false;
+        briDirtyRef.current = false;
+        liveDirtyRef.current = false;
+        wifiDirtyRef.current = false;
+        clearTimeout(briTimerRef.current);
+        clearTimeout(liveTimerRef.current);
         setNetworks([]);
         setWifiPassword('');
-        setSdPath(null);
+        setPlaySrc('root');
+        setPlayPath('/');
         setFiles([]);
+        setDirs([]);
+        setFileLoop('one');
+        setFolderRep('forever');
+        setFolderN(1);
         setNodeName('');
         setRenaming(false);
         setRenameDraft('');
+        setFaceTab('playback');
     }, [selectedId]);
+
+    useEffect(() => () => {
+        clearTimeout(briTimerRef.current);
+        clearTimeout(liveTimerRef.current);
+    }, []);
 
     const applyStatus = (next) => {
         setStatus(next);
-        const nextFiles = sortShows(next && next.play && Array.isArray(next.play.files) ? next.play.files : []);
+        const play = next && next.play ? next.play : {};
+        const nextFiles = sortShows(Array.isArray(play.files) ? play.files : []);
+        const nextDirs = sortShows(Array.isArray(play.dirs) ? play.dirs : []);
         setFiles(nextFiles);
-        setSdPath((current) => {
-            if (current && nextFiles.includes(current)) {
-                return current;
+        setDirs(nextDirs);
+        if (!playDirtyRef.current) {
+            const src = play.src || 'root';
+            setPlaySrc(src);
+            if (src === 'root') {
+                setPlayPath('/');
+            } else if (src === 'folder') {
+                setPlayPath(play.path && nextDirs.includes(play.path) ? play.path : (nextDirs[0] || '/'));
+            } else {
+                const path = play.path && nextFiles.includes(play.path)
+                    ? play.path
+                    : (play.now && nextFiles.includes(play.now) ? play.now : (nextFiles[0] || '/'));
+                setPlayPath(path);
             }
-            if (next.play && next.play.now && nextFiles.includes(next.play.now)) {
-                return next.play.now;
+            if (play.file_loop) {
+                setFileLoop(play.file_loop);
             }
-            return nextFiles[0] || null;
-        });
+            if (play.folder_rep) {
+                setFolderRep(play.folder_rep);
+            }
+            if (typeof play.n === 'number') {
+                setFolderN(play.n);
+            }
+        }
         if (!nameDirtyRef.current && next.name) {
             setNodeName(next.name);
         }
-        if (!dirtyRef.current) {
-            if (next.bri != null) {
-                setBrightness(next.bri);
-            }
+        if (!briDirtyRef.current && next.bri != null) {
+            setBrightness(next.bri);
+        }
+        if (!liveDirtyRef.current) {
             if (next.proto) {
                 setProto(next.proto);
             }
@@ -106,9 +177,9 @@ const DevicesPanel = () => {
             if (next.buf != null) {
                 setBuf(next.buf);
             }
-            if (next.ssid || next.saved) {
-                setWifiSsid(next.ssid || next.saved || '');
-            }
+        }
+        if (!wifiDirtyRef.current && (next.ssid || next.saved)) {
+            setWifiSsid(next.ssid || next.saved || '');
         }
     };
 
@@ -154,12 +225,10 @@ const DevicesPanel = () => {
                 return;
             }
             if (result.status && result.status.ver) {
-                dirtyRef.current = false;
                 applyStatus(result.status);
             } else {
                 const refresh = await ipcRenderer.invoke('device-status', { ip: selected.ip });
                 if (refresh && refresh.success) {
-                    dirtyRef.current = false;
                     applyStatus(refresh.status);
                 }
             }
@@ -183,39 +252,63 @@ const DevicesPanel = () => {
         }
     };
 
-    const playPath = (target) => runDevice(async () => {
-        ipcRenderer.send('stop-playback');
-        return ipcRenderer.invoke('device-play', { ip: selected.ip, path: target });
+    const playFields = (src, path) => ({
+        ip: selected.ip,
+        src,
+        path,
+        file_loop: fileLoopRef.current,
+        folder_rep: folderRepRef.current,
+        n: Math.max(1, Math.min(99, Number(folderNRef.current) || 1))
     });
 
-    const adjacentPath = (step) => {
+    const playTarget = (src, path) => runDevice(async () => {
+        ipcRenderer.send('stop-playback');
+        const result = await ipcRenderer.invoke('device-play', playFields(src, path));
+        if (result && result.success) {
+            playDirtyRef.current = false;
+        }
+        return result;
+    });
+
+    const adjacentFile = (step) => {
         if (!files.length) {
             return null;
         }
-        const current = sdPath && files.includes(sdPath) ? sdPath : files[0];
+        const current = playSrc === 'file' && files.includes(playPath) ? playPath : files[0];
         const index = files.indexOf(current);
-        const next = files[(index + step + files.length) % files.length];
-        setSdPath(next);
-        return next;
+        return files[(index + step + files.length) % files.length];
     };
 
-    const handlePlay = () => playPath(sdPath);
+    const handleSelectPlay = (src, path) => {
+        playDirtyRef.current = true;
+        setPlaySrc(src);
+        setPlayPath(path);
+        setRenaming(false);
+    };
+
+    const handlePlay = () => playTarget(playSrc, playPath);
 
     const handleStop = () => runDevice(async () => {
         return ipcRenderer.invoke('device-stop', { ip: selected.ip });
     });
 
     const handlePrev = () => {
-        const target = adjacentPath(-1);
+        const target = adjacentFile(-1);
         if (target) {
-            playPath(target);
+            playDirtyRef.current = true;
+            setPlaySrc('file');
+            setPlayPath(target);
+            playTarget('file', target);
         }
     };
 
     const handleNext = () => {
-        const target = adjacentPath(1);
+        const target = adjacentFile(1);
         if (target) {
-            playPath(target);
+            playDirtyRef.current = true;
+            setPlaySrc('file');
+            setPlayPath(target);
+            playTarget('file', target);
         }
     };
 
@@ -231,11 +324,10 @@ const DevicesPanel = () => {
     });
 
     const handleRenameShow = () => {
-        if (!sdPath) {
+        if (playSrc !== 'file' || !playPath) {
             return;
         }
-        const current = (sdPath.split('/').pop() || '').replace(/\.dmx$/i, '').replace(/^\d{2}_/, '');
-        setRenameDraft(current);
+        setRenameDraft(showSortName(playPath));
         setRenaming(true);
     };
 
@@ -245,38 +337,93 @@ const DevicesPanel = () => {
     };
 
     const handleRenameConfirm = () => runDevice(async () => {
-        if (!sdPath) {
+        if (playSrc !== 'file' || !playPath) {
             return { success: false, error: 'Select a .dmx on the node SD' };
         }
         const next = String(renameDraft || '').trim();
         const result = await ipcRenderer.invoke('device-rename-show', {
             ip: selected.ip,
-            from: sdPath,
+            from: playPath,
             name: next
         });
         if (result && result.success) {
             setRenaming(false);
+            playDirtyRef.current = false;
         }
         return result;
     });
 
     const handlePullShow = () => runDevice(async () => {
-        return ipcRenderer.invoke('device-pull-show', { ip: selected.ip, path: sdPath });
+        return ipcRenderer.invoke('device-pull-show', { ip: selected.ip, path: playPath });
     });
 
-    const handleApplyBrightness = () => runDevice(async () => {
-        const v = Math.max(0, Math.min(255, Number(brightness)));
-        return ipcRenderer.invoke('device-set-brightness', { ip: selected.ip, v });
-    });
+    const scheduleBrightness = (raw) => {
+        const v = clampBri(raw);
+        if (v == null) {
+            return;
+        }
+        briDirtyRef.current = true;
+        setBrightness(v);
+        if (!selectedIpRef.current) {
+            return;
+        }
+        clearTimeout(briTimerRef.current);
+        briTimerRef.current = setTimeout(async () => {
+            const ip = selectedIpRef.current;
+            if (!ip) {
+                return;
+            }
+            const result = await ipcRenderer.invoke('device-set-brightness', { ip, v });
+            if (result && result.success) {
+                briDirtyRef.current = false;
+                if (result.status && result.status.ver) {
+                    applyStatus(result.status);
+                }
+            } else if (result && result.error) {
+                setStatusError(result.error);
+            }
+        }, 300);
+    };
 
-    const handleApplyLive = () => runDevice(async () => {
-        return ipcRenderer.invoke('device-set-live', {
-            ip: selected.ip,
-            proto,
-            fps: Number(fps),
-            buf: Number(buf)
-        });
-    });
+    const scheduleLive = (patch) => {
+        liveDirtyRef.current = true;
+        if (patch.proto !== undefined) {
+            setProto(patch.proto);
+            protoRef.current = patch.proto;
+        }
+        if (patch.fps !== undefined) {
+            setFps(patch.fps);
+            fpsRef.current = patch.fps;
+        }
+        if (patch.buf !== undefined) {
+            setBuf(patch.buf);
+            bufRef.current = patch.buf;
+        }
+        if (!selectedIpRef.current) {
+            return;
+        }
+        clearTimeout(liveTimerRef.current);
+        liveTimerRef.current = setTimeout(async () => {
+            const ip = selectedIpRef.current;
+            if (!ip) {
+                return;
+            }
+            const result = await ipcRenderer.invoke('device-set-live', {
+                ip,
+                proto: protoRef.current,
+                fps: Number(fpsRef.current),
+                buf: Number(bufRef.current)
+            });
+            if (result && result.success) {
+                liveDirtyRef.current = false;
+                if (result.status && result.status.ver) {
+                    applyStatus(result.status);
+                }
+            } else if (result && result.error) {
+                setStatusError(result.error);
+            }
+        }, 300);
+    };
 
     const handleWifiScan = async () => {
         if (!selected || scanning || busy) {
@@ -298,16 +445,21 @@ const DevicesPanel = () => {
     };
 
     const handleWifiConnect = () => runDevice(async () => {
-        return ipcRenderer.invoke('device-wifi-connect', {
+        const result = await ipcRenderer.invoke('device-wifi-connect', {
             ip: selected.ip,
             ssid: wifiSsid,
             password: wifiPassword
         });
+        if (result && result.success) {
+            wifiDirtyRef.current = false;
+        }
+        return result;
     });
 
     const handleWifiForget = () => runDevice(async () => {
         const result = await ipcRenderer.invoke('device-wifi-forget', { ip: selected.ip });
         setWifiPassword('');
+        wifiDirtyRef.current = false;
         return result;
     });
 
@@ -322,8 +474,8 @@ const DevicesPanel = () => {
             className: 'flex items-center justify-between gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800'
         },
             React.createElement('div', {
-                className: 'text-xs text-zinc-500 truncate'
-            }, nic.ip ? `NIC: ${nic.name} (${nic.ip})` : 'Devices'),
+                className: 'readout truncate'
+            }, nic.ip ? `NIC ${nic.name} · ${nic.ip}` : 'Devices'),
             React.createElement('button', {
                 type: 'button',
                 className: 'btn-quiet',
@@ -362,8 +514,13 @@ const DevicesPanel = () => {
                     identifying,
                     busy: busy || scanning,
                     nodeName,
-                    sdPath,
+                    playSrc,
+                    playPath,
                     files,
+                    dirs,
+                    fileLoop,
+                    folderRep,
+                    folderN,
                     brightness,
                     proto,
                     fps,
@@ -372,13 +529,15 @@ const DevicesPanel = () => {
                     wifiPassword,
                     networks,
                     scanning,
+                    faceTab,
+                    onFaceTab: setFaceTab,
                     onNameChange: (value) => {
                         nameDirtyRef.current = true;
                         setNodeName(value);
                     },
                     onSaveName: handleSaveName,
                     onIdentify: handleIdentify,
-                    onSdPathChange: setSdPath,
+                    onSelectPlay: handleSelectPlay,
                     onPlay: handlePlay,
                     onStop: handleStop,
                     onPrev: handlePrev,
@@ -390,26 +549,21 @@ const DevicesPanel = () => {
                     onRenameConfirm: handleRenameConfirm,
                     onRenameCancel: handleRenameCancel,
                     onPullShow: handlePullShow,
-                    onBrightnessChange: (value) => {
-                        dirtyRef.current = true;
-                        setBrightness(value);
+                    onFileLoopChange: setFileLoop,
+                    onFolderRepChange: setFolderRep,
+                    onFolderNChange: setFolderN,
+                    onBrightnessChange: scheduleBrightness,
+                    onProtoChange: (value) => scheduleLive({ proto: value }),
+                    onFpsChange: (value) => scheduleLive({ fps: Number(value) }),
+                    onBufChange: (value) => scheduleLive({ buf: Number(value) }),
+                    onWifiSsidChange: (value) => {
+                        wifiDirtyRef.current = true;
+                        setWifiSsid(value);
                     },
-                    onApplyBrightness: handleApplyBrightness,
-                    onProtoChange: (value) => {
-                        dirtyRef.current = true;
-                        setProto(value);
+                    onWifiPasswordChange: (value) => {
+                        wifiDirtyRef.current = true;
+                        setWifiPassword(value);
                     },
-                    onFpsChange: (value) => {
-                        dirtyRef.current = true;
-                        setFps(value);
-                    },
-                    onBufChange: (value) => {
-                        dirtyRef.current = true;
-                        setBuf(value);
-                    },
-                    onApplyLive: handleApplyLive,
-                    onWifiSsidChange: setWifiSsid,
-                    onWifiPasswordChange: setWifiPassword,
                     onWifiScan: handleWifiScan,
                     onWifiConnect: handleWifiConnect,
                     onWifiForget: handleWifiForget

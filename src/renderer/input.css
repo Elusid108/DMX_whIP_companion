@@ -108,4 +108,21 @@
   .tab-btn.is-active {
     @apply text-cyan-600 border-cyan-600 dark:text-cyan-400 dark:border-cyan-400;
   }
+
+  .label-micro {
+    @apply text-[10px] font-medium uppercase tracking-wider text-zinc-500;
+  }
+
+  .readout {
+    font-variant-numeric: tabular-nums;
+    @apply font-mono text-[11px] text-zinc-500;
+  }
+
+  .status-strip {
+    @apply flex flex-col gap-1.5 pb-2 mb-2 border-b border-zinc-200 dark:border-zinc-800;
+  }
+
+  .module-rule {
+    @apply pt-3 mt-3 border-t border-zinc-200 dark:border-zinc-800;
+  }
 }

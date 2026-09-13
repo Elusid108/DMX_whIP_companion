@@ -6,7 +6,7 @@ const Field = ({ label, children }) => React.createElement('div', {
     className: 'flex flex-col gap-1'
 },
     React.createElement('label', {
-        className: 'text-xs font-medium text-zinc-500'
+        className: 'label-micro'
     }, label),
     children
 );
@@ -26,9 +26,18 @@ const sdDisplayName = (sdPath) => {
     return base.replace(/\.dmx$/i, '').replace(ORDER_PREFIX, '') || sdPath;
 };
 
-const heading = (text) => React.createElement('div', {
-    className: 'text-xs font-medium text-zinc-500 pt-2'
-}, text);
+const linkState = (device, status, statusError) => {
+    if (device.stale) {
+        return 'stale';
+    }
+    if (statusError && /live|busy|lighting/i.test(statusError)) {
+        return 'live';
+    }
+    if (status) {
+        return 'idle';
+    }
+    return '—';
+};
 
 const DeviceInspector = ({
     device,
@@ -37,8 +46,13 @@ const DeviceInspector = ({
     identifying,
     busy,
     nodeName,
-    sdPath,
+    playSrc,
+    playPath,
     files,
+    dirs,
+    fileLoop,
+    folderRep,
+    folderN,
     brightness,
     proto,
     fps,
@@ -47,10 +61,12 @@ const DeviceInspector = ({
     wifiPassword,
     networks,
     scanning,
+    faceTab,
+    onFaceTab,
     onNameChange,
     onSaveName,
     onIdentify,
-    onSdPathChange,
+    onSelectPlay,
     onPlay,
     onStop,
     onPrev,
@@ -62,12 +78,13 @@ const DeviceInspector = ({
     onRenameConfirm,
     onRenameCancel,
     onPullShow,
+    onFileLoopChange,
+    onFolderRepChange,
+    onFolderNChange,
     onBrightnessChange,
-    onApplyBrightness,
     onProtoChange,
     onFpsChange,
     onBufChange,
-    onApplyLive,
     onWifiSsidChange,
     onWifiPasswordChange,
     onWifiScan,
@@ -85,279 +102,373 @@ const DeviceInspector = ({
         : String(device.universe ?? 0);
     const idle = Boolean(status) && !statusError && !device.stale;
     const play = status && status.play ? status.play : {};
-    const dirs = Array.isArray(play.dirs) ? play.dirs : [];
     const fileList = Array.isArray(files) ? files : [];
+    const dirList = Array.isArray(dirs) ? dirs : [];
     const sdOk = Boolean(status && status.sd && status.sd.ok);
     const disabled = busy || !idle;
+    const fileSelected = playSrc === 'file' && Boolean(playPath);
+    const playReady = idle && sdOk && (
+        playSrc === 'root' ||
+        (playSrc === 'folder' && playPath) ||
+        fileSelected
+    );
+    const nowText = play.now ? sdDisplayName(play.now) : 'stopped';
+    const link = linkState(device, status, statusError);
     const meta = [
         device.ip,
         device.mac,
         `u${universes}`,
         status && status.ver ? `fw ${status.ver}` : null,
         status ? formatSd(status.sd) : null,
-        device.stale ? 'stale' : null
+        link,
+        `now ${nowText}`
     ].filter(Boolean).join(' · ');
 
+    const playRow = (src, path, label, kind) => {
+        const on = playSrc === src && (src === 'root' || playPath === path);
+        return React.createElement('button', {
+            key: `${src}:${path}`,
+            type: 'button',
+            className: `kv-row text-sm ${on ? 'is-active' : ''}`,
+            disabled: disabled || !sdOk,
+            onClick: () => onSelectPlay(src, path)
+        },
+            React.createElement('span', {
+                className: 'truncate text-left flex-1'
+            }, label),
+            React.createElement('span', {
+                className: 'readout flex-none'
+            }, kind)
+        );
+    };
+
     return React.createElement('div', {
-        className: 'overflow-y-auto h-full'
+        className: 'h-full flex flex-col max-w-xl mx-auto w-full min-h-0'
     },
         React.createElement('div', {
-            className: 'flex flex-col gap-2 w-[60%] mx-auto'
+            className: 'status-strip flex-none'
         },
             React.createElement('div', {
                 className: 'flex items-start gap-2'
             },
                 React.createElement('input', {
-                    className: 'field text-lg font-medium',
+                    className: 'field text-sm font-medium',
                     value: nodeName,
-                    disabled: disabled,
+                    disabled,
                     onChange: (event) => onNameChange(event.target.value)
                 }),
                 React.createElement('button', {
                     type: 'button',
-                    className: 'btn-quiet flex-none mt-0.5',
+                    className: 'btn-quiet flex-none',
                     disabled: disabled || !String(nodeName || '').trim(),
                     onClick: onSaveName
                 }, 'Save'),
                 React.createElement('button', {
                     type: 'button',
-                    className: 'btn-primary flex-none mt-0.5',
+                    className: 'btn-primary flex-none',
                     disabled: identifying || disabled,
                     onClick: onIdentify
                 }, identifying ? 'Identifying…' : 'Identify')
             ),
             React.createElement('div', {
-                className: 'text-xs text-zinc-500 truncate',
+                className: 'readout truncate',
                 title: meta
             }, meta),
             statusError && React.createElement('div', {
                 className: 'text-sm text-red-500'
-            }, statusError),
+            }, statusError)
+        ),
 
-            heading('Shows on this node'),
-            !idle && React.createElement('p', {
-                className: 'text-xs text-zinc-500'
-            }, 'Idle HTTP is required to list and play files on the node.'),
-            idle && !sdOk && React.createElement('p', {
-                className: 'text-sm text-red-500'
-            }, 'No SD card mounted.'),
-            idle && sdOk && React.createElement(React.Fragment, null,
-                dirs.length > 0 && React.createElement('div', {
+        React.createElement('div', {
+            className: 'flex-none flex gap-1 border-b border-zinc-200 dark:border-zinc-800'
+        },
+            ['playback', 'setup'].map((tab) => React.createElement('button', {
+                key: tab,
+                type: 'button',
+                className: `tab-btn ${faceTab === tab ? 'is-active' : ''}`,
+                onClick: () => onFaceTab(tab)
+            }, tab === 'playback' ? 'Playback' : 'Setup'))
+        ),
+
+        faceTab === 'playback'
+            ? React.createElement('div', {
+                className: 'flex-1 min-h-0 overflow-y-auto pt-3 flex flex-col gap-2'
+            },
+                React.createElement('div', {
+                    className: 'label-micro'
+                }, 'Shows'),
+                !idle && React.createElement('p', {
                     className: 'text-xs text-zinc-500'
-                }, `Folders: ${dirs.join(', ')}`),
-                fileList.length === 0
-                    ? React.createElement('p', {
-                        className: 'text-sm text-zinc-500 italic'
-                    }, 'No .dmx on the card.')
-                    : React.createElement('div', {
+                }, 'Idle HTTP is required to list and play files on the node.'),
+                idle && !sdOk && React.createElement('p', {
+                    className: 'text-sm text-red-500'
+                }, 'No SD card mounted.'),
+                idle && sdOk && React.createElement(React.Fragment, null,
+                    React.createElement('div', {
                         className: 'flex flex-col gap-1'
                     },
-                        fileList.map((file) => React.createElement('button', {
-                            key: file,
-                            type: 'button',
-                            className: `kv-row text-sm ${sdPath === file ? 'is-active' : ''}`,
-                            onClick: () => onSdPathChange(file)
-                        },
-                            React.createElement('span', {
-                                className: 'truncate text-left'
-                            }, sdDisplayName(file))
-                        ))
+                        playRow('root', '/', 'All .dmx in /', 'default'),
+                        dirList.map((dir) => playRow('folder', dir, sdDisplayName(dir), 'dir')),
+                        fileList.map((file) => playRow('file', file, sdDisplayName(file), '.dmx')),
+                        dirList.length === 0 && fileList.length === 0 && React.createElement('p', {
+                            className: 'text-xs text-zinc-500 italic px-1'
+                        }, 'No .dmx on the card.')
                     ),
-                play.now ? React.createElement('div', {
-                    className: 'text-xs text-zinc-500'
-                }, `Now: ${sdDisplayName(play.now)}`) : null,
+                    React.createElement('div', {
+                        className: 'readout'
+                    }, `Now ${nowText}`),
+                    React.createElement('div', {
+                        className: 'flex flex-wrap gap-1.5'
+                    },
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet',
+                            disabled: disabled || fileList.length === 0,
+                            onClick: onPrev
+                        }, 'Prev'),
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-primary',
+                            disabled: !playReady,
+                            onClick: onPlay
+                        }, 'Play'),
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet',
+                            disabled,
+                            onClick: onStop
+                        }, 'Stop'),
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet',
+                            disabled: disabled || fileList.length === 0,
+                            onClick: onNext
+                        }, 'Next'),
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet',
+                            disabled: disabled || !fileSelected,
+                            onClick: onRenameShow
+                        }, 'Rename'),
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet',
+                            disabled: disabled || !fileSelected,
+                            onClick: onPullShow
+                        }, 'Pull to library')
+                    ),
+                    renaming && React.createElement('div', {
+                        className: 'flex items-center gap-1.5'
+                    },
+                        React.createElement('input', {
+                            className: 'field',
+                            value: renameDraft,
+                            disabled,
+                            autoFocus: true,
+                            onChange: (event) => onRenameDraftChange(event.target.value)
+                        }),
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-primary flex-none',
+                            disabled: disabled || !String(renameDraft || '').trim(),
+                            onClick: onRenameConfirm
+                        }, 'Save name'),
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet flex-none',
+                            disabled,
+                            onClick: onRenameCancel
+                        }, 'Cancel')
+                    ),
+                    playSrc === 'file' && React.createElement(Field, { label: 'Loop' },
+                        React.createElement('select', {
+                            className: 'field',
+                            value: fileLoop,
+                            disabled,
+                            onChange: (event) => onFileLoopChange(event.target.value)
+                        },
+                            React.createElement('option', { value: 'one' }, 'This file'),
+                            React.createElement('option', { value: 'all' }, 'All in this folder')
+                        )
+                    ),
+                    playSrc === 'folder' && React.createElement(React.Fragment, null,
+                        React.createElement(Field, { label: 'Repeat' },
+                            React.createElement('select', {
+                                className: 'field',
+                                value: folderRep,
+                                disabled,
+                                onChange: (event) => onFolderRepChange(event.target.value)
+                            },
+                                React.createElement('option', { value: 'forever' }, 'Forever'),
+                                React.createElement('option', { value: 'count' }, 'Set times')
+                            )
+                        ),
+                        folderRep === 'count' && React.createElement(Field, { label: 'Times' },
+                            React.createElement('input', {
+                                className: 'field',
+                                type: 'number',
+                                min: 1,
+                                max: 99,
+                                value: folderN,
+                                disabled,
+                                onChange: (event) => onFolderNChange(event.target.value)
+                            })
+                        )
+                    ),
+                    React.createElement('p', {
+                        className: 'text-xs text-zinc-500'
+                    }, 'Shows are listed alphabetically. Library Load and the toolbar play from this PC.')
+                )
+            )
+            : React.createElement('div', {
+                className: 'flex-1 min-h-0 overflow-y-auto pt-3 flex flex-col gap-2'
+            },
+                React.createElement('div', {
+                    className: 'label-micro'
+                }, 'Radio'),
                 React.createElement('div', {
                     className: 'flex flex-wrap gap-1.5'
                 },
                     React.createElement('button', {
                         type: 'button',
                         className: 'btn-quiet',
-                        disabled: disabled || fileList.length === 0,
-                        onClick: onPrev
-                    }, 'Prev'),
+                        disabled,
+                        onClick: onWifiScan
+                    }, scanning ? 'Scanning…' : 'Scan'),
                     React.createElement('button', {
                         type: 'button',
                         className: 'btn-primary',
-                        disabled: disabled || !sdPath,
-                        onClick: onPlay
-                    }, 'Play'),
+                        disabled: disabled || !String(wifiSsid || '').trim(),
+                        onClick: onWifiConnect
+                    }, 'Connect'),
                     React.createElement('button', {
                         type: 'button',
                         className: 'btn-quiet',
                         disabled,
-                        onClick: onStop
-                    }, 'Stop'),
-                    React.createElement('button', {
-                        type: 'button',
-                        className: 'btn-quiet',
-                        disabled: disabled || fileList.length === 0,
-                        onClick: onNext
-                    }, 'Next'),
-                    React.createElement('button', {
-                        type: 'button',
-                        className: 'btn-quiet',
-                        disabled: disabled || !sdPath,
-                        onClick: onRenameShow
-                    }, 'Rename'),
-                    React.createElement('button', {
-                        type: 'button',
-                        className: 'btn-quiet',
-                        disabled: disabled || !sdPath,
-                        onClick: onPullShow
-                    }, 'Pull to library')
+                        onClick: onWifiForget
+                    }, 'Forget')
                 ),
-                renaming && React.createElement('div', {
-                    className: 'flex items-center gap-1.5'
+                React.createElement('div', {
+                    className: 'flex flex-col gap-1 max-h-40 overflow-y-auto'
                 },
+                    networks.length === 0
+                        ? React.createElement('p', {
+                            className: 'text-xs text-zinc-500 italic'
+                        }, 'Scan to list 2.4 GHz networks.')
+                        : networks.map((net) => React.createElement('button', {
+                            key: net.ssid,
+                            type: 'button',
+                            className: `kv-row text-sm ${wifiSsid === net.ssid ? 'is-active' : ''}`,
+                            disabled,
+                            onClick: () => onWifiSsidChange(net.ssid)
+                        },
+                            React.createElement('span', {
+                                className: 'truncate text-left flex-1'
+                            }, net.ssid || '(hidden)'),
+                            React.createElement('span', {
+                                className: 'readout flex-none'
+                            }, `${net.secure ? 'lock' : 'open'} ${net.rssi} dBm`)
+                        ))
+                ),
+                React.createElement(Field, { label: 'SSID' },
                     React.createElement('input', {
                         className: 'field',
-                        value: renameDraft,
-                        disabled,
-                        autoFocus: true,
-                        onChange: (event) => onRenameDraftChange(event.target.value)
-                    }),
-                    React.createElement('button', {
-                        type: 'button',
-                        className: 'btn-primary flex-none',
-                        disabled: disabled || !String(renameDraft || '').trim(),
-                        onClick: onRenameConfirm
-                    }, 'Save name'),
-                    React.createElement('button', {
-                        type: 'button',
-                        className: 'btn-quiet flex-none',
-                        disabled,
-                        onClick: onRenameCancel
-                    }, 'Cancel')
-                ),
-                React.createElement('p', {
-                    className: 'text-xs text-zinc-500'
-                }, 'Shows are listed alphabetically. Library Load and the toolbar play from this PC.')
-            ),
-
-            heading('Brightness'),
-            React.createElement(Field, { label: 'v (0–255)' },
-                React.createElement('input', {
-                    className: 'field',
-                    type: 'number',
-                    min: 0,
-                    max: 255,
-                    value: brightness,
-                    disabled,
-                    onChange: (event) => onBrightnessChange(event.target.value)
-                })
-            ),
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-quiet self-start',
-                disabled,
-                onClick: onApplyBrightness
-            }, 'Apply brightness'),
-
-            heading('Live protocol'),
-            React.createElement('div', {
-                className: 'grid grid-cols-3 gap-1.5'
-            },
-                React.createElement(Field, { label: 'Protocol' },
-                    React.createElement('select', {
-                        className: 'field',
-                        value: proto,
-                        disabled,
-                        onChange: (event) => onProtoChange(event.target.value)
-                    },
-                        React.createElement('option', { value: 'auto' }, 'auto'),
-                        React.createElement('option', { value: 'artnet' }, 'artnet'),
-                        React.createElement('option', { value: 'sacn' }, 'sacn')
-                    )
-                ),
-                React.createElement(Field, { label: 'FPS' },
-                    React.createElement('select', {
-                        className: 'field',
-                        value: String(fps),
-                        disabled,
-                        onChange: (event) => onFpsChange(event.target.value)
-                    },
-                        [20, 30, 40, 60].map((value) => React.createElement('option', {
-                            key: value,
-                            value: String(value)
-                        }, String(value)))
-                    )
-                ),
-                React.createElement(Field, { label: 'Buffer' },
-                    React.createElement('select', {
-                        className: 'field',
-                        value: String(buf),
-                        disabled,
-                        onChange: (event) => onBufChange(event.target.value)
-                    },
-                        [0, 1, 2, 3].map((value) => React.createElement('option', {
-                            key: value,
-                            value: String(value)
-                        }, String(value)))
-                    )
-                )
-            ),
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-quiet self-start',
-                disabled,
-                onClick: onApplyLive
-            }, 'Apply live'),
-
-            heading('Wi-Fi'),
-            React.createElement('div', {
-                className: 'flex flex-wrap gap-1.5'
-            },
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet',
-                    disabled,
-                    onClick: onWifiScan
-                }, scanning ? 'Scanning…' : 'Scan'),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet',
-                    disabled,
-                    onClick: onWifiConnect
-                }, 'Connect'),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet',
-                    disabled,
-                    onClick: onWifiForget
-                }, 'Forget')
-            ),
-            React.createElement(Field, { label: 'SSID' },
-                networks.length > 0
-                    ? React.createElement('select', {
-                        className: 'field',
                         value: wifiSsid,
                         disabled,
-                        onChange: (event) => onWifiSsidChange(event.target.value)
-                    },
-                        React.createElement('option', { value: '' }, 'Select a network'),
-                        ...networks.map((net) => React.createElement('option', {
-                            key: net.ssid,
-                            value: net.ssid
-                        }, `${net.ssid}${net.secure ? '' : ' (open)'} · ${net.rssi} dBm`))
-                    )
-                    : React.createElement('input', {
-                        className: 'field',
-                        value: wifiSsid,
-                        disabled,
+                        autoComplete: 'off',
                         onChange: (event) => onWifiSsidChange(event.target.value)
                     })
-            ),
-            React.createElement(Field, { label: 'Password' },
-                React.createElement('input', {
-                    className: 'field',
-                    type: 'password',
-                    value: wifiPassword,
-                    disabled,
-                    autoComplete: 'off',
-                    onChange: (event) => onWifiPasswordChange(event.target.value)
-                })
+                ),
+                React.createElement(Field, { label: 'Password' },
+                    React.createElement('input', {
+                        className: 'field',
+                        type: 'password',
+                        value: wifiPassword,
+                        disabled,
+                        autoComplete: 'off',
+                        onChange: (event) => onWifiPasswordChange(event.target.value)
+                    })
+                ),
+                status && (status.saved || status.ip) && React.createElement('div', {
+                    className: 'readout'
+                }, [
+                    status.saved ? `saved ${status.saved} (connects at boot)` : null,
+                    status.ip ? `STA ${status.ip}` : null
+                ].filter(Boolean).join(' · ')),
+
+                React.createElement('div', {
+                    className: 'module-rule label-micro'
+                }, 'Output'),
+                React.createElement(Field, { label: 'Brightness' },
+                    React.createElement('div', {
+                        className: 'flex items-center gap-2'
+                    },
+                        React.createElement('input', {
+                            className: 'flex-1 min-w-0 accent-cyan-500',
+                            type: 'range',
+                            min: 0,
+                            max: 255,
+                            value: brightness,
+                            disabled,
+                            onChange: (event) => onBrightnessChange(event.target.value)
+                        }),
+                        React.createElement('input', {
+                            className: 'field w-16 flex-none text-right readout',
+                            type: 'number',
+                            min: 0,
+                            max: 255,
+                            value: brightness,
+                            disabled,
+                            onChange: (event) => onBrightnessChange(event.target.value)
+                        })
+                    )
+                ),
+                Number(brightness) > 64 && React.createElement('p', {
+                    className: 'text-xs text-amber-500'
+                }, 'This 8×8 can overheat above 64.'),
+                React.createElement('div', {
+                    className: 'grid grid-cols-3 gap-1.5'
+                },
+                    React.createElement(Field, { label: 'Protocol' },
+                        React.createElement('select', {
+                            className: 'field',
+                            value: proto,
+                            disabled,
+                            onChange: (event) => onProtoChange(event.target.value)
+                        },
+                            React.createElement('option', { value: 'auto' }, 'Auto'),
+                            React.createElement('option', { value: 'artnet' }, 'Art-Net'),
+                            React.createElement('option', { value: 'sacn' }, 'sACN')
+                        )
+                    ),
+                    React.createElement(Field, { label: 'FPS' },
+                        React.createElement('select', {
+                            className: 'field',
+                            value: String(fps),
+                            disabled,
+                            onChange: (event) => onFpsChange(event.target.value)
+                        },
+                            [20, 30, 40, 60].map((value) => React.createElement('option', {
+                                key: value,
+                                value: String(value)
+                            }, String(value)))
+                        )
+                    ),
+                    React.createElement(Field, { label: 'Buffer' },
+                        React.createElement('select', {
+                            className: 'field',
+                            value: String(buf),
+                            disabled,
+                            onChange: (event) => onBufChange(event.target.value)
+                        },
+                            React.createElement('option', { value: '0' }, '0 latest'),
+                            React.createElement('option', { value: '1' }, '1 frame'),
+                            React.createElement('option', { value: '2' }, '2 frames'),
+                            React.createElement('option', { value: '3' }, '3 frames')
+                        )
+                    )
+                )
             )
-        )
     );
 };
 
