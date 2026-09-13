@@ -2,7 +2,7 @@
 
 Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN).
 
-**Version:** 0.3.3
+**Version:** 0.3.4
 
 ## How to run
 
@@ -27,7 +27,7 @@ That means: plan only the first `###` section that still has unchecked items. Do
 
 ## Current state
 
-The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks after New File; playback is clock-based with a working Stop control and legal sACN via the `sacn` package. The renderer is isolated (`contextIsolation`) with a local Tailwind build. Treat this as a prototype restart, not a shipping 1.0.
+The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks after New File; playback is clock-based with a working Stop control and legal sACN via the `sacn` package. The renderer is isolated (`contextIsolation`) with a local Tailwind build. There is no show library yet; files are opened through dialogs. ESP32 nodes live in the sibling repo `DMX_whIP_embedded` (ArtPollReply, SoftAP portal `/status`, idle SD playback of companion `DMXREC`). Treat this as a prototype restart, not a shipping 1.0.
 
 ---
 
@@ -68,6 +68,33 @@ The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, 
 - [x] Remove unused Babel and dead code (`renderer.js` unused bootstrap, `StatusBar.js`, `store/universe.js`, unused `dmxUtils` path, unused npm `artnet` if still unused)
 - [x] Bundle Tailwind locally; stop loading the CDN
 - [x] Align LICENSE (Apache-2.0 file) with `package.json` license and the app name (companion vs “DMX Monitor”)
+
+### Phase D — Show library
+
+One library folder plus import/export. Display name and notes live in a sidecar JSON next to each `.dmx`, never inside the recording. Scan the binary for inspector stats; do not load every frame into RAM just to fill the panel.
+
+- [ ] App-managed library folder (e.g. `Documents/DMX whIP/Shows`); New File / recordings land there
+- [ ] Library list of `.dmx` shows (watch the folder)
+- [ ] Inspector from the file: duration, frame count, size, dates, universes, protocol(s), packet rate and per-universe rate, woken channel counts
+- [ ] Sidecar JSON for display name and notes (companion-only; firmware keeps reading plain `DMXREC`)
+- [ ] Import a `.dmx` into the library; export a copy out of the library
+- [ ] Play, rename, and delete from the list (main path; keep a file picker only as a fallback)
+
+### Phase E — Device discovery
+
+Scan the **selected NIC**. Firmware (`DMX_whIP_embedded`) already replies to Art-Net Poll and exposes portal `/status` while idle. SoftAP/HTTP go down while live lighting is present (~2 s after silence they return).
+
+- [ ] Art-Net Poll on the chosen adapter; list nodes from ArtPollReply (name, IP, NIC, universes)
+- [ ] Stale timeout and optional Identify (flash / known pattern) so a row can be matched to a physical whip
+- [ ] When the node is idle, read `/status` (firmware version, brightness, protocol, FPS, buffer, SD size/used/free) via SoftAP `http://4.3.2.1` or the STA IP — do not expect HTTP during live input
+
+### Phase F — Device transfer and control
+
+SD via card reader stays as fallback. On-device idle playback already understands companion `DMXREC` `.dmx`. A network file API is still listed as later work on the embedded side.
+
+- [ ] Push a library show to the node SD over the network (requires a node file/upload API in `DMX_whIP_embedded`)
+- [ ] List shows on the device SD; play/stop on the device vs play from this PC
+- [ ] Companion controls equivalent to the SoftAP portal (brightness, protocol, FPS, buffer, Wi-Fi) by calling the same HTTP the portal uses — not by scraping HTML
 
 ### Backlog (not started unless agreed)
 
