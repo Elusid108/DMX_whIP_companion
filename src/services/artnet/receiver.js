@@ -1,11 +1,12 @@
 const dgram = require('dgram');
-const { parseArtNetPacket } = require('./utils');
+const { parseArtNetPacket, createArtPollPacket } = require('./utils');
 
 class ArtNetReceiver {
     constructor() {
         this.socket = null;
         this.universeData = new Map();
         this.callbacks = new Map();
+        this.pollReplyCallbacks = new Map();
     }
 
     async start(interfaceIp) {
@@ -15,9 +16,9 @@ class ArtNetReceiver {
 
         return new Promise((resolve, reject) => {
             try {
-                this.socket = dgram.createSocket({ 
+                this.socket = dgram.createSocket({
                     type: 'udp4',
-                    reuseAddr: true 
+                    reuseAddr: true
                 });
 
                 this.socket.on('listening', () => {
@@ -28,15 +29,21 @@ class ArtNetReceiver {
 
                 this.socket.on('message', (msg, rinfo) => {
                     const data = parseArtNetPacket(msg, rinfo);
-                    if (data) {
-                        this.universeData.set(data.universe, {
-                            ...data,
-                            lastSeen: Date.now()
-                        });
-
-                        // Notify all callbacks
-                        this.callbacks.forEach(callback => callback(data));
+                    if (!data) {
+                        return;
                     }
+                    if (data.kind === 'pollReply') {
+                        this.pollReplyCallbacks.forEach((callback) => callback(data));
+                        return;
+                    }
+                    if (data.kind !== 'dmx') {
+                        return;
+                    }
+                    this.universeData.set(data.universe, {
+                        ...data,
+                        lastSeen: Date.now()
+                    });
+                    this.callbacks.forEach((callback) => callback(data));
                 });
 
                 this.socket.on('error', (err) => {
@@ -44,10 +51,21 @@ class ArtNetReceiver {
                 });
 
                 this.socket.bind(6454, interfaceIp);
-
             } catch (error) {
                 console.error('Error setting up Art-Net receiver:', error);
                 reject(error);
+            }
+        });
+    }
+
+    sendPoll() {
+        if (!this.socket) {
+            return;
+        }
+        const packet = createArtPollPacket();
+        this.socket.send(packet, 6454, '255.255.255.255', (err) => {
+            if (err) {
+                console.error('ArtPoll send error:', err);
             }
         });
     }
@@ -64,8 +82,13 @@ class ArtNetReceiver {
         this.callbacks.set(id, callback);
     }
 
+    onPollReply(id, callback) {
+        this.pollReplyCallbacks.set(id, callback);
+    }
+
     removeCallback(id) {
         this.callbacks.delete(id);
+        this.pollReplyCallbacks.delete(id);
     }
 
     getUniverseData() {

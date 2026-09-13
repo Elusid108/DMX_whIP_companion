@@ -13,7 +13,9 @@ const INVOKE = new Set([
     'library-rename',
     'library-delete',
     'library-choose-dir',
-    'load-recording'
+    'load-recording',
+    'device-status',
+    'device-identify'
 ]);
 
 const SEND = new Set([
@@ -23,7 +25,8 @@ const SEND = new Set([
     'start-recording',
     'stop-recording',
     'toggle-playback',
-    'stop-playback'
+    'stop-playback',
+    'devices-scan'
 ]);
 
 const RECEIVE = new Set([
@@ -35,7 +38,8 @@ const RECEIVE = new Set([
     'playback-stats',
     'recording-stats-update',
     'recording-error',
-    'library-updated'
+    'library-updated',
+    'devices-update'
 ]);
 
 contextBridge.exposeInMainWorld('dmx', {

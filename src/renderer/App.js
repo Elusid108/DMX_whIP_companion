@@ -5,6 +5,7 @@ const NetworkSelect = require('./components/controls/NetworkSelect');
 const RecordingControls = require('./components/controls/RecordingControls');
 const PlaybackControls = require('./components/controls/PlaybackControls');
 const LibraryPanel = require('./components/library/LibraryPanel');
+const DevicesPanel = require('./components/devices/DevicesPanel');
 const useUniverseData = require('./hooks/useUniverseData');
 const useDmxMonitor = require('./hooks/useDmxMonitor');
 const ipcRenderer = require('./ipc');
@@ -161,7 +162,12 @@ const App = () => {
                 type: 'button',
                 className: `tab-btn ${mainView === 'library' ? 'is-active' : ''}`,
                 onClick: () => setMainView('library')
-            }, 'Library')
+            }, 'Library'),
+            React.createElement('button', {
+                type: 'button',
+                className: `tab-btn ${mainView === 'devices' ? 'is-active' : ''}`,
+                onClick: () => setMainView('devices')
+            }, 'Devices')
         ),
         mainView === 'monitor'
             ? React.createElement('div', { className: 'flex flex-1 min-h-0' },
@@ -202,7 +208,9 @@ const App = () => {
                 showAnimations
             })
         )
-            : React.createElement(LibraryPanel)
+            : mainView === 'library'
+                ? React.createElement(LibraryPanel)
+                : React.createElement(DevicesPanel)
     );
 };
 

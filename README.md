@@ -2,7 +2,7 @@
 
 Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN).
 
-**Version:** 0.5.2
+**Version:** 0.6.0
 
 ## How to run
 
@@ -27,7 +27,7 @@ That means: plan only the first `###` section that still has unchecked items. Do
 
 ## Current state
 
-The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks into the chosen library folder (default `Documents/DMX whIP/Shows`) after New File; a Library tab lists shows with sidecar notes and inspector stats. The chrome follows a zinc/cyan dark theme with a light-mode toggle. Playback is clock-based with a working Stop control and legal sACN via the `sacn` package. The renderer is isolated (`contextIsolation`) with a local Tailwind build. ESP32 nodes live in the sibling repo `DMX_whIP_embedded` (ArtPollReply, SoftAP portal `/status`, idle SD playback of companion `DMXREC`). Treat this as a prototype restart, not a shipping 1.0.
+The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks into the chosen library folder (default `Documents/DMX whIP/Shows`) after New File; a Library tab lists shows with sidecar notes and inspector stats. The chrome follows a zinc/cyan dark theme with a light-mode toggle. A Devices tab ArtPolls the selected NIC, lists ArtPollReply nodes, reads idle `/status`, and can Identify a whip. Playback is clock-based with a working Stop control and legal sACN via the `sacn` package. The renderer is isolated (`contextIsolation`) with a local Tailwind build. ESP32 nodes live in the sibling repo `DMX_whIP_embedded` (ArtPollReply, SoftAP portal `/status`, idle SD playback of companion `DMXREC`). Treat this as a prototype restart, not a shipping 1.0.
 
 ---
 
@@ -84,9 +84,9 @@ One library folder plus import/export. Display name and notes live in a sidecar 
 
 Scan the **selected NIC**. Firmware (`DMX_whIP_embedded`) already replies to Art-Net Poll and exposes portal `/status` while idle. SoftAP/HTTP go down while live lighting is present (~2 s after silence they return).
 
-- [ ] Art-Net Poll on the chosen adapter; list nodes from ArtPollReply (name, IP, NIC, universes)
-- [ ] Stale timeout and optional Identify (flash / known pattern) so a row can be matched to a physical whip
-- [ ] When the node is idle, read `/status` (firmware version, brightness, protocol, FPS, buffer, SD size/used/free) via SoftAP `http://4.3.2.1` or the STA IP — do not expect HTTP during live input
+- [x] Art-Net Poll on the chosen adapter; list nodes from ArtPollReply (name, IP, NIC, universes)
+- [x] Stale timeout and optional Identify (flash / known pattern) so a row can be matched to a physical whip
+- [x] When the node is idle, read `/status` (firmware version, brightness, protocol, FPS, buffer, SD size/used/free) via SoftAP `http://4.3.2.1` or the STA IP — do not expect HTTP during live input
 
 ### Phase F — Device transfer and control
 
