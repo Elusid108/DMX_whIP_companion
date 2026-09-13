@@ -1,0 +1,30 @@
+{
+  "name": "dmx-monitor",
+  "version": "0.1.1",
+  "description": "DMX protocol monitor for Art-Net and sACN",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "keywords": [
+    "dmx",
+    "artnet",
+    "sacn",
+    "lighting"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "artnet": "^1.4.0",
+    "electron": "^33.2.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "sacn": "^4.6.2"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.23.0",
+    "@babel/preset-react": "^7.23.0",
+    "@babel/register": "^7.22.15"
+  }
+}

@@ -1,0 +1,21 @@
+---
+description: Frozen README implementation plan; next-section planning trigger
+alwaysApply: true
+---
+
+# Implementation plan
+
+The checklist in `README.md` is frozen. Do not add, remove, rename, or reorder items unless the user explicitly agrees in that conversation.
+
+When a plan item is fully done, mark it `- [x]`. Do not delete it. If work is only partial, leave it unchecked and note progress in the reply — do not invent new README bullets.
+
+## Next section
+
+When the user wants to plan the next section (including “Let’s plan on the next section in the implementation plan”):
+
+1. Find the first `###` section under Implementation plan that still has unchecked items.
+2. Plan **only that section** (use Plan mode if available).
+3. Do not start coding until they confirm.
+4. Do not pull in later sections or Backlog.
+
+Backlog stays untouched until the user agrees to promote an item into the active plan.

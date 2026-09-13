@@ -1,0 +1,42 @@
+Working sACN monitor and ArtNet monitor with auto universe detection. 
+
+***NEXT (in order)***
+Fix the recording and playback now that sACN is working. ArtNet stopped working
+Fix channels that have "woken up" "falling back asleep". Once they have been detected as active, they should not go back to dark grey unless the universe has vanished and reappeared (as it could be a different app)
+Fix channel count unver the unvierses. It should count and show the total number of channels that have "woken up" in that universe. All but Universe 0 are locked at 512
+Make file *before* starting recording "New File". "Start Recording" is not visible until new file has been created
+Dump chunks of recording into file as it's being recorded to make long files easier to write
+
+
+
+Things to add:
+    KiNet?
+    Check boxes next to the universes to select which ones to record
+    ***sACN playback***
+    Tabs above universe list for Incomming and Outgoing signals
+        This opens up the ability to record a whole show and have it playback to the IP specific devices
+    Background color when bars inactive
+    Priortize Speed or Quality options
+    SPI Data Output dim, stribe, hue shift, RGB filter assignable to DMX channel
+    File playlist
+        Loop count (indefinate option)
+        Shuffle
+        Speed (IE 2x)
+        Fade Out
+        Fade in
+        Hold (Negative allows x fade IE -3 would start 3 seconds into the last clip, 3 would start 3 seconds after finish)
+        Reorder
+        Launch playlist via sACN / ArtNet
+    Clip launch via ArtNet/sACN.
+        Some sort of list whee you can add + a row, load a file, set a protocol, universe, channel number, and value to start.
+        Momentary vs toggle
+        A/B and X Fade? Operate mode?
+    Scheduling
+
+
+
+
+
+
+
+

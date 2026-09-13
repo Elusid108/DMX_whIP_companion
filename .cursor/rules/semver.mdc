@@ -1,0 +1,22 @@
+---
+description: Bump app semver after every implementation change
+alwaysApply: true
+---
+
+# Semantic versioning
+
+After any implementation change in a session, bump `package.json` `version` and the **Version:** line in `README.md`. Window title and UI read `package.json` — do not hardcode the version there.
+
+Use `MAJOR.MINOR.PATCH`:
+
+- **MAJOR** — breaking change (incompatible `.dmx` format, removed UI or protocol behavior)
+- **MINOR** — new user-facing capability
+- **PATCH** — bug fix, reliability, small internal cleanup, or README checkbox-only progress
+
+Rules:
+
+- One bump per session. If a session mixes types, use the highest applicable level.
+- Never skip a bump because the change is small.
+- Checking README boxes with no other code still takes a PATCH so the app version tracks progress.
+
+Example: `0.1.0` → patch `0.1.1`, minor `0.2.0`, major `1.0.0`.
