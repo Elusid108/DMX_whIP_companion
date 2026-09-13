@@ -67,8 +67,13 @@ const ShowInspector = ({
     pushError,
     onNameChange,
     onNotesChange,
+    renaming,
+    renameDraft,
     onPlay,
     onRename,
+    onRenameDraftChange,
+    onRenameConfirm,
+    onRenameCancel,
     onDelete,
     onExport,
     onTargetChange,
@@ -179,6 +184,29 @@ const ShowInspector = ({
                     disabled: busy,
                     onClick: onDelete
                 }, 'Delete')
+            ),
+            renaming && React.createElement('div', {
+                className: 'flex items-center gap-1.5'
+            },
+                React.createElement('input', {
+                    className: 'field',
+                    value: renameDraft,
+                    disabled: busy,
+                    autoFocus: true,
+                    onChange: (event) => onRenameDraftChange(event.target.value)
+                }),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-primary flex-none',
+                    disabled: busy || !String(renameDraft || '').trim(),
+                    onClick: onRenameConfirm
+                }, 'Save name'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet flex-none',
+                    disabled: busy,
+                    onClick: onRenameCancel
+                }, 'Cancel')
             ),
             React.createElement('div', {
                 className: 'flex flex-col gap-1.5 pt-2 border-t border-zinc-200 dark:border-zinc-800'

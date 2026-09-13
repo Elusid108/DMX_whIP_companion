@@ -4,6 +4,16 @@ const ipcRenderer = require('../../ipc');
 const DeviceList = require('./DeviceList');
 const DeviceInspector = require('./DeviceInspector');
 
+const showSortName = (sdPath) => String(sdPath || '')
+    .split('/')
+    .pop()
+    .replace(/\.dmx$/i, '')
+    .replace(/^\d{2}_/, '');
+
+const sortShows = (paths) => paths.slice().sort((a, b) =>
+    showSortName(a).localeCompare(showSortName(b), undefined, { numeric: true, sensitivity: 'base' })
+);
+
 const DevicesPanel = () => {
     const [devices, setDevices] = useState([]);
     const [nic, setNic] = useState({ name: '', ip: '' });
@@ -23,6 +33,8 @@ const DevicesPanel = () => {
     const [wifiPassword, setWifiPassword] = useState('');
     const [networks, setNetworks] = useState([]);
     const [scanning, setScanning] = useState(false);
+    const [renaming, setRenaming] = useState(false);
+    const [renameDraft, setRenameDraft] = useState('');
     const selectedRef = useRef(null);
     const dirtyRef = useRef(false);
     const nameDirtyRef = useRef(false);
@@ -61,11 +73,13 @@ const DevicesPanel = () => {
         setSdPath(null);
         setFiles([]);
         setNodeName('');
+        setRenaming(false);
+        setRenameDraft('');
     }, [selectedId]);
 
     const applyStatus = (next) => {
         setStatus(next);
-        const nextFiles = next && next.play && Array.isArray(next.play.files) ? next.play.files : [];
+        const nextFiles = sortShows(next && next.play && Array.isArray(next.play.files) ? next.play.files : []);
         setFiles(nextFiles);
         setSdPath((current) => {
             if (current && nextFiles.includes(current)) {
@@ -216,33 +230,39 @@ const DevicesPanel = () => {
         return result;
     });
 
-    const handleRenameShow = () => runDevice(async () => {
+    const handleRenameShow = () => {
+        if (!sdPath) {
+            return;
+        }
+        const current = (sdPath.split('/').pop() || '').replace(/\.dmx$/i, '').replace(/^\d{2}_/, '');
+        setRenameDraft(current);
+        setRenaming(true);
+    };
+
+    const handleRenameCancel = () => {
+        setRenaming(false);
+        setRenameDraft('');
+    };
+
+    const handleRenameConfirm = () => runDevice(async () => {
         if (!sdPath) {
             return { success: false, error: 'Select a .dmx on the node SD' };
         }
-        const current = (sdPath.split('/').pop() || '').replace(/\.dmx$/i, '').replace(/^\d{2}_/, '');
-        const next = window.prompt('Rename show on the node (without .dmx)', current);
-        if (next == null) {
-            return { success: true, status };
-        }
-        return ipcRenderer.invoke('device-rename-show', {
+        const next = String(renameDraft || '').trim();
+        const result = await ipcRenderer.invoke('device-rename-show', {
             ip: selected.ip,
             from: sdPath,
             name: next
         });
+        if (result && result.success) {
+            setRenaming(false);
+        }
+        return result;
     });
 
     const handlePullShow = () => runDevice(async () => {
         return ipcRenderer.invoke('device-pull-show', { ip: selected.ip, path: sdPath });
     });
-
-    const handleReorder = (nextFiles) => {
-        setFiles(nextFiles);
-        runDevice(async () => ipcRenderer.invoke('device-order-shows', {
-            ip: selected.ip,
-            paths: nextFiles
-        }));
-    };
 
     const handleApplyBrightness = () => runDevice(async () => {
         const v = Math.max(0, Math.min(255, Number(brightness)));
@@ -357,9 +377,13 @@ const DevicesPanel = () => {
                     onStop: handleStop,
                     onPrev: handlePrev,
                     onNext: handleNext,
+                    renaming,
+                    renameDraft,
                     onRenameShow: handleRenameShow,
+                    onRenameDraftChange: setRenameDraft,
+                    onRenameConfirm: handleRenameConfirm,
+                    onRenameCancel: handleRenameCancel,
                     onPullShow: handlePullShow,
-                    onReorder: handleReorder,
                     onBrightnessChange: (value) => {
                         dirtyRef.current = true;
                         setBrightness(value);

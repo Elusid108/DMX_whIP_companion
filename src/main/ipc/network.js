@@ -314,13 +314,6 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         }
     });
 
-    ipcMain.handle('device-order-shows', async (event, { ip, paths } = {}) => {
-        if (!Array.isArray(paths) || paths.length === 0) {
-            return { success: false, error: 'Nothing to reorder' };
-        }
-        return postForm(ip, '/order', { path: paths }, 8000);
-    });
-
     ipcMain.on('set-protocol', async (event, { interfaceIp }) => {
         await setupReceivers(interfaceIp);
     });
@@ -364,7 +357,6 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('device-set-name');
         ipcMain.removeHandler('device-rename-show');
         ipcMain.removeHandler('device-pull-show');
-        ipcMain.removeHandler('device-order-shows');
         ipcMain.removeListener('devices-scan', handleScan);
     };
 }

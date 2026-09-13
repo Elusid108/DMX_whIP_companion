@@ -18,6 +18,8 @@ const LibraryPanel = () => {
     const [targetId, setTargetId] = useState(null);
     const [pushing, setPushing] = useState(false);
     const [pushError, setPushError] = useState('');
+    const [renaming, setRenaming] = useState(false);
+    const [renameDraft, setRenameDraft] = useState('');
     const saveTimer = useRef(null);
     const selectedRef = useRef(null);
     const dirtyRef = useRef(false);
@@ -30,6 +32,8 @@ const LibraryPanel = () => {
 
     useEffect(() => {
         dirtyRef.current = false;
+        setRenaming(false);
+        setRenameDraft('');
     }, [selectedPath]);
 
     const applyList = (nextShows) => {
@@ -223,15 +227,28 @@ const LibraryPanel = () => {
         }
     });
 
-    const handleRename = () => runAction(async () => {
+    const handleRename = () => {
         if (!selectedPath) {
             return;
         }
         const current = inspect && inspect.filename
             ? inspect.filename.replace(/\.dmx$/i, '')
             : '';
-        const next = window.prompt('Rename file (without .dmx)', current);
-        if (next == null) {
+        setRenameDraft(current);
+        setRenaming(true);
+    };
+
+    const handleRenameCancel = () => {
+        setRenaming(false);
+        setRenameDraft('');
+    };
+
+    const handleRenameConfirm = () => runAction(async () => {
+        if (!selectedPath) {
+            return;
+        }
+        const next = String(renameDraft || '').trim();
+        if (!next) {
             return;
         }
         const result = await ipcRenderer.invoke('library-rename', {
@@ -239,6 +256,7 @@ const LibraryPanel = () => {
             name: next
         });
         if (result && result.success) {
+            setRenaming(false);
             setSelectedPath(result.filePath);
             if (loadedPath === selectedPath) {
                 setLoadedPath(result.filePath);
@@ -348,8 +366,13 @@ const LibraryPanel = () => {
                     busy,
                     onNameChange: handleNameChange,
                     onNotesChange: handleNotesChange,
+                    renaming,
+                    renameDraft,
                     onPlay: handlePlay,
                     onRename: handleRename,
+                    onRenameDraftChange: setRenameDraft,
+                    onRenameConfirm: handleRenameConfirm,
+                    onRenameCancel: handleRenameCancel,
                     onDelete: handleDelete,
                     onExport: handleExport,
                     devices,

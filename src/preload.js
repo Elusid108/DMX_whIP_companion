@@ -27,8 +27,7 @@ const INVOKE = new Set([
     'device-wifi-forget',
     'device-set-name',
     'device-rename-show',
-    'device-pull-show',
-    'device-order-shows'
+    'device-pull-show'
 ]);
 
 const SEND = new Set([

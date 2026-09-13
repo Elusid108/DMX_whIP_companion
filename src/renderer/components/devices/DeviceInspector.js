@@ -55,9 +55,13 @@ const DeviceInspector = ({
     onStop,
     onPrev,
     onNext,
+    renaming,
+    renameDraft,
     onRenameShow,
+    onRenameDraftChange,
+    onRenameConfirm,
+    onRenameCancel,
     onPullShow,
-    onReorder,
     onBrightnessChange,
     onApplyBrightness,
     onProtoChange,
@@ -148,34 +152,12 @@ const DeviceInspector = ({
                     : React.createElement('div', {
                         className: 'flex flex-col gap-1'
                     },
-                        fileList.map((file, index) => React.createElement('button', {
+                        fileList.map((file) => React.createElement('button', {
                             key: file,
                             type: 'button',
-                            draggable: !disabled,
                             className: `kv-row text-sm ${sdPath === file ? 'is-active' : ''}`,
-                            onClick: () => onSdPathChange(file),
-                            onDragStart: (event) => {
-                                event.dataTransfer.setData('text/plain', String(index));
-                                event.dataTransfer.effectAllowed = 'move';
-                            },
-                            onDragOver: (event) => {
-                                event.preventDefault();
-                            },
-                            onDrop: (event) => {
-                                event.preventDefault();
-                                const from = Number(event.dataTransfer.getData('text/plain'));
-                                if (!Number.isInteger(from) || from === index) {
-                                    return;
-                                }
-                                const next = fileList.slice();
-                                const [moved] = next.splice(from, 1);
-                                next.splice(index, 0, moved);
-                                onReorder(next);
-                            }
+                            onClick: () => onSdPathChange(file)
                         },
-                            React.createElement('span', {
-                                className: 'text-xs text-zinc-500 w-6 flex-none'
-                            }, String(index + 1).padStart(2, '0')),
                             React.createElement('span', {
                                 className: 'truncate text-left'
                             }, sdDisplayName(file))
@@ -224,9 +206,32 @@ const DeviceInspector = ({
                         onClick: onPullShow
                     }, 'Pull to library')
                 ),
+                renaming && React.createElement('div', {
+                    className: 'flex items-center gap-1.5'
+                },
+                    React.createElement('input', {
+                        className: 'field',
+                        value: renameDraft,
+                        disabled,
+                        autoFocus: true,
+                        onChange: (event) => onRenameDraftChange(event.target.value)
+                    }),
+                    React.createElement('button', {
+                        type: 'button',
+                        className: 'btn-primary flex-none',
+                        disabled: disabled || !String(renameDraft || '').trim(),
+                        onClick: onRenameConfirm
+                    }, 'Save name'),
+                    React.createElement('button', {
+                        type: 'button',
+                        className: 'btn-quiet flex-none',
+                        disabled,
+                        onClick: onRenameCancel
+                    }, 'Cancel')
+                ),
                 React.createElement('p', {
                     className: 'text-xs text-zinc-500'
-                }, 'Drag to reorder on the card. Library Load and the toolbar play from this PC.')
+                }, 'Shows are listed alphabetically. Library Load and the toolbar play from this PC.')
             ),
 
             heading('Brightness'),

@@ -12,6 +12,8 @@ const RecordingControls = ({ selectedUniverses }) => {
     const [frameCount, setFrameCount] = useState(0);
     const [recordingFps, setRecordingFps] = useState(0);
     const [droppedFrames, setDroppedFrames] = useState(0);
+    const [naming, setNaming] = useState(false);
+    const [nameDraft, setNameDraft] = useState('');
     const recordingStartTime = useRef(null);
     const durationTimer = useRef(null);
 
@@ -73,18 +75,34 @@ const RecordingControls = ({ selectedUniverses }) => {
         ? recordingPath.split(/[\\/]/).pop()
         : '';
 
-    const handleNewFile = async () => {
+    const handleNewFile = () => {
         if (isRecording) {
             return;
         }
+        setNameDraft('');
+        setNaming(true);
+        setLoadError('');
+    };
+
+    const handleNewFileCancel = () => {
+        setNaming(false);
+        setNameDraft('');
+    };
+
+    const handleNewFileConfirm = async () => {
+        if (isRecording) {
+            return;
+        }
+        const name = String(nameDraft || '').trim();
+        if (!name) {
+            return;
+        }
         try {
-            const name = window.prompt('New recording name (without .dmx)');
-            if (name == null) {
-                return;
-            }
             const result = await ipcRenderer.invoke('library-new-file', { name });
             if (result && result.success) {
                 setRecordingPath(result.filePath);
+                setNaming(false);
+                setNameDraft('');
                 setLoadError('');
             } else if (result && result.error && result.error !== 'No file selected') {
                 setLoadError(result.error);
@@ -162,6 +180,30 @@ const RecordingControls = ({ selectedUniverses }) => {
             recordingFileName && React.createElement('span', {
                 className: 'text-xs text-zinc-500 truncate max-w-[12rem]'
             }, recordingFileName)
+        ),
+        naming && React.createElement('div', {
+            className: 'flex items-center gap-1.5'
+        },
+            React.createElement('input', {
+                className: 'field',
+                value: nameDraft,
+                disabled: isRecording,
+                autoFocus: true,
+                placeholder: 'New recording name',
+                onChange: (event) => setNameDraft(event.target.value)
+            }),
+            React.createElement('button', {
+                type: 'button',
+                className: 'btn-primary flex-none',
+                disabled: isRecording || !String(nameDraft || '').trim(),
+                onClick: handleNewFileConfirm
+            }, 'Create'),
+            React.createElement('button', {
+                type: 'button',
+                className: 'btn-quiet flex-none',
+                disabled: isRecording,
+                onClick: handleNewFileCancel
+            }, 'Cancel')
         ),
 
         loadError && React.createElement('div', {
