@@ -2,7 +2,7 @@
 
 Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN).
 
-**Version:** 0.5.0
+**Version:** 0.5.2
 
 ## How to run
 
@@ -27,7 +27,7 @@ That means: plan only the first `###` section that still has unchecked items. Do
 
 ## Current state
 
-The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks into the chosen library folder (default `Documents/DMX whIP/Shows`) after New File; a Library tab lists shows with sidecar notes and inspector stats. Art-Net universe numbers are shown 1-based in the UI. The chrome follows a zinc/cyan dark theme with a light-mode toggle. Playback is clock-based with a working Stop control and legal sACN via the `sacn` package. The renderer is isolated (`contextIsolation`) with a local Tailwind build. ESP32 nodes live in the sibling repo `DMX_whIP_embedded` (ArtPollReply, SoftAP portal `/status`, idle SD playback of companion `DMXREC`). Treat this as a prototype restart, not a shipping 1.0.
+The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks into the chosen library folder (default `Documents/DMX whIP/Shows`) after New File; a Library tab lists shows with sidecar notes and inspector stats. The chrome follows a zinc/cyan dark theme with a light-mode toggle. Playback is clock-based with a working Stop control and legal sACN via the `sacn` package. The renderer is isolated (`contextIsolation`) with a local Tailwind build. ESP32 nodes live in the sibling repo `DMX_whIP_embedded` (ArtPollReply, SoftAP portal `/status`, idle SD playback of companion `DMXREC`). Treat this as a prototype restart, not a shipping 1.0.
 
 ---
 

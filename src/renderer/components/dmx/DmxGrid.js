@@ -1,6 +1,5 @@
 const React = require('react');
 const DmxCell = require('./DmxCell');
-const { displayUniverse } = require('../../universeDisplay');
 
 const GRID_STYLES = {
     '16x32': {
@@ -36,7 +35,7 @@ const DmxGrid = React.memo(({
     [gridDimensions]);
 
     const title = selectedUniverse !== null
-        ? `DMX Channels — ${protocolTitle(selectedProtocol)} Universe ${displayUniverse(selectedProtocol, selectedUniverse)}`
+        ? `DMX Channels — ${protocolTitle(selectedProtocol)} Universe ${selectedUniverse}`
         : 'DMX Channels — No Universe Selected';
 
     return React.createElement('div', {

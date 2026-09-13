@@ -1,5 +1,4 @@
 const React = require('react');
-const { displayUniverse } = require('../../universeDisplay');
 
 const formatDuration = (ms) => {
     const value = Number(ms) || 0;
@@ -41,19 +40,6 @@ const protocolLabel = (protocols) => {
     return protocols.map((protocol) => (protocol === 'artnet' ? 'Art-Net' : 'sACN')).join(', ');
 };
 
-const universeLabels = (show) => {
-    if (show.perUniverse && show.perUniverse.length) {
-        return show.perUniverse
-            .map((row) => displayUniverse(row.protocol, row.id))
-            .join(', ');
-    }
-    if (!show.universes || !show.universes.length) {
-        return '—';
-    }
-    const protocol = show.protocols && show.protocols.length === 1 ? show.protocols[0] : null;
-    return show.universes.map((id) => displayUniverse(protocol, id)).join(', ');
-};
-
 const Field = ({ label, children }) => React.createElement('div', {
     className: 'flex flex-col gap-1'
 },
@@ -63,8 +49,8 @@ const Field = ({ label, children }) => React.createElement('div', {
     children
 );
 
-const Kv = ({ label, value, wide }) => React.createElement('div', {
-    className: `kv-row text-sm ${wide ? 'col-span-2' : ''}`
+const Kv = ({ label, value }) => React.createElement('div', {
+    className: 'kv-row text-sm'
 },
     React.createElement('span', { className: 'text-xs text-zinc-500 w-24 flex-none' }, label),
     React.createElement('span', { className: 'truncate' }, value)
@@ -91,98 +77,101 @@ const ShowInspector = ({
     const playable = Boolean(show.playable);
 
     return React.createElement('div', {
-        className: 'flex flex-col gap-2 overflow-y-auto h-full'
+        className: 'overflow-y-auto h-full'
     },
-        React.createElement(Field, { label: 'Display name' },
-            React.createElement('input', {
-                className: 'field',
-                value: name,
-                disabled: busy,
-                onChange: (event) => onNameChange(event.target.value)
-            })
-        ),
-        React.createElement(Field, { label: 'Notes' },
-            React.createElement('textarea', {
-                className: 'field min-h-[5rem]',
-                value: notes,
-                disabled: busy,
-                onChange: (event) => onNotesChange(event.target.value)
-            })
-        ),
         React.createElement('div', {
-            className: 'grid grid-cols-2 gap-1.5'
+            className: 'flex flex-col gap-2 w-[60%] mx-auto'
         },
-            React.createElement(Kv, { label: 'File', value: show.filename }),
-            React.createElement(Kv, { label: 'Size', value: formatBytes(show.size) }),
-            React.createElement(Kv, { label: 'Duration', value: formatDuration(show.duration) }),
-            React.createElement(Kv, { label: 'Frames', value: String(show.frameCount || 0) }),
-            React.createElement(Kv, { label: 'Packet rate', value: `${formatRate(show.packetRate)} /s` }),
-            React.createElement(Kv, { label: 'Protocol', value: protocolLabel(show.protocols) }),
-            React.createElement(Kv, { label: 'Universes', value: universeLabels(show), wide: true }),
-            React.createElement(Kv, { label: 'Created', value: formatDate(show.created) }),
-            React.createElement(Kv, { label: 'Modified', value: formatDate(show.modified) })
-        ),
-        show.error && React.createElement('div', {
-            className: 'text-sm text-red-500'
-        }, show.error),
-        show.perUniverse && show.perUniverse.length > 0 && React.createElement('div', {
-            className: 'overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800'
-        },
-            React.createElement('table', {
-                className: 'w-full text-xs text-left'
+            React.createElement(Field, { label: 'Display name' },
+                React.createElement('input', {
+                    className: 'field',
+                    value: name,
+                    disabled: busy,
+                    onChange: (event) => onNameChange(event.target.value)
+                })
+            ),
+            React.createElement(Field, { label: 'Notes' },
+                React.createElement('textarea', {
+                    className: 'field min-h-[5rem]',
+                    value: notes,
+                    disabled: busy,
+                    onChange: (event) => onNotesChange(event.target.value)
+                })
+            ),
+            React.createElement('div', {
+                className: 'grid grid-cols-2 gap-1.5'
             },
-                React.createElement('thead', null,
-                    React.createElement('tr', {
-                        className: 'text-zinc-500'
-                    },
-                        React.createElement('th', { className: 'py-1.5 px-2' }, 'Universe'),
-                        React.createElement('th', { className: 'py-1.5 px-2' }, 'Protocol'),
-                        React.createElement('th', { className: 'py-1.5 px-2' }, 'Packets'),
-                        React.createElement('th', { className: 'py-1.5 px-2' }, 'Rate /s'),
-                        React.createElement('th', { className: 'py-1.5 px-2' }, 'Woken ch')
+                React.createElement(Kv, { label: 'File', value: show.filename }),
+                React.createElement(Kv, { label: 'Size', value: formatBytes(show.size) }),
+                React.createElement(Kv, { label: 'Duration', value: formatDuration(show.duration) }),
+                React.createElement(Kv, { label: 'Frames', value: String(show.frameCount || 0) }),
+                React.createElement(Kv, { label: 'Packet rate', value: `${formatRate(show.packetRate)} /s` }),
+                React.createElement(Kv, { label: 'Protocol', value: protocolLabel(show.protocols) }),
+                React.createElement(Kv, { label: 'Created', value: formatDate(show.created) }),
+                React.createElement(Kv, { label: 'Modified', value: formatDate(show.modified) })
+            ),
+            show.error && React.createElement('div', {
+                className: 'text-sm text-red-500'
+            }, show.error),
+            show.perUniverse && show.perUniverse.length > 0 && React.createElement('div', {
+                className: 'overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800'
+            },
+                React.createElement('table', {
+                    className: 'w-full text-xs text-left'
+                },
+                    React.createElement('thead', null,
+                        React.createElement('tr', {
+                            className: 'text-zinc-500'
+                        },
+                            React.createElement('th', { className: 'py-1.5 px-2' }, 'Universe'),
+                            React.createElement('th', { className: 'py-1.5 px-2' }, 'Protocol'),
+                            React.createElement('th', { className: 'py-1.5 px-2' }, 'Packets'),
+                            React.createElement('th', { className: 'py-1.5 px-2' }, 'Rate /s'),
+                            React.createElement('th', { className: 'py-1.5 px-2' }, 'Woken ch')
+                        )
+                    ),
+                    React.createElement('tbody', null,
+                        show.perUniverse.map((row) => React.createElement('tr', {
+                            key: `${row.protocol}-${row.id}`,
+                            className: 'border-t border-zinc-200 dark:border-zinc-800'
+                        },
+                            React.createElement('td', { className: 'py-1.5 px-2' }, row.id),
+                            React.createElement('td', { className: 'py-1.5 px-2' }, row.protocol === 'artnet' ? 'Art-Net' : 'sACN'),
+                            React.createElement('td', { className: 'py-1.5 px-2' }, row.packets),
+                            React.createElement('td', { className: 'py-1.5 px-2' }, formatRate(row.rate)),
+                            React.createElement('td', { className: 'py-1.5 px-2' }, row.wokenChannels)
+                        ))
                     )
-                ),
-                React.createElement('tbody', null,
-                    show.perUniverse.map((row) => React.createElement('tr', {
-                        key: `${row.protocol}-${row.id}`,
-                        className: 'border-t border-zinc-200 dark:border-zinc-800'
-                    },
-                        React.createElement('td', { className: 'py-1.5 px-2' }, displayUniverse(row.protocol, row.id)),
-                        React.createElement('td', { className: 'py-1.5 px-2' }, row.protocol === 'artnet' ? 'Art-Net' : 'sACN'),
-                        React.createElement('td', { className: 'py-1.5 px-2' }, row.packets),
-                        React.createElement('td', { className: 'py-1.5 px-2' }, formatRate(row.rate)),
-                        React.createElement('td', { className: 'py-1.5 px-2' }, row.wokenChannels)
-                    ))
                 )
+            ),
+            React.createElement('div', {
+                className: 'flex flex-wrap gap-1.5 pt-1'
+            },
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-primary',
+                    disabled: busy || !playable,
+                    onClick: onPlay
+                }, 'Play'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet',
+                    disabled: busy,
+                    onClick: onExport
+                }, 'Export'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet',
+                    disabled: busy,
+                    onClick: onRename
+                }, 'Rename'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-danger',
+                    disabled: busy,
+                    onClick: onDelete
+                }, 'Delete')
             )
-        ),
-        React.createElement('div', {
-            className: 'flex flex-wrap gap-1.5 pt-1'
-        },
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-primary',
-                disabled: busy || !playable,
-                onClick: onPlay
-            }, 'Play'),
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-quiet',
-                disabled: busy,
-                onClick: onExport
-            }, 'Export'),
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-quiet',
-                disabled: busy,
-                onClick: onRename
-            }, 'Rename'),
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-danger',
-                disabled: busy,
-                onClick: onDelete
-            }, 'Delete')
         )
     );
 };

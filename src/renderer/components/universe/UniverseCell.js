@@ -1,5 +1,4 @@
 const React = require('react');
-const { displayUniverse } = require('../../universeDisplay');
 
 const UniverseCell = ({
     universe,
@@ -15,7 +14,6 @@ const UniverseCell = ({
     const sourceName = universe?.sourceName;
     const fps = universe?.fps;
     const isStale = universe?.stale;
-    const label = displayUniverse(protocol, universeId);
 
     return React.createElement('div', {
         className: `kv-row ${isSelected ? 'is-active' : ''}`
@@ -35,7 +33,7 @@ const UniverseCell = ({
             },
                 React.createElement('div', {
                     className: 'font-medium text-sm'
-                }, `Universe ${label}${isStale ? ' (Inactive)' : ''}`),
+                }, `Universe ${universeId}${isStale ? ' (Inactive)' : ''}`),
                 React.createElement('div', {
                     className: 'text-xs text-zinc-500'
                 }, `Channels: ${channels}`),
