@@ -78,7 +78,11 @@ const RecordingControls = ({ selectedUniverses }) => {
             return;
         }
         try {
-            const result = await ipcRenderer.invoke('library-new-file');
+            const name = window.prompt('New recording name (without .dmx)');
+            if (name == null) {
+                return;
+            }
+            const result = await ipcRenderer.invoke('library-new-file', { name });
             if (result && result.success) {
                 setRecordingPath(result.filePath);
                 setLoadError('');

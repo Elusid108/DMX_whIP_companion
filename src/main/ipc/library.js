@@ -205,10 +205,11 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
         };
     };
 
-    const createLibraryFile = () => {
-        const filePath = findNextScenePath();
+    const createLibraryFile = (name) => {
+        const baseName = sanitizeBaseName(name);
+        const filePath = uniqueDmxPath(ensureLibrary(), baseName);
         fs.writeFileSync(filePath, createHeader(0));
-        writeSidecar(filePath, { name: '', notes: '' });
+        writeSidecar(filePath, { name: baseName, notes: '' });
         if (recordingHandler && recordingHandler.setRecordingPath) {
             recordingHandler.setRecordingPath(filePath);
         }
@@ -237,12 +238,12 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
         }
     });
 
-    ipcMain.handle('library-new-file', async () => {
+    ipcMain.handle('library-new-file', async (event, { name } = {}) => {
         if (recordingHandler && recordingHandler.isRecording && recordingHandler.isRecording()) {
             return { success: false, error: 'Stop recording before creating a new file' };
         }
         try {
-            const filePath = createLibraryFile();
+            const filePath = createLibraryFile(name);
             return { success: true, filePath };
         } catch (error) {
             console.error('Error creating library file:', error);
@@ -437,5 +438,9 @@ module.exports = {
     setupLibraryHandlers,
     getLibraryDir,
     ensureLibrary,
-    findNextScenePath
+    findNextScenePath,
+    assertInLibrary,
+    sanitizeBaseName,
+    uniqueDmxPath,
+    writeSidecar
 };

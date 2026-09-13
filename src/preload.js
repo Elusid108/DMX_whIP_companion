@@ -15,7 +15,20 @@ const INVOKE = new Set([
     'library-choose-dir',
     'load-recording',
     'device-status',
-    'device-identify'
+    'device-identify',
+    'device-list',
+    'device-push-show',
+    'device-play',
+    'device-stop',
+    'device-set-brightness',
+    'device-set-live',
+    'device-wifi-scan',
+    'device-wifi-connect',
+    'device-wifi-forget',
+    'device-set-name',
+    'device-rename-show',
+    'device-pull-show',
+    'device-order-shows'
 ]);
 
 const SEND = new Set([

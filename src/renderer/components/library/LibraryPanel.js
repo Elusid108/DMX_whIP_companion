@@ -14,6 +14,10 @@ const LibraryPanel = () => {
     const [notes, setNotes] = useState('');
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
+    const [devices, setDevices] = useState([]);
+    const [targetId, setTargetId] = useState(null);
+    const [pushing, setPushing] = useState(false);
+    const [pushError, setPushError] = useState('');
     const saveTimer = useRef(null);
     const selectedRef = useRef(null);
     const dirtyRef = useRef(false);
@@ -61,12 +65,35 @@ const LibraryPanel = () => {
             }
         };
 
+        const applyDevices = (payload = {}) => {
+            const next = payload.devices || [];
+            setDevices(next);
+            setTargetId((current) => {
+                const idle = next.filter((device) => device && !device.stale);
+                if (current && idle.some((device) => device.id === current)) {
+                    return current;
+                }
+                return idle[0] ? idle[0].id : null;
+            });
+        };
+
+        const handleDevices = (event, payload = {}) => {
+            applyDevices(payload);
+        };
+
         loadList();
+        ipcRenderer.invoke('device-list').then((snapshot) => {
+            if (snapshot) {
+                applyDevices(snapshot);
+            }
+        }).catch(() => {});
         ipcRenderer.on('library-updated', handleUpdated);
         ipcRenderer.on('file-loaded', handleFileLoaded);
+        ipcRenderer.on('devices-update', handleDevices);
         return () => {
             ipcRenderer.removeListener('library-updated', handleUpdated);
             ipcRenderer.removeListener('file-loaded', handleFileLoaded);
+            ipcRenderer.removeListener('devices-update', handleDevices);
             clearTimeout(saveTimer.current);
             if (dirtyRef.current && selectedRef.current) {
                 ipcRenderer.invoke('library-save-meta', {
@@ -221,6 +248,34 @@ const LibraryPanel = () => {
         }
     });
 
+    const handlePush = () => {
+        if (!selectedPath || !targetId || pushing) {
+            return;
+        }
+        const target = devices.find((device) => device.id === targetId);
+        if (!target || target.stale || !target.ip) {
+            setPushError('Select an idle node');
+            return;
+        }
+        setPushing(true);
+        setPushError('');
+        ipcRenderer.invoke('device-push-show', {
+            ip: target.ip,
+            filePath: selectedPath
+        }).then((result) => {
+            if (!result || !result.success) {
+                setPushError((result && result.error) || 'Push failed');
+                return;
+            }
+            const dest = result.result && result.result.path;
+            setPushError(dest ? `Pushed ${dest}` : '');
+        }).catch((err) => {
+            setPushError(err.message);
+        }).finally(() => {
+            setPushing(false);
+        });
+    };
+
     const handleDelete = () => runAction(async () => {
         if (!selectedPath) {
             return;
@@ -296,7 +351,13 @@ const LibraryPanel = () => {
                     onPlay: handlePlay,
                     onRename: handleRename,
                     onDelete: handleDelete,
-                    onExport: handleExport
+                    onExport: handleExport,
+                    devices,
+                    targetId,
+                    pushing,
+                    pushError,
+                    onTargetChange: setTargetId,
+                    onPush: handlePush
                 })
             )
         )

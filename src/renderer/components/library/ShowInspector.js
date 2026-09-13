@@ -61,12 +61,18 @@ const ShowInspector = ({
     name,
     notes,
     busy,
+    devices,
+    targetId,
+    pushing,
+    pushError,
     onNameChange,
     onNotesChange,
     onPlay,
     onRename,
     onDelete,
-    onExport
+    onExport,
+    onTargetChange,
+    onPush
 }) => {
     if (!show) {
         return React.createElement('div', {
@@ -75,6 +81,8 @@ const ShowInspector = ({
     }
 
     const playable = Boolean(show.playable);
+    const targets = (devices || []).filter((device) => device && device.ip && !device.stale);
+    const canPush = playable && Boolean(targetId) && targets.some((device) => device.id === targetId);
 
     return React.createElement('div', {
         className: 'overflow-y-auto h-full'
@@ -152,7 +160,7 @@ const ShowInspector = ({
                     className: 'btn-primary',
                     disabled: busy || !playable,
                     onClick: onPlay
-                }, 'Play'),
+                }, 'Load on this PC'),
                 React.createElement('button', {
                     type: 'button',
                     className: 'btn-quiet',
@@ -171,6 +179,40 @@ const ShowInspector = ({
                     disabled: busy,
                     onClick: onDelete
                 }, 'Delete')
+            ),
+            React.createElement('div', {
+                className: 'flex flex-col gap-1.5 pt-2 border-t border-zinc-200 dark:border-zinc-800'
+            },
+                React.createElement(Field, { label: 'Target device' },
+                    React.createElement('select', {
+                        className: 'field',
+                        value: targetId || '',
+                        disabled: busy || pushing || targets.length === 0,
+                        onChange: (event) => onTargetChange(event.target.value || null)
+                    },
+                        targets.length === 0
+                            ? React.createElement('option', { value: '' }, 'No idle nodes on this NIC')
+                            : [
+                                React.createElement('option', { key: '', value: '' }, 'Select a node'),
+                                ...targets.map((device) => React.createElement('option', {
+                                    key: device.id,
+                                    value: device.id
+                                }, `${device.longName || device.shortName || 'dmxwhip'} (${device.ip})`))
+                            ]
+                    )
+                ),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-primary self-start',
+                    disabled: busy || pushing || !canPush,
+                    onClick: onPush
+                }, pushing ? 'Pushing…' : 'Push to SD'),
+                React.createElement('p', {
+                    className: 'text-xs text-zinc-500'
+                }, 'Copies this .dmx onto the node SD. Load on this PC uses the toolbar; device Play/Stop live on Devices.'),
+                pushError && React.createElement('div', {
+                    className: pushError.startsWith('Pushed ') ? 'text-sm text-cyan-600 dark:text-cyan-400' : 'text-sm text-red-500'
+                }, pushError)
             )
         )
     );

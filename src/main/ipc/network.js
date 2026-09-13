@@ -3,7 +3,21 @@ const ArtNetReceiver = require('../../services/artnet/receiver');
 const SacnReceiver = require('../../services/sacn/receiver');
 const { getNetworkInterfaces } = require('../../services/shared/networkUtils');
 const UniverseMonitor = require('../monitor/universeMonitor');
-const { fetchStatus, postIdentify } = require('../deviceHttp');
+const { assertInLibrary, sanitizeBaseName, uniqueDmxPath, writeSidecar, ensureLibrary } = require('./library');
+const {
+    downloadFile,
+    fetchStatus,
+    postForm,
+    postIdentify,
+    postUpload,
+    scanWifi
+} = require('../deviceHttp');
+
+const ORDER_PREFIX = /^(\d{2})_/;
+
+const sdBaseName = (sdPath) => String(sdPath || '').split('/').pop() || '';
+
+const sdDisplayName = (sdPath) => sdBaseName(sdPath).replace(/\.dmx$/i, '').replace(ORDER_PREFIX, '');
 
 let artnetReceiver = null;
 let sacnReceiver = null;
@@ -40,7 +54,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         mainWindow.webContents.send(channel, payload);
     };
 
-    const emitDevices = () => {
+    const snapshotDevices = () => {
         const now = Date.now();
         const rows = [];
         for (const [id, node] of devices) {
@@ -60,10 +74,14 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
             }
             return (a.longName || a.ip).localeCompare(b.longName || b.ip);
         });
-        sendToRenderer('devices-update', {
+        return {
             nic: selectedNic,
             devices: rows
-        });
+        };
+    };
+
+    const emitDevices = () => {
+        sendToRenderer('devices-update', snapshotDevices());
     };
 
     const clearDevices = () => {
@@ -213,6 +231,96 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         return postIdentify(ip, ms);
     });
 
+    ipcMain.handle('device-list', () => snapshotDevices());
+
+    ipcMain.handle('device-push-show', async (event, { ip, filePath } = {}) => {
+        try {
+            assertInLibrary(filePath);
+            return await postUpload(ip, filePath);
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('device-play', async (event, { ip, path: sdPath } = {}) => {
+        if (!sdPath || !String(sdPath).startsWith('/') || !/\.dmx$/i.test(sdPath)) {
+            return { success: false, error: 'Select a .dmx on the node SD' };
+        }
+        return postForm(ip, '/play', { src: 'file', path: sdPath, file_loop: 'one' });
+    });
+
+    ipcMain.handle('device-stop', async (event, { ip } = {}) => {
+        return postForm(ip, '/play', { src: 'stop' });
+    });
+
+    ipcMain.handle('device-set-brightness', async (event, { ip, v } = {}) => {
+        return postForm(ip, '/brightness', { v });
+    });
+
+    ipcMain.handle('device-set-live', async (event, { ip, proto, fps, buf } = {}) => {
+        return postForm(ip, '/live', { proto, fps, buf });
+    });
+
+    ipcMain.handle('device-wifi-scan', async (event, { ip } = {}) => {
+        return scanWifi(ip);
+    });
+
+    ipcMain.handle('device-wifi-connect', async (event, { ip, ssid, password } = {}) => {
+        return postForm(ip, '/connect', { ssid, password: password || '' }, 8000);
+    });
+
+    ipcMain.handle('device-wifi-forget', async (event, { ip } = {}) => {
+        return postForm(ip, '/forget', {});
+    });
+
+    ipcMain.handle('device-set-name', async (event, { ip, name, short } = {}) => {
+        const longName = String(name || '').trim();
+        if (!longName) {
+            return { success: false, error: 'Enter a device name' };
+        }
+        return postForm(ip, '/name', { long: longName, short: short || '' });
+    });
+
+    ipcMain.handle('device-rename-show', async (event, { ip, from, name } = {}) => {
+        try {
+            if (!from || !String(from).startsWith('/') || !/\.dmx$/i.test(from)) {
+                return { success: false, error: 'Select a .dmx on the node SD' };
+            }
+            const base = sdBaseName(from);
+            const prefix = ORDER_PREFIX.test(base) ? base.slice(0, 3) : '';
+            const cleaned = sanitizeBaseName(name);
+            const to = `/${prefix}${cleaned}.dmx`;
+            if (to.length > 63) {
+                return { success: false, error: 'Name is too long for the node SD' };
+            }
+            return await postForm(ip, '/rename', { from, to });
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('device-pull-show', async (event, { ip, path: sdPath } = {}) => {
+        try {
+            const display = sdDisplayName(sdPath) || 'show';
+            const dest = uniqueDmxPath(ensureLibrary(), sanitizeBaseName(display));
+            const result = await downloadFile(ip, sdPath, dest);
+            if (!result || !result.success) {
+                return result || { success: false, error: 'Pull failed' };
+            }
+            writeSidecar(dest, { name: display, notes: '' });
+            return { success: true, filePath: dest, via: result.via };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('device-order-shows', async (event, { ip, paths } = {}) => {
+        if (!Array.isArray(paths) || paths.length === 0) {
+            return { success: false, error: 'Nothing to reorder' };
+        }
+        return postForm(ip, '/order', { path: paths }, 8000);
+    });
+
     ipcMain.on('set-protocol', async (event, { interfaceIp }) => {
         await setupReceivers(interfaceIp);
     });
@@ -244,6 +352,19 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('get-network-interfaces');
         ipcMain.removeHandler('device-status');
         ipcMain.removeHandler('device-identify');
+        ipcMain.removeHandler('device-list');
+        ipcMain.removeHandler('device-push-show');
+        ipcMain.removeHandler('device-play');
+        ipcMain.removeHandler('device-stop');
+        ipcMain.removeHandler('device-set-brightness');
+        ipcMain.removeHandler('device-set-live');
+        ipcMain.removeHandler('device-wifi-scan');
+        ipcMain.removeHandler('device-wifi-connect');
+        ipcMain.removeHandler('device-wifi-forget');
+        ipcMain.removeHandler('device-set-name');
+        ipcMain.removeHandler('device-rename-show');
+        ipcMain.removeHandler('device-pull-show');
+        ipcMain.removeHandler('device-order-shows');
         ipcMain.removeListener('devices-scan', handleScan);
     };
 }
