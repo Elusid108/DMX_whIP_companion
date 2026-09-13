@@ -42,7 +42,7 @@ const flagsAndLength = (pduLength) => 0x7000 | (pduLength & 0x0fff);
 
 const createSacnDmxPacket = (universe, dmxData, options = {}) => {
     const multicastAddress = getMulticastAddress(universe);
-    const sourceName = options.sourceName || 'DMX Monitor';
+    const sourceName = options.sourceName || 'DMX whIP Companion';
     const priority = options.priority || 100;
     const CID = options.cid || crypto.randomBytes(16);
 
@@ -88,7 +88,7 @@ const createSacnDmxPacket = (universe, dmxData, options = {}) => {
 
 const createSacnDiscoveryPacket = (universes, options = {}) => {
     const cid = options.cid || crypto.randomBytes(16);
-    const sourceName = (options.sourceName || 'DMX Monitor').padEnd(64, '\0').slice(0, 64);
+    const sourceName = (options.sourceName || 'DMX whIP Companion').padEnd(64, '\0').slice(0, 64);
     const page = options.page || 0;
     const lastPage = options.lastPage || 0;
 

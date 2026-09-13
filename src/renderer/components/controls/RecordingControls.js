@@ -1,6 +1,6 @@
 const React = require('react');
 const { useState, useEffect, useRef } = React;
-const { ipcRenderer } = require('electron');
+const ipcRenderer = require('../../ipc');
 
 const RecordingControls = ({ selectedUniverses, selectedNic }) => {
     const [isRecording, setIsRecording] = useState(false);

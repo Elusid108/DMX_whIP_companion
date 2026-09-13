@@ -1,5 +1,8 @@
 module.exports = {
-  content: ["./src/**/*.{html,js}"],
+  content: [
+    "./src/renderer/**/*.{html,js}",
+    "!./src/renderer/generated/**"
+  ],
   theme: {
     extend: {
       gridTemplateColumns: {

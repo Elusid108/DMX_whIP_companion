@@ -1,5 +1,5 @@
 const { useState, useEffect } = require('react');
-const { ipcRenderer } = require('electron');
+const ipcRenderer = require('../ipc');
 
 const emptyGrid = () => new Array(512).fill(null);
 

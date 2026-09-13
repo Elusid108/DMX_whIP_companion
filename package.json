@@ -1,9 +1,15 @@
 {
-  "name": "dmx-monitor",
-  "version": "0.3.0",
-  "description": "DMX protocol monitor for Art-Net and sACN",
+  "name": "dmx-whip-companion",
+  "version": "0.3.1",
+  "description": "Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN)",
   "main": "src/main/main.js",
   "scripts": {
+    "prepare:generated": "node -e \"require('fs').mkdirSync('src/renderer/generated',{recursive:true})\"",
+    "build:css": "npm run prepare:generated && tailwindcss -i ./src/renderer/input.css -o ./src/renderer/generated/tailwind.css --minify",
+    "build:renderer": "npm run prepare:generated && esbuild src/renderer/bootstrap.js --bundle --outfile=src/renderer/generated/renderer.js --platform=browser",
+    "build:ui": "npm run build:css && npm run build:renderer",
+    "prestart": "npm run build:ui",
+    "predev": "npm run build:ui",
     "start": "electron .",
     "dev": "electron ."
   },
@@ -14,17 +20,15 @@
     "lighting"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "Apache-2.0",
   "dependencies": {
-    "artnet": "^1.4.0",
-    "electron": "^33.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "sacn": "^4.6.2"
   },
   "devDependencies": {
-    "@babel/core": "^7.23.0",
-    "@babel/preset-react": "^7.23.0",
-    "@babel/register": "^7.22.15"
+    "electron": "^33.2.0",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^3.4.17"
   }
 }

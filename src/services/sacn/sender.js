@@ -6,7 +6,7 @@ class SacnSender {
     constructor(options = {}) {
         this.socket = null;
         this.cid = options.cid || crypto.randomBytes(16);
-        this.sourceName = options.sourceName || 'DMX Monitor';
+        this.sourceName = options.sourceName || 'DMX whIP Companion';
         this.interfaceIp = null;
     }
 

@@ -14,6 +14,7 @@ yarn-error.log*
 
 # Packager / build output
 dist/
+src/renderer/generated/
 out/
 build/
 release/

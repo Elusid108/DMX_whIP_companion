@@ -2,8 +2,8 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>DMX Monitor</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>DMX whIP Companion</title>
+    <link rel="stylesheet" href="./generated/tailwind.css">
     <style>
         body {
             margin: 0;
@@ -19,18 +19,6 @@
 </head>
 <body>
     <div id="root">Loading...</div>
-    <script>
-        window.electron = require('electron');
-    </script>
-    <script type="module">
-        const React = require('react');
-        const ReactDOM = require('react-dom/client');
-        const { createRoot } = ReactDOM;
-        const App = require('./App');
-
-        const container = document.getElementById('root');
-        const root = createRoot(container);
-        root.render(React.createElement(App));
-    </script>
+    <script src="./generated/renderer.js"></script>
 </body>
 </html>

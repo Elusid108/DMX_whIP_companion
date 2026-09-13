@@ -1,5 +1,5 @@
 const { useState, useEffect, useRef } = require('react');
-const { ipcRenderer } = require('electron');
+const ipcRenderer = require('../ipc');
 
 const toUniverseMap = (rows = []) => {
     const next = new Map();

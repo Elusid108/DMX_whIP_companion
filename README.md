@@ -2,7 +2,7 @@
 
 Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN).
 
-**Version:** 0.3.0
+**Version:** 0.3.1
 
 ## How to run
 
@@ -25,7 +25,7 @@ That means: plan only the first `###` section that still has unchecked items. Do
 
 ## Current state
 
-The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks after New File; playback is clock-based with a working Stop control and legal sACN via the `sacn` package. Treat this as a prototype restart, not a shipping 1.0.
+The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks after New File; playback is clock-based with a working Stop control and legal sACN via the `sacn` package. The renderer is isolated (`contextIsolation`) with a local Tailwind build. Treat this as a prototype restart, not a shipping 1.0.
 
 ---
 
@@ -61,11 +61,11 @@ The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, 
 ### Phase C — Project hygiene
 
 - [x] Add `.gitignore` (`node_modules`, `debug.log`, and similar)
-- [ ] Move Electron to `devDependencies`; add packaging later when we want a `.exe`
-- [ ] Preload script and `contextIsolation: true` (drop `nodeIntegration` / `webSecurity: false`)
-- [ ] Remove unused Babel and dead code (`renderer.js` unused bootstrap, `StatusBar.js`, `store/universe.js`, unused `dmxUtils` path, unused npm `artnet` if still unused)
-- [ ] Bundle Tailwind locally; stop loading the CDN
-- [ ] Align LICENSE (Apache-2.0 file) with `package.json` license and the app name (companion vs “DMX Monitor”)
+- [x] Move Electron to `devDependencies`; add packaging later when we want a `.exe`
+- [x] Preload script and `contextIsolation: true` (drop `nodeIntegration` / `webSecurity: false`)
+- [x] Remove unused Babel and dead code (`renderer.js` unused bootstrap, `StatusBar.js`, `store/universe.js`, unused `dmxUtils` path, unused npm `artnet` if still unused)
+- [x] Bundle Tailwind locally; stop loading the CDN
+- [x] Align LICENSE (Apache-2.0 file) with `package.json` license and the app name (companion vs “DMX Monitor”)
 
 ### Backlog (not started unless agreed)
 

@@ -13,9 +13,10 @@ function createWindow() {
         height: 800,
         title: `DMX whIP Companion v${version}`,
         webPreferences: {
-            nodeIntegration: true,
-            contextIsolation: false,
-            webSecurity: false
+            preload: path.join(__dirname, '../preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            webSecurity: true
         }
     });
 

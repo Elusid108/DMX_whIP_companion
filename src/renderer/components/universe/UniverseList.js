@@ -11,7 +11,9 @@ const UniverseList = ({
     onUniverseClick,
     onSelectAll
 }) => {
-    const protocolColor = protocol === 'artnet' ? 'blue' : 'green';
+    const titleClass = protocol === 'artnet'
+        ? 'font-bold text-blue-600'
+        : 'font-bold text-green-600';
     const protocolName = protocol === 'artnet' ? 'Art-Net' : 'sACN';
     const allSelected = universes.length > 0 && universes.every(universe => 
         selectedUniverses.has(`${protocol}-${universe.id ?? universe.universe}`)
@@ -32,7 +34,7 @@ const UniverseList = ({
         // Header
         React.createElement('div', { className: 'mb-2' },
             React.createElement('h3', { 
-                className: `font-bold text-${protocolColor}-600`
+                className: titleClass
             }, `${protocolName} Universes`),
             React.createElement('div', { 
                 className: 'flex items-center gap-2 mt-1'

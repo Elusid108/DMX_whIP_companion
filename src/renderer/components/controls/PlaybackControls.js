@@ -1,5 +1,5 @@
 const React = require('react');
-const { ipcRenderer } = require('electron');
+const ipcRenderer = require('../../ipc');
 const { useState, useEffect } = React;
 
 const PlaybackControls = ({
