@@ -42,6 +42,35 @@ function deviceId(reply) {
     return reply.ip || reply.sourceIp;
 }
 
+const WHIP_OEM = 0x00FF;
+const WHIP_REPORT = /^#0001 \[[0-9a-f]{4}\] .+ v\d+\.\d+\.\d+/i;
+
+function isWhipPollReply(reply) {
+    return !whipRejectReason(reply);
+}
+
+function whipRejectReason(reply) {
+    if (!reply) {
+        return 'no-reply';
+    }
+    if (reply.oem !== WHIP_OEM) {
+        return `oem:${reply.oem}`;
+    }
+    if (reply.bindIndex !== 1) {
+        return `bind:${reply.bindIndex}`;
+    }
+    if (reply.portType !== 0x80) {
+        return `port:${reply.portType}`;
+    }
+    if (reply.style !== 0) {
+        return `style:${reply.style}`;
+    }
+    if (!WHIP_REPORT.test(String(reply.nodeReport || ''))) {
+        return `report:${reply.nodeReport || ''}`;
+    }
+    return '';
+}
+
 function setupNetworkHandlers(mainWindow, recordingHandler) {
     const monitor = new UniverseMonitor();
     const devices = new Map();
@@ -61,6 +90,9 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         for (const [id, node] of devices) {
             const age = now - node.lastSeen;
             if (age > DROP_MS) {
+                // #region agent log
+                fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b892c6'},body:JSON.stringify({sessionId:'b892c6',runId:'vanish',hypothesisId:'A',location:'network.js:drop',message:'drop device',data:{id,ip:node.ip,age,lastSeen:node.lastSeen},timestamp:now})}).catch(()=>{});
+                // #endregion
                 devices.delete(id);
                 continue;
             }
@@ -86,6 +118,9 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     };
 
     const clearDevices = () => {
+        // #region agent log
+        fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b892c6'},body:JSON.stringify({sessionId:'b892c6',runId:'vanish',hypothesisId:'C',location:'network.js:clearDevices',message:'clear devices',data:{count:devices.size,nic:selectedNic.ip},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         devices.clear();
         emitDevices();
     };
@@ -93,6 +128,22 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     const ingestPollReply = (reply) => {
         const id = deviceId(reply);
         if (!id) {
+            return;
+        }
+        const reason = whipRejectReason(reply);
+        const accepted = !reason;
+        // #region agent log
+        const now = Date.now();
+        if (!ingestPollReply._lastLog) {
+            ingestPollReply._lastLog = new Map();
+        }
+        const prev = ingestPollReply._lastLog.get(id) || 0;
+        if (now - prev > 2000) {
+            ingestPollReply._lastLog.set(id, now);
+            fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b892c6'},body:JSON.stringify({sessionId:'b892c6',runId:'post-fix',hypothesisId:'B',location:'network.js:ingestPollReply',message:'artpoll reply',data:{id,ip:reply.ip,sourceIp:reply.sourceIp,shortName:reply.shortName,accepted,reason,oem:reply.oem,bindIndex:reply.bindIndex,portType:reply.portType,style:reply.style,nodeReport:reply.nodeReport,known:devices.has(id)},timestamp:now})}).catch(()=>{});
+        }
+        // #endregion
+        if (!accepted) {
             return;
         }
         devices.set(id, {
@@ -139,6 +190,9 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
 
     const setupReceivers = async (interfaceIp) => {
         const generation = ++setupGeneration;
+        // #region agent log
+        fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b892c6'},body:JSON.stringify({sessionId:'b892c6',runId:'vanish',hypothesisId:'C',location:'network.js:setupReceivers',message:'setup receivers',data:{interfaceIp,generation},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         selectedNic = nicInfo(interfaceIp);
         stopPoll();
         clearDevices();

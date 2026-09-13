@@ -26,11 +26,11 @@ const sdDisplayName = (sdPath) => {
     return base.replace(/\.dmx$/i, '').replace(ORDER_PREFIX, '') || sdPath;
 };
 
-const linkState = (device, status, statusError) => {
+const linkState = (device, status, liveLocked) => {
     if (device.stale) {
         return 'stale';
     }
-    if (statusError && /live|busy|lighting/i.test(statusError)) {
+    if (liveLocked) {
         return 'live';
     }
     if (status) {
@@ -43,6 +43,7 @@ const DeviceInspector = ({
     device,
     status,
     statusError,
+    liveLocked,
     identifying,
     busy,
     nodeName,
@@ -100,7 +101,7 @@ const DeviceInspector = ({
     const universes = (device.universes && device.universes.length)
         ? device.universes.join(', ')
         : String(device.universe ?? 0);
-    const idle = Boolean(status) && !statusError && !device.stale;
+    const idle = Boolean(status) && !statusError && !device.stale && !liveLocked;
     const play = status && status.play ? status.play : {};
     const fileList = Array.isArray(files) ? files : [];
     const dirList = Array.isArray(dirs) ? dirs : [];
@@ -113,7 +114,7 @@ const DeviceInspector = ({
         fileSelected
     );
     const nowText = play.now ? sdDisplayName(play.now) : 'stopped';
-    const link = linkState(device, status, statusError);
+    const link = linkState(device, status, liveLocked);
     const meta = [
         device.ip,
         device.mac,
@@ -174,7 +175,10 @@ const DeviceInspector = ({
                 className: 'readout truncate',
                 title: meta
             }, meta),
-            statusError && React.createElement('div', {
+            liveLocked && React.createElement('p', {
+                className: 'text-xs text-amber-500'
+            }, 'Live Art-Net/sACN is present. HTTP is parked — stop the stream for ~2 s to use Playback and Setup.'),
+            !liveLocked && statusError && React.createElement('div', {
                 className: 'text-sm text-red-500'
             }, statusError)
         ),
@@ -197,7 +201,10 @@ const DeviceInspector = ({
                 React.createElement('div', {
                     className: 'label-micro'
                 }, 'Shows'),
-                !idle && React.createElement('p', {
+                liveLocked && React.createElement('p', {
+                    className: 'text-xs text-zinc-500'
+                }, 'Shows and output settings return when live input goes silent.'),
+                !idle && !liveLocked && React.createElement('p', {
                     className: 'text-xs text-zinc-500'
                 }, 'Idle HTTP is required to list and play files on the node.'),
                 idle && !sdOk && React.createElement('p', {

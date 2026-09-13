@@ -28,6 +28,7 @@ const DevicesPanel = () => {
     const [selectedId, setSelectedId] = useState(null);
     const [status, setStatus] = useState(null);
     const [statusError, setStatusError] = useState('');
+    const [liveLocked, setLiveLocked] = useState(false);
     const [identifying, setIdentifying] = useState(false);
     const [busy, setBusy] = useState(false);
     const [faceTab, setFaceTab] = useState('playback');
@@ -121,10 +122,21 @@ const DevicesPanel = () => {
         setFolderRep('forever');
         setFolderN(1);
         setNodeName('');
+        setLiveLocked(false);
         setRenaming(false);
         setRenameDraft('');
         setFaceTab('playback');
     }, [selectedId]);
+
+    useEffect(() => {
+        if (nameDirtyRef.current || !selected) {
+            return;
+        }
+        const next = selected.longName || selected.shortName || '';
+        if (next) {
+            setNodeName(next);
+        }
+    }, [selected]);
 
     useEffect(() => () => {
         clearTimeout(briTimerRef.current);
@@ -185,6 +197,7 @@ const DevicesPanel = () => {
 
     useEffect(() => {
         if (!selectedId || !selectedIp || selectedStale) {
+            setLiveLocked(false);
             setStatus(null);
             setStatusError(selectedStale ? 'Node is stale — waiting for ArtPollReply.' : '');
             return undefined;
@@ -199,10 +212,21 @@ const DevicesPanel = () => {
             if (result && result.success) {
                 applyStatus(result.status);
                 setStatusError('');
+                setLiveLocked(false);
             } else {
-                setStatus(null);
-                setStatusError((result && result.error) || 'Unable to read /status');
+                const err = (result && result.error) || 'Unable to read /status';
+                const live = /live|busy|lighting/i.test(err);
+                setLiveLocked(live);
+                if (!live) {
+                    setStatus(null);
+                    setStatusError(err);
+                } else {
+                    setStatusError('');
+                }
             }
+            // #region agent log
+            fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b892c6'},body:JSON.stringify({sessionId:'b892c6',runId:'post-fix',hypothesisId:'D',location:'DevicesPanel.js:status',message:'device status',data:{ok:Boolean(result&&result.success),err:result&&result.error,ip:selectedIp,stale:selectedStale,liveLocked:/live|busy|lighting/i.test((result&&result.error)||'')},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
         };
 
         load();
@@ -511,6 +535,7 @@ const DevicesPanel = () => {
                     device: selected,
                     status,
                     statusError,
+                    liveLocked,
                     identifying,
                     busy: busy || scanning,
                     nodeName,

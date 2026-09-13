@@ -74,6 +74,8 @@ const parseArtPollReply = (msg, rinfo) => {
 
     const ip = formatIp(msg.slice(10, 14)) || (rinfo && rinfo.address) || '';
     const mac = formatMac(msg.slice(201, 207));
+    const oem = (msg[20] << 8) | msg[21];
+    const esta = msg[24] | (msg[25] << 8);
 
     return {
         ip,
@@ -81,10 +83,16 @@ const parseArtPollReply = (msg, rinfo) => {
         port: msg.readUInt16LE(14),
         shortName: artNetString(msg, 26, 18),
         longName: artNetString(msg, 44, 64),
+        nodeReport: artNetString(msg, 108, 64),
         numPorts,
         universe: universes[0] ?? 0,
         universes,
         mac,
+        oem,
+        esta,
+        style: msg[200],
+        portType: msg[174],
+        status1: msg[23],
         bindIp: formatIp(msg.slice(207, 211)),
         bindIndex: msg[211]
     };
