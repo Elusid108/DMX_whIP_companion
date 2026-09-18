@@ -1,4 +1,5 @@
 const React = require('react');
+const { MIN_FIRMWARE_API, statusApi, apiTooOld } = require('../../../services/shared/firmwareCompat');
 
 const ORDER_PREFIX = /^(\d{2})_/;
 
@@ -19,6 +20,14 @@ const formatSd = (sd) => {
         return 'SD not mounted';
     }
     return `SD ${sd.used_mb}/${sd.size_mb} MB`;
+};
+
+const formatPins = (status) => {
+    const sd = status && status.pins && status.pins.sd;
+    if (!sd) {
+        return null;
+    }
+    return `sd ${sd.cs}/${sd.mosi}/${sd.clk}/${sd.miso}`;
 };
 
 const sdDisplayName = (sdPath) => {
@@ -126,7 +135,10 @@ const DeviceInspector = ({
         device.mac,
         `u${universes}`,
         status && status.ver ? `fw ${status.ver}` : null,
+        status && status.api != null ? `api ${status.api}` : null,
+        status && status.board ? status.board : null,
         status ? formatSd(status.sd) : null,
+        formatPins(status),
         link,
         `now ${nowText}`
     ].filter(Boolean).join(' · ');
@@ -187,6 +199,9 @@ const DeviceInspector = ({
             live && !liveLocked && React.createElement('p', {
                 className: 'text-xs text-amber-500'
             }, 'Live input — Playback is parked. Setup stays available.'),
+            status && apiTooOld(status) && React.createElement('p', {
+                className: 'text-xs text-amber-500'
+            }, `Firmware API ${statusApi(status)} is below companion minimum ${MIN_FIRMWARE_API}. Update the node from the Flash tab.`),
             !liveLocked && statusError && React.createElement('div', {
                 className: 'text-sm text-red-500'
             }, statusError)

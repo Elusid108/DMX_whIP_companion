@@ -6,13 +6,32 @@ const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 
 const defaultLibraryDir = () => path.join(app.getPath('documents'), 'DMX whIP', 'Shows');
 
+const defaultSdPins = { cs: 7, mosi: 6, clk: 5, miso: 4 };
+
+const pinOrDefault = (value, fallback) => {
+    const n = Number(value);
+    return Number.isInteger(n) && n >= 0 && n <= 48 ? n : fallback;
+};
+
+const normalizeSdPins = (raw = {}) => ({
+    cs: pinOrDefault(raw.cs, defaultSdPins.cs),
+    mosi: pinOrDefault(raw.mosi, defaultSdPins.mosi),
+    clk: pinOrDefault(raw.clk, defaultSdPins.clk),
+    miso: pinOrDefault(raw.miso, defaultSdPins.miso)
+});
+
 let cache = null;
 
 const normalize = (raw = {}) => ({
     libraryDir: typeof raw.libraryDir === 'string' && raw.libraryDir.trim()
         ? raw.libraryDir.trim()
         : defaultLibraryDir(),
-    theme: raw.theme === 'light' ? 'light' : 'dark'
+    theme: raw.theme === 'light' ? 'light' : 'dark',
+    flashPort: typeof raw.flashPort === 'string' ? raw.flashPort : '',
+    flashBoardId: typeof raw.flashBoardId === 'string' && raw.flashBoardId.trim()
+        ? raw.flashBoardId.trim()
+        : 'waveshare-s3-matrix',
+    flashSdPins: normalizeSdPins(raw.flashSdPins)
 });
 
 const loadSettings = () => {

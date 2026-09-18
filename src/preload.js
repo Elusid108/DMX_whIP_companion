@@ -28,7 +28,12 @@ const INVOKE = new Set([
     'device-set-name',
     'device-rename-show',
     'device-open-portal',
-    'device-pull-show'
+    'device-pull-show',
+    'flash-catalog',
+    'flash-ports',
+    'flash-set-settings',
+    'flash-identify',
+    'flash-run'
 ]);
 
 const SEND = new Set([
@@ -53,7 +58,9 @@ const RECEIVE = new Set([
     'recording-error',
     'library-updated',
     'devices-update',
-    'device-push-progress'
+    'device-push-progress',
+    'flash-progress',
+    'flash-log'
 ]);
 
 contextBridge.exposeInMainWorld('dmx', {

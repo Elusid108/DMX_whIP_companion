@@ -12,9 +12,13 @@ yarn-error.log*
 *.dmx
 *.local
 
+# Prebuilt node images (copy from PIO; see firmware/README.md)
+firmware/artifacts/**/*.bin
+
 # Packager / build output
 dist/
 src/renderer/generated/
+src/main/generated/
 out/
 build/
 release/

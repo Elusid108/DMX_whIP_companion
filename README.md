@@ -2,7 +2,7 @@
 
 Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN).
 
-**Version:** 0.10.2,
+**Version:** 0.11.0
 
 ## How to run
 
@@ -27,7 +27,7 @@ That means: plan only the first `###` section that still has unchecked items. Do
 
 ## Current state
 
-The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks into the chosen library folder (default `Documents/DMX whIP/Shows`) after New File, using a high-res show clock so incoming packet rate (including 60 Hz) is stored in per-frame `t_ms`; playback uses the same clock so wall time matches the recording. A Library tab lists shows with sidecar notes and inspector stats. The chrome follows a zinc/cyan dark theme with a light-mode toggle. A Devices tab ArtPolls the selected NIC and lists only paired whip ArtPollReply nodes (OEM 0x00FF, bind index 1, firmware node report; list popout opens the node portal in the default browser), and shows a faceplate: status strip plus Playback / Setup. Idle HTTP can Identify, rename the node, play/skip/rename/pull SD shows (root / file / folder, loop and repeat), and live-apply portal-equivalent brightness / protocol / park portal while live / Wi-Fi (scan list, not a dropdown). Park Yes + live parks HTTP (amber live note). Park No keeps Setup up during a light stream; Playback SD stays locked while live. Library can push a `.dmx` to the node SD with a byte/percent progress bar and size-based timeouts (idle 60 s, overall at least 10 min) so multi-minute shows can finish; failures report sent/total instead of a live/busy string. New File asks for a show name. Playback is clock-based (high-res origin, early wake / setImmediate for short gaps) with a working Stop control and legal sACN via the `sacn` package. Art-Net and sACN sockets use a 1 MiB receive buffer. The renderer is isolated (`contextIsolation`) with a local Tailwind build. ESP32 nodes live in the sibling repo `DMX_whIP_embedded` (ArtPollReply, SoftAP portal `/status`, idle SD playback of companion `DMXREC`, `POST /upload`). Treat this as a prototype restart, not a shipping 1.0.
+The monitor binds Art-Net (UDP 6454) and sACN (UDP 5568) on the chosen adapter, persists woken channels until a universe vanishes, and throttles grid IPC from the main process with per-universe FPS. sACN data universes are joined only after E1.31 Universe Discovery. Recordings write a `DMXREC` `.dmx` file in chunks into the chosen library folder (default `Documents/DMX whIP/Shows`) after New File, using a high-res show clock so incoming packet rate (including 60 Hz) is stored in per-frame `t_ms`; playback uses the same clock so wall time matches the recording. A Library tab lists shows with sidecar notes and inspector stats. The chrome follows a zinc/cyan dark theme with a light-mode toggle. A Flash tab lists USB serial ports, identifies ESP32-S3 chips, and writes a prebuilt 4MB QSPI image (bundled artifacts or sibling PIO `matrix` build) with Matrix SD pin defaults (LED pin read-only). A Devices tab ArtPolls the selected NIC and lists only paired whip ArtPollReply nodes (OEM 0x00FF, bind index 1, firmware node report; list popout opens the node portal in the default browser), and shows a faceplate: status strip plus Playback / Setup. Idle HTTP can Identify, rename the node, play/skip/rename/pull SD shows (root / file / folder, loop and repeat), and live-apply portal-equivalent brightness / protocol / park portal while live / Wi-Fi (scan list, not a dropdown). Park Yes + live parks HTTP (amber live note). Park No keeps Setup up during a light stream; Playback SD stays locked while live. Library can push a `.dmx` to the node SD with a byte/percent progress bar and size-based timeouts (idle 60 s, overall at least 10 min) so multi-minute shows can finish; failures report sent/total instead of a live/busy string. New File asks for a show name. Playback is clock-based (high-res origin, early wake / setImmediate for short gaps) with a working Stop control and legal sACN via the `sacn` package. Art-Net and sACN sockets use a 1 MiB receive buffer. The renderer is isolated (`contextIsolation`) with a local Tailwind build. ESP32 nodes live in the sibling repo `DMX_whIP_embedded` (ArtPollReply, SoftAP portal `/status`, idle SD playback of companion `DMXREC`, `POST /upload`). Treat this as a prototype restart, not a shipping 1.0.
 
 ---
 
@@ -95,6 +95,18 @@ SD via card reader stays as fallback. On-device idle playback already understand
 - [x] Push a library show to the node SD over the network (requires a node file/upload API in `DMX_whIP_embedded`)
 - [x] List shows on the device SD; play/stop on the device vs play from this PC
 - [x] Companion controls equivalent to the SoftAP portal (brightness, protocol, FPS, buffer, Wi-Fi) by calling the same HTTP the portal uses — not by scraping HTML
+
+### Phase G — USB flash and board profile
+
+Prebuilt S3 4MB QSPI image (not compiled in this app). PlatformIO stays in `DMX_whIP_embedded`.
+
+- [x] Cursor compat rules and `MIN_FIRMWARE_API`
+- [x] Board catalog for Waveshare ESP32-S3-Matrix plus artifact lookup
+- [x] USB port list, S3 identify, refuse other chips
+- [x] Flash prebuilt 4MB QSPI image (bootloader + partitions + app); keep NVS unless the user asks to erase
+- [x] SD pin editor with Matrix defaults; LED data pin read-only
+- [x] After flash, apply non-default SD pins via SoftAP `POST /pins`
+- [x] Devices strip shows `api` / board / pins and warns if `api` is missing or below min
 
 ### Backlog (not started unless agreed)
 

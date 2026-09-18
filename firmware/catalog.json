@@ -1,0 +1,39 @@
+{
+  "api": 1,
+  "boards": [
+    {
+      "id": "waveshare-s3-matrix",
+      "name": "Waveshare ESP32-S3-Matrix",
+      "chip": "esp32s3",
+      "flashClass": "4mb-qspi",
+      "artifact": "esp32s3-4mb-qspi",
+      "pioEnv": "matrix",
+      "usb": {
+        "cdc": true
+      },
+      "defaults": {
+        "led": {
+          "data": 14,
+          "count": 64,
+          "order": "GRB"
+        },
+        "sd": {
+          "cs": 7,
+          "mosi": 6,
+          "clk": 5,
+          "miso": 4
+        }
+      },
+      "flash": {
+        "mode": "dio",
+        "freq": "80m",
+        "size": "4MB",
+        "bootloader": 0,
+        "partitions": 32768,
+        "app": 65536,
+        "nvs": 36864,
+        "nvsSize": 20480
+      }
+    }
+  ]
+}

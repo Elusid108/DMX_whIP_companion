@@ -6,6 +6,7 @@ const setupRecordingHandlers = require('./ipc/recording');
 const setupPlaybackHandlers = require('./ipc/playback');
 const { setupLibraryHandlers } = require('./ipc/library');
 const setupSettingsHandlers = require('./ipc/settings');
+const setupFirmwareFlashHandlers = require('./firmwareFlash');
 
 let mainWindow = null;
 
@@ -31,11 +32,13 @@ function createWindow() {
     setupPlaybackHandlers(mainWindow);
     const cleanupLibrary = setupLibraryHandlers(mainWindow, recordingHandler);
     const cleanupSettings = setupSettingsHandlers();
+    const cleanupFlash = setupFirmwareFlashHandlers(mainWindow);
 
     mainWindow.on('closed', () => {
         if (cleanupNetwork) cleanupNetwork();
         if (cleanupLibrary) cleanupLibrary();
         if (cleanupSettings) cleanupSettings();
+        if (cleanupFlash) cleanupFlash();
         if (recordingHandler && recordingHandler.close) recordingHandler.close();
         mainWindow = null;
     });

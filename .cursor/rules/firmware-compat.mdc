@@ -1,0 +1,25 @@
+---
+description: Keep companion locked to DMX_whIP_embedded wire contract
+alwaysApply: true
+---
+
+# Firmware compatibility
+
+Sibling firmware repo: `../DMX_whIP_embedded` (same parent as this tree).
+
+## Contract owners (do not fork a second spec)
+
+- HTTP, `/status`, 503/live/park: firmware README **Companion PC** block
+- `DMXREC` `.dmx`: sibling `include/dmxrec.h` and [`src/services/shared/dmxRecording.js`](src/services/shared/dmxRecording.js)
+- ArtPoll pairing: firmware `artnet_rx.cpp` and `whipRejectReason()` in [`src/main/ipc/network.js`](src/main/ipc/network.js)
+- Board defaults / flash artifacts: [`firmware/catalog.json`](firmware/catalog.json) must match firmware `BoardProfile`
+
+`/status` extra keys are additive. Ignore unknowns. Do not scrape portal HTML.
+
+## API version
+
+`src/services/shared/firmwareCompat.js` `MIN_FIRMWARE_API` is the floor. Missing `/status` `api` is `0`. Existing HTTP must still work.
+
+Breaking wire change (remove/rename route or field, ArtPoll pairing, universe convention, `DMXREC` layout): bump firmware `kFirmwareApi`, firmware **MAJOR**, this app in the same effort. Product semver may differ from firmware.
+
+When you change a locked surface, update the firmware consumer in the sibling repo or leave the change unmerged.
