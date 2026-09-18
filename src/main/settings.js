@@ -31,7 +31,12 @@ const normalize = (raw = {}) => ({
     flashBoardId: typeof raw.flashBoardId === 'string' && raw.flashBoardId.trim()
         ? raw.flashBoardId.trim()
         : 'waveshare-s3-matrix',
-    flashSdPins: normalizeSdPins(raw.flashSdPins)
+    flashSdPins: normalizeSdPins(raw.flashSdPins),
+    flashSsid: typeof raw.flashSsid === 'string' ? raw.flashSsid : '',
+    flashPassword: typeof raw.flashPassword === 'string' ? raw.flashPassword : '',
+    flashNamePattern: typeof raw.flashNamePattern === 'string' && raw.flashNamePattern.trim()
+        ? raw.flashNamePattern.trim()
+        : 'Whip'
 });
 
 const loadSettings = () => {

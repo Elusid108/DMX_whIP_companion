@@ -48,6 +48,7 @@ const App = () => {
 
     const [mainView, setMainView] = React.useState('monitor');
     const [theme, setTheme] = React.useState('dark');
+    const [focusDeviceId, setFocusDeviceId] = React.useState(null);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -217,8 +218,15 @@ const App = () => {
             : mainView === 'library'
                 ? React.createElement(LibraryPanel)
                 : mainView === 'flash'
-                    ? React.createElement(FlashPanel)
-                    : React.createElement(DevicesPanel)
+                    ? React.createElement(FlashPanel, {
+                        onOpenDevice: (id) => {
+                            setFocusDeviceId(id);
+                            setMainView('devices');
+                        }
+                    })
+                    : React.createElement(DevicesPanel, {
+                        focusDeviceId
+                    })
     );
 };
 

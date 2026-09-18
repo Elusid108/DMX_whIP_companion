@@ -22,7 +22,7 @@ const clampBri = (value) => {
     return Math.max(0, Math.min(255, Math.round(n)));
 };
 
-const DevicesPanel = () => {
+const DevicesPanel = ({ focusDeviceId } = {}) => {
     const [devices, setDevices] = useState([]);
     const [nic, setNic] = useState({ name: '', ip: '' });
     const [selectedId, setSelectedId] = useState(null);
@@ -52,6 +52,7 @@ const DevicesPanel = () => {
     const [renaming, setRenaming] = useState(false);
     const [renameDraft, setRenameDraft] = useState('');
 
+    const focusRef = useRef(focusDeviceId || null);
     const selectedRef = useRef(null);
     const selectedIpRef = useRef(null);
     const playSrcRef = useRef(playSrc);
@@ -71,6 +72,7 @@ const DevicesPanel = () => {
     const briTimerRef = useRef(null);
     const liveTimerRef = useRef(null);
 
+    focusRef.current = focusDeviceId || null;
     selectedRef.current = selectedId;
     playSrcRef.current = playSrc;
     playPathRef.current = playPath;
@@ -88,8 +90,15 @@ const DevicesPanel = () => {
             setNic(payload.nic || { name: '', ip: '' });
             setDevices(next);
             setSelectedId((current) => {
+                const wanted = focusRef.current;
+                if (wanted && next.some((device) => device.id === wanted)) {
+                    return wanted;
+                }
                 if (current && next.some((device) => device.id === current)) {
                     return current;
+                }
+                if (wanted) {
+                    return wanted;
                 }
                 return next[0] ? next[0].id : null;
             });
@@ -101,6 +110,12 @@ const DevicesPanel = () => {
             ipcRenderer.removeListener('devices-update', handleUpdate);
         };
     }, []);
+
+    useEffect(() => {
+        if (focusDeviceId) {
+            setSelectedId(focusDeviceId);
+        }
+    }, [focusDeviceId]);
 
     const selected = devices.find((device) => device.id === selectedId) || null;
     const selectedIp = selected ? selected.ip : null;

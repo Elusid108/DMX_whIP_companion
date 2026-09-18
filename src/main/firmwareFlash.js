@@ -6,8 +6,12 @@ const { SerialPort } = require('serialport');
 const { postForm, SOFTAP_IP } = require('./deviceHttp');
 const { loadSettings, saveSettings } = require('./settings');
 const NodeSerialDevice = require('./nodeSerialDevice');
+const { buildNvsImage, shouldWriteNvs } = require('./nvsImage');
+const { readWlan } = require('./wlanInfo');
+const { clipName, resolveNodeName } = require('../services/shared/flashName');
 
 const DOWNLOAD_HINT = 'Hold BOOT, tap RESET, release BOOT, then try again. Close any serial monitor first.';
+const FLASH_CONCURRENCY = 4;
 
 const repoRoot = () => {
     if (app && app.isPackaged) {
@@ -102,17 +106,17 @@ const applyPinsSoftAp = async (pins, log) => {
     return { success: false, error: `${lastError}. Join SSID dmxwhip and retry from Devices, or flash again.` };
 };
 
-let busy = false;
+const portLocks = new Set();
 
-const withJob = async (work) => {
-    if (busy) {
-        throw new Error('USB flash is already running');
+const withPort = async (portPath, work) => {
+    if (portLocks.has(portPath)) {
+        throw new Error(`${portPath} is already busy`);
     }
-    busy = true;
+    portLocks.add(portPath);
     try {
         return await work();
     } finally {
-        busy = false;
+        portLocks.delete(portPath);
     }
 };
 
@@ -176,6 +180,15 @@ const listPorts = async () => {
     }));
 };
 
+const failResult = (error) => {
+    const downloadMode = looksLikeDownloadFail(error);
+    return {
+        success: false,
+        error: downloadMode ? `${error.message}. ${DOWNLOAD_HINT}` : error.message,
+        downloadMode
+    };
+};
+
 function setupFirmwareFlashHandlers(mainWindow) {
     const send = (channel, payload) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -183,8 +196,12 @@ function setupFirmwareFlashHandlers(mainWindow) {
         }
     };
 
-    const logToRenderer = (line) => {
-        send('flash-log', { line: String(line || '') });
+    const logPort = (portPath, line) => {
+        send('flash-log', { port: portPath, line: String(line || '') });
+    };
+
+    const progressPort = (portPath, payload) => {
+        send('flash-progress', { port: portPath, ...payload });
     };
 
     ipcMain.handle('flash-catalog', async () => {
@@ -197,7 +214,7 @@ function setupFirmwareFlashHandlers(mainWindow) {
             } catch (err) {
                 artifacts = { error: err.message };
             }
-            return { success: true, catalog, settings, artifacts };
+            return { success: true, catalog, settings, artifacts, concurrency: FLASH_CONCURRENCY };
         } catch (error) {
             return { success: false, error: error.message };
         }
@@ -208,6 +225,14 @@ function setupFirmwareFlashHandlers(mainWindow) {
             return { success: true, ports: await listPorts() };
         } catch (error) {
             return { success: false, error: error.message, ports: [] };
+        }
+    });
+
+    ipcMain.handle('flash-wlan', async () => {
+        try {
+            return await readWlan();
+        } catch (error) {
+            return { success: false, error: error.message, current: null, networks: [] };
         }
     });
 
@@ -226,11 +251,11 @@ function setupFirmwareFlashHandlers(mainWindow) {
             return { success: false, error: 'Select a USB serial port' };
         }
         try {
-            return await withJob(async () => {
-                logToRenderer(`Identify ${portPath}`);
+            return await withPort(portPath, async () => {
+                logPort(portPath, `Identify ${portPath}`);
                 const info = await runLoader(portPath, {
                     baudrate: 115200,
-                    log: logToRenderer,
+                    log: (line) => logPort(portPath, line),
                     work: async ({ loader }) => {
                         const chip = await loader.main('default_reset');
                         let mac = '';
@@ -259,12 +284,7 @@ function setupFirmwareFlashHandlers(mainWindow) {
                 return { success: true, ...info, port: portPath };
             });
         } catch (error) {
-            const downloadMode = looksLikeDownloadFail(error);
-            return {
-                success: false,
-                error: downloadMode ? `${error.message}. ${DOWNLOAD_HINT}` : error.message,
-                downloadMode
-            };
+            return failResult(error);
         }
     });
 
@@ -272,14 +292,19 @@ function setupFirmwareFlashHandlers(mainWindow) {
         port,
         boardId,
         pins,
-        eraseNvs
+        ssid,
+        password,
+        namePattern,
+        longName,
+        shortName,
+        clearWifi
     } = {}) => {
         const portPath = String(port || '').trim();
         if (!portPath) {
             return { success: false, error: 'Select a USB serial port' };
         }
         try {
-            return await withJob(async () => {
+            return await withPort(portPath, async () => {
                 const catalog = loadCatalog();
                 const board = boardById(catalog, boardId);
                 if (!board || board.chip !== 'esp32s3') {
@@ -293,40 +318,76 @@ function setupFirmwareFlashHandlers(mainWindow) {
                     clk: Number(pins && pins.clk),
                     miso: Number(pins && pins.miso)
                 };
+                const ssidTrim = clipName(ssid, 32);
+                const passTrim = password == null ? '' : String(password);
+                const pattern = clipName(namePattern, 40);
+                const givenLong = clipName(longName, 63);
                 saveSettings({
                     flashPort: portPath,
                     flashBoardId: board.id,
-                    flashSdPins: sdPins
+                    flashSdPins: sdPins,
+                    ...(ssidTrim ? { flashSsid: ssidTrim, flashPassword: passTrim } : {})
                 });
-                logToRenderer(`Using image from ${artifacts.source}`);
-                send('flash-progress', { percent: 0, label: 'Connecting' });
+                logPort(portPath, `Using image from ${artifacts.source}`);
+                progressPort(portPath, { percent: 0, label: 'Connecting' });
+
+                const writeNvs = shouldWriteNvs({
+                    ssid: ssidTrim,
+                    clearWifi
+                });
+                let nvsWritten = false;
 
                 const result = await runLoader(portPath, {
                     baudrate: 115200,
-                    log: logToRenderer,
+                    log: (line) => logPort(portPath, line),
                     work: async ({ loader }) => {
                         const chip = await loader.main('default_reset');
                         if (!isEsp32s3(chip) && !isEsp32s3(loader.chip && loader.chip.CHIP_NAME)) {
                             throw new Error(`This flasher only supports ESP32-S3 (detected ${chip || 'unknown'})`);
                         }
-                        const fileArray = [];
-                        if (eraseNvs) {
+                        let mac = '';
+                        try {
+                            mac = await loader.chip.readMac(loader);
+                        } catch (err) {
+                            mac = '';
+                        }
+                        const names = pattern
+                            ? resolveNodeName(pattern, mac)
+                            : (givenLong
+                                ? { long: givenLong, short: clipName(shortName || givenLong, 17) }
+                                : { long: '', short: '' });
+                        const fileArray = [
+                            { data: readBin(artifacts.files.bootloader), address: Number(flash.bootloader) || 0 },
+                            { data: readBin(artifacts.files.partitions), address: Number(flash.partitions) || 0x8000 }
+                        ];
+                        if (writeNvs) {
                             const nvsSize = Number(flash.nvsSize) || 20480;
                             const nvsAddr = Number(flash.nvs) || 0x9000;
-                            logToRenderer(`Erasing NVS at 0x${nvsAddr.toString(16)} (${nvsSize} bytes)`);
+                            const nvsOpts = {
+                                board: { pins: sdPins }
+                            };
+                            if (ssidTrim && !clearWifi) {
+                                nvsOpts.wifi = { ssid: ssidTrim, pass: passTrim };
+                                logPort(portPath, `Provisioning STA ssid=${ssidTrim}`);
+                            } else if (clearWifi) {
+                                logPort(portPath, 'NVS omits Wi-Fi (clear requested)');
+                            }
+                            if (names.long) {
+                                nvsOpts.node = names;
+                                logPort(portPath, `Provisioning name=${names.long}`);
+                            }
                             fileArray.push({
-                                data: new Uint8Array(nvsSize).fill(0xff),
+                                data: buildNvsImage(nvsOpts, nvsSize),
                                 address: nvsAddr
                             });
+                            nvsWritten = true;
                         }
-                        fileArray.push(
-                            { data: readBin(artifacts.files.bootloader), address: Number(flash.bootloader) || 0 },
-                            { data: readBin(artifacts.files.partitions), address: Number(flash.partitions) || 0x8000 },
-                            { data: readBin(artifacts.files.firmware), address: Number(flash.app) || 0x10000 }
-                        );
+                        fileArray.push({
+                            data: readBin(artifacts.files.firmware),
+                            address: Number(flash.app) || 0x10000
+                        });
                         const totals = fileArray.map((file) => file.data.length);
                         const grand = totals.reduce((sum, n) => sum + n, 0);
-                        let writtenAll = 0;
                         await loader.writeFlash({
                             fileArray,
                             flashMode: flash.mode || 'dio',
@@ -335,50 +396,47 @@ function setupFirmwareFlashHandlers(mainWindow) {
                             eraseAll: false,
                             compress: true,
                             calculateMD5Hash: md5hex,
-                            reportProgress: (fileIndex, written, total) => {
+                            reportProgress: (fileIndex, written) => {
                                 const before = totals.slice(0, fileIndex).reduce((sum, n) => sum + n, 0);
-                                writtenAll = before + written;
-                                const percent = grand ? Math.min(100, Math.round((writtenAll / grand) * 100)) : 0;
-                                send('flash-progress', {
+                                const percent = grand ? Math.min(100, Math.round(((before + written) / grand) * 100)) : 0;
+                                progressPort(portPath, {
                                     percent,
-                                    label: `Writing ${fileIndex + 1}/${fileArray.length}`,
-                                    written,
-                                    total
+                                    label: `Writing ${fileIndex + 1}/${fileArray.length}`
                                 });
                             }
                         });
-                        send('flash-progress', { percent: 100, label: 'Resetting' });
+                        progressPort(portPath, { percent: 100, label: 'Resetting' });
                         await loader.after('hard_reset');
-                        return { chip };
+                        return { chip, mac, names };
                     }
                 });
 
                 let pinsResult = { success: true, skipped: true };
-                if (pinsDiffer(sdPins, board.defaults && board.defaults.sd)) {
-                    pinsResult = await applyPinsSoftAp(sdPins, logToRenderer);
+                if (!nvsWritten && !ssidTrim && pinsDiffer(sdPins, board.defaults && board.defaults.sd)) {
+                    pinsResult = await applyPinsSoftAp(sdPins, (line) => logPort(portPath, line));
                 }
                 return {
                     success: true,
                     chip: result.chip,
+                    mac: result.mac,
+                    name: result.names && result.names.long,
                     artifacts: artifacts.source,
+                    provisioned: Boolean(nvsWritten && ssidTrim && !clearWifi),
+                    nvsWritten,
                     pinsApplied: Boolean(pinsResult.success && !pinsResult.skipped),
                     pinsError: pinsResult.success ? '' : pinsResult.error
                 };
             });
         } catch (error) {
-            const downloadMode = looksLikeDownloadFail(error);
-            send('flash-progress', { percent: 0, label: 'Failed' });
-            return {
-                success: false,
-                error: downloadMode ? `${error.message}. ${DOWNLOAD_HINT}` : error.message,
-                downloadMode
-            };
+            progressPort(portPath, { percent: 0, label: 'Failed' });
+            return failResult(error);
         }
     });
 
     return () => {
         ipcMain.removeHandler('flash-catalog');
         ipcMain.removeHandler('flash-ports');
+        ipcMain.removeHandler('flash-wlan');
         ipcMain.removeHandler('flash-set-settings');
         ipcMain.removeHandler('flash-identify');
         ipcMain.removeHandler('flash-run');

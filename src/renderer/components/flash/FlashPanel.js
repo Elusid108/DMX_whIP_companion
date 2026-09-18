@@ -1,6 +1,10 @@
 const React = require('react');
-const { useEffect, useRef, useState } = React;
+const { useEffect, useMemo, useRef, useState } = React;
 const ipcRenderer = require('../../ipc');
+const { resolveNodeName, normMac } = require('../../../services/shared/flashName');
+
+const FLASH_CONCURRENCY = 4;
+const ARTPOLL_WAIT_MS = 30000;
 
 const Field = ({ label, children }) => React.createElement('div', {
     className: 'flex flex-col gap-1'
@@ -16,19 +20,87 @@ const pinValue = (value) => {
     return Number.isInteger(n) && n >= 0 && n <= 48 ? n : 0;
 };
 
-const FlashPanel = () => {
-    const [ports, setPorts] = useState([]);
-    const [port, setPort] = useState('');
+const emptyRow = (port, selected) => ({
+    path: port.path,
+    friendlyName: port.friendlyName || port.path,
+    manufacturer: port.manufacturer || '',
+    selected: Boolean(selected),
+    chip: '',
+    mac: '',
+    name: '',
+    percent: 0,
+    label: '',
+    lastLog: '',
+    error: '',
+    downloadMode: false,
+    provisioned: false,
+    deviceId: '',
+    waiting: false
+});
+
+const runPool = async (items, worker) => {
+    let index = 0;
+    const run = async () => {
+        while (index < items.length) {
+            const current = index;
+            index += 1;
+            await worker(items[current], current);
+        }
+    };
+    const n = Math.min(FLASH_CONCURRENCY, items.length);
+    await Promise.all(Array.from({ length: n }, run));
+};
+
+const findByMac = (devices, mac) => {
+    const want = normMac(mac);
+    if (!want) {
+        return null;
+    }
+    return (devices || []).find((device) => normMac(device.mac || device.id) === want) || null;
+};
+
+const waitForArtPoll = (mac, timeoutMs) => new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => {
+        if (done) {
+            return;
+        }
+        done = true;
+        clearTimeout(timer);
+        ipcRenderer.removeListener('devices-update', onUpdate);
+        resolve(value);
+    };
+    const onUpdate = (_event, payload = {}) => {
+        const found = findByMac(payload.devices, mac);
+        if (found) {
+            finish(found);
+        }
+    };
+    ipcRenderer.on('devices-update', onUpdate);
+    ipcRenderer.invoke('device-list').then((snap) => {
+        const found = findByMac(snap && snap.devices, mac);
+        if (found) {
+            finish(found);
+        }
+    }).catch(() => {});
+    ipcRenderer.send('devices-scan');
+    const timer = setTimeout(() => finish(null), timeoutMs);
+});
+
+const FlashPanel = ({ onOpenDevice } = {}) => {
+    const [rows, setRows] = useState([]);
     const [boards, setBoards] = useState([]);
     const [boardId, setBoardId] = useState('waveshare-s3-matrix');
     const [ledPin, setLedPin] = useState(14);
     const [sdPins, setSdPins] = useState({ cs: 7, mosi: 6, clk: 5, miso: 4 });
-    const [eraseNvs, setEraseNvs] = useState(false);
+    const [namePattern, setNamePattern] = useState('Whip');
+    const [ssid, setSsid] = useState('');
+    const [password, setPassword] = useState('');
+    const [clearWifi, setClearWifi] = useState(false);
+    const [wlan, setWlan] = useState({ current: null, networks: [] });
     const [artifactNote, setArtifactNote] = useState('');
     const [artifactError, setArtifactError] = useState('');
-    const [busy, setBusy] = useState(false);
-    const [progress, setProgress] = useState({ percent: 0, label: '' });
-    const [info, setInfo] = useState(null);
+    const [batchBusy, setBatchBusy] = useState(false);
     const [error, setError] = useState('');
     const [log, setLog] = useState([]);
     const logRef = useRef(null);
@@ -37,21 +109,53 @@ const FlashPanel = () => {
         ipcRenderer.invoke('flash-set-settings', patch).catch(() => {});
     };
 
+    const patchRow = (path, patch) => {
+        setRows((prev) => prev.map((row) => (row.path === path ? { ...row, ...patch } : row)));
+    };
+
     const refreshPorts = async () => {
         const result = await ipcRenderer.invoke('flash-ports');
-        if (result && result.success) {
-            setPorts(result.ports || []);
-            return result.ports || [];
+        if (!result || !result.success) {
+            setError((result && result.error) || 'Unable to list USB ports');
+            return [];
         }
-        setError((result && result.error) || 'Unable to list USB ports');
-        return [];
+        const ports = result.ports || [];
+        setRows((prev) => {
+            const byPath = new Map(prev.map((row) => [row.path, row]));
+            return ports.map((port) => {
+                const existing = byPath.get(port.path);
+                if (existing) {
+                    return {
+                        ...existing,
+                        friendlyName: port.friendlyName || port.path,
+                        manufacturer: port.manufacturer || ''
+                    };
+                }
+                return emptyRow(port, prev.length === 0);
+            });
+        });
+        return ports;
+    };
+
+    const refreshWlan = async () => {
+        const result = await ipcRenderer.invoke('flash-wlan');
+        if (!result || !result.success) {
+            setWlan({ current: null, networks: [] });
+            return result;
+        }
+        setWlan({
+            current: result.current || null,
+            networks: result.networks || []
+        });
+        return result;
     };
 
     useEffect(() => {
         let cancelled = false;
         const load = async () => {
             const catalogResult = await ipcRenderer.invoke('flash-catalog');
-            const nextPorts = await refreshPorts();
+            await refreshPorts();
+            const wlanResult = await refreshWlan();
             if (cancelled) {
                 return;
             }
@@ -69,11 +173,19 @@ const FlashPanel = () => {
                 setLedPin(nextBoard.defaults.led.data);
                 setSdPins(settings.flashSdPins || nextBoard.defaults.sd);
             }
-            const savedPort = settings.flashPort;
-            if (savedPort && nextPorts.some((item) => item.path === savedPort)) {
-                setPort(savedPort);
-            } else if (nextPorts[0]) {
-                setPort(nextPorts[0].path);
+            setNamePattern(settings.flashNamePattern || 'Whip');
+            const savedSsid = settings.flashSsid || '';
+            setPassword(typeof settings.flashPassword === 'string' ? settings.flashPassword : '');
+            if (savedSsid) {
+                setSsid(savedSsid);
+            } else if (wlanResult && wlanResult.current && wlanResult.current.ssid) {
+                setSsid(wlanResult.current.ssid);
+            }
+            if (settings.flashPort) {
+                setRows((prev) => prev.map((row) => ({
+                    ...row,
+                    selected: row.path === settings.flashPort || prev.length === 1
+                })));
             }
             if (catalogResult.artifacts && catalogResult.artifacts.error) {
                 setArtifactError(catalogResult.artifacts.error);
@@ -95,15 +207,23 @@ const FlashPanel = () => {
 
     useEffect(() => {
         const onProgress = (_event, payload) => {
-            if (payload) {
-                setProgress(payload);
+            if (!payload || !payload.port) {
+                return;
             }
+            patchRow(payload.port, {
+                percent: payload.percent || 0,
+                label: payload.label || ''
+            });
         };
         const onLog = (_event, payload) => {
             if (!payload || !payload.line) {
                 return;
             }
-            setLog((prev) => [...prev.slice(-200), payload.line]);
+            const line = payload.port ? `${payload.port}  ${payload.line}` : payload.line;
+            if (payload.port) {
+                patchRow(payload.port, { lastLog: payload.line });
+            }
+            setLog((prev) => [...prev.slice(-200), line]);
         };
         ipcRenderer.on('flash-progress', onProgress);
         ipcRenderer.on('flash-log', onLog);
@@ -119,6 +239,27 @@ const FlashPanel = () => {
         }
     }, [log]);
 
+    const selectedRows = rows.filter((row) => row.selected);
+    const selectedNetwork = useMemo(() => {
+        if (!ssid) {
+            return null;
+        }
+        return (wlan.networks || []).find((item) => item.ssid.toLowerCase() === ssid.toLowerCase()) || null;
+    }, [ssid, wlan.networks]);
+
+    const bandWarning = useMemo(() => {
+        if (!ssid) {
+            return '';
+        }
+        if (selectedNetwork && selectedNetwork.is24ghz === false) {
+            return `"${ssid}" looks 5 GHz-only in the PC scan. ESP32-S3 can join 2.4 GHz only.`;
+        }
+        if (wlan.current && wlan.current.ssid === ssid && wlan.current.is24ghz === false) {
+            return 'This PC is on 5 GHz. The S3 can only join 2.4 GHz — it will fail if this SSID has no 2.4 GHz radio.';
+        }
+        return '';
+    }, [ssid, selectedNetwork, wlan.current]);
+
     const handleBoardChange = (nextId) => {
         setBoardId(nextId);
         const next = boards.find((item) => item.id === nextId);
@@ -129,64 +270,164 @@ const FlashPanel = () => {
         }
     };
 
-    const handlePortChange = (next) => {
-        setPort(next);
-        persist({ flashPort: next });
-    };
-
     const handlePin = (key, raw) => {
         const next = { ...sdPins, [key]: pinValue(raw) };
         setSdPins(next);
         persist({ flashSdPins: next });
     };
 
-    const run = async (work) => {
-        if (busy) {
+    const handleNamePattern = (next) => {
+        setNamePattern(next);
+        persist({ flashNamePattern: next || 'Whip' });
+        setRows((prev) => prev.map((row, index) => ({
+            ...row,
+            name: row.mac || next ? resolveNodeName(next, row.mac, index).long : ''
+        })));
+    };
+
+    const handleSsid = (next) => {
+        setSsid(next);
+        persist({ flashSsid: next });
+    };
+
+    const handlePassword = (next) => {
+        setPassword(next);
+        persist({ flashPassword: next });
+    };
+
+    const useCurrentSsid = () => {
+        if (wlan.current && wlan.current.ssid) {
+            handleSsid(wlan.current.ssid);
+        }
+    };
+
+    const toggleAll = (checked) => {
+        setRows((prev) => prev.map((row) => ({ ...row, selected: checked })));
+    };
+
+    const runBatch = async (work) => {
+        if (batchBusy) {
             return;
         }
-        setBusy(true);
+        setBatchBusy(true);
         setError('');
         try {
             await work();
         } catch (err) {
             setError(err.message);
         } finally {
-            setBusy(false);
+            setBatchBusy(false);
         }
     };
 
-    const handleIdentify = () => run(async () => {
-        setInfo(null);
-        setLog([]);
-        setProgress({ percent: 0, label: 'Identifying' });
-        const result = await ipcRenderer.invoke('flash-identify', { port });
-        if (!result || !result.success) {
-            setError((result && result.error) || 'Identify failed');
-            setProgress({ percent: 0, label: '' });
+    const handleIdentify = () => runBatch(async () => {
+        const targets = selectedRows;
+        if (!targets.length) {
+            setError('Select at least one COM port');
             return;
         }
-        setInfo(result);
-        setProgress({ percent: 0, label: 'Identified' });
+        setLog([]);
+        await runPool(targets, async (row, index) => {
+            patchRow(row.path, {
+                error: '',
+                downloadMode: false,
+                label: 'Identifying',
+                lastLog: '',
+                percent: 0
+            });
+            const result = await ipcRenderer.invoke('flash-identify', { port: row.path });
+            if (!result || !result.success) {
+                patchRow(row.path, {
+                    error: (result && result.error) || 'Identify failed',
+                    downloadMode: Boolean(result && result.downloadMode),
+                    label: 'Failed'
+                });
+                return;
+            }
+            const names = resolveNodeName(namePattern, result.mac, index);
+            patchRow(row.path, {
+                chip: result.chip || '',
+                mac: result.mac || '',
+                name: names.long,
+                label: 'Identified'
+            });
+        });
     });
 
-    const handleFlash = () => run(async () => {
-        setLog([]);
-        setProgress({ percent: 0, label: 'Starting' });
-        const result = await ipcRenderer.invoke('flash-run', {
-            port,
-            boardId,
-            pins: sdPins,
-            eraseNvs
-        });
-        if (!result || !result.success) {
-            setError((result && result.error) || 'Flash failed');
+    const handleFlash = () => runBatch(async () => {
+        const targets = selectedRows;
+        if (!targets.length) {
+            setError('Select at least one COM port');
             return;
         }
-        setInfo((prev) => ({ ...(prev || {}), chip: result.chip }));
-        if (result.pinsError) {
-            setError(result.pinsError);
-        }
-        setProgress({ percent: 100, label: result.pinsError ? 'Flashed — pins not applied' : 'Done' });
+        persist({
+            flashSsid: ssid,
+            flashPassword: password,
+            flashNamePattern: namePattern || 'Whip',
+            flashSdPins: sdPins,
+            flashBoardId: boardId
+        });
+        setLog([]);
+        await runPool(targets, async (row, index) => {
+            const names = resolveNodeName(namePattern, row.mac, index);
+            patchRow(row.path, {
+                name: names.long,
+                error: '',
+                downloadMode: false,
+                percent: 0,
+                label: 'Starting',
+                deviceId: '',
+                waiting: false,
+                provisioned: false
+            });
+            const result = await ipcRenderer.invoke('flash-run', {
+                port: row.path,
+                boardId,
+                pins: sdPins,
+                ssid: clearWifi ? '' : ssid,
+                password: clearWifi ? '' : password,
+                namePattern,
+                longName: names.long,
+                shortName: names.short,
+                clearWifi
+            });
+            if (!result || !result.success) {
+                patchRow(row.path, {
+                    error: (result && result.error) || 'Flash failed',
+                    downloadMode: Boolean(result && result.downloadMode),
+                    label: 'Failed',
+                    percent: 0
+                });
+                return;
+            }
+            const flashedName = result.name || names.long;
+            patchRow(row.path, {
+                chip: result.chip || row.chip,
+                mac: result.mac || row.mac,
+                name: flashedName,
+                percent: 100,
+                label: result.pinsError ? 'Flashed — pins not applied' : 'Done',
+                provisioned: Boolean(result.provisioned),
+                error: result.pinsError || ''
+            });
+            if (result.provisioned && result.mac) {
+                patchRow(row.path, { label: 'Waiting for ArtPoll…', waiting: true });
+                const found = await waitForArtPoll(result.mac, ARTPOLL_WAIT_MS);
+                if (found) {
+                    patchRow(row.path, {
+                        waiting: false,
+                        deviceId: found.id,
+                        label: `On network · ${found.ip || found.id}`
+                    });
+                } else {
+                    patchRow(row.path, {
+                        waiting: false,
+                        label: 'No ArtPoll yet',
+                        error: 'Board did not appear on ArtPoll. Stay on the show NIC. SoftAP dmxwhip / 4.3.2.1 is recovery only.'
+                    });
+                }
+            }
+        });
     });
 
     const pinField = (key, label) => React.createElement(Field, { label },
@@ -196,16 +437,18 @@ const FlashPanel = () => {
             max: 48,
             className: 'field',
             value: sdPins[key],
-            disabled: busy,
+            disabled: batchBusy,
             onChange: (event) => handlePin(key, event.target.value)
         })
     );
+
+    const allSelected = rows.length > 0 && rows.every((row) => row.selected);
 
     return React.createElement('div', {
         className: 'flex-1 min-h-0 overflow-y-auto bg-zinc-50 dark:bg-zinc-950'
     },
         React.createElement('div', {
-            className: 'h-full flex flex-col max-w-xl mx-auto w-full min-h-0 p-3 gap-3'
+            className: 'h-full flex flex-col max-w-5xl mx-auto w-full min-h-0 p-3 gap-3'
         },
             React.createElement('div', {
                 className: 'status-strip'
@@ -215,40 +458,26 @@ const FlashPanel = () => {
                 }, 'USB flash'),
                 React.createElement('p', {
                     className: 'text-xs text-zinc-500'
-                }, 'Identify the ESP32-S3, then write the prebuilt Matrix image. Close any serial monitor first. If connect fails, hold BOOT, tap RESET, release BOOT.')
+                }, 'Shared Wi-Fi and name apply to every selected COM port (up to 4 at once). Type the password here — this app does not read it from Windows. Close any serial monitor first. If connect fails, hold BOOT, tap RESET, release BOOT.')
             ),
             React.createElement('div', {
                 className: 'grid grid-cols-2 gap-2'
             },
-                React.createElement(Field, { label: 'Port' },
-                    React.createElement('div', {
-                        className: 'flex gap-1'
-                    },
-                        React.createElement('select', {
-                            className: 'field',
-                            value: port,
-                            disabled: busy,
-                            onChange: (event) => handlePortChange(event.target.value)
-                        },
-                            !ports.length && React.createElement('option', { value: '' }, 'No serial ports'),
-                            ports.map((item) => React.createElement('option', {
-                                key: item.path,
-                                value: item.path
-                            }, item.friendlyName || item.path))
-                        ),
-                        React.createElement('button', {
-                            type: 'button',
-                            className: 'btn-quiet flex-none',
-                            disabled: busy,
-                            onClick: () => refreshPorts()
-                        }, 'Refresh')
-                    )
+                React.createElement(Field, { label: 'Name pattern' },
+                    React.createElement('input', {
+                        className: 'field',
+                        value: namePattern,
+                        maxLength: 40,
+                        disabled: batchBusy,
+                        placeholder: 'Whip',
+                        onChange: (event) => handleNamePattern(event.target.value)
+                    })
                 ),
                 React.createElement(Field, { label: 'Board' },
                     React.createElement('select', {
                         className: 'field',
                         value: boardId,
-                        disabled: busy || boards.length < 2,
+                        disabled: batchBusy || boards.length < 2,
                         onChange: (event) => handleBoardChange(event.target.value)
                     },
                         boards.map((item) => React.createElement('option', {
@@ -258,6 +487,69 @@ const FlashPanel = () => {
                     )
                 )
             ),
+            React.createElement('p', {
+                className: 'readout -mt-1'
+            }, 'Long name is pattern plus last 4 hex of the MAC (Whip-A4F2), written with Wi-Fi. Leave SSID empty to keep existing NVS (firmware-only).'),
+            React.createElement('div', {
+                className: 'grid grid-cols-2 gap-2'
+            },
+                React.createElement(Field, { label: 'SSID' },
+                    React.createElement('div', {
+                        className: 'flex gap-1'
+                    },
+                        React.createElement('input', {
+                            className: 'field',
+                            list: 'flash-ssid-list',
+                            value: ssid,
+                            maxLength: 32,
+                            disabled: batchBusy || clearWifi,
+                            placeholder: wlan.current && wlan.current.ssid
+                                ? wlan.current.ssid
+                                : 'Network name or hidden SSID',
+                            onChange: (event) => handleSsid(event.target.value)
+                        }),
+                        React.createElement('datalist', { id: 'flash-ssid-list' },
+                            (wlan.networks || []).map((item) => React.createElement('option', {
+                                key: item.ssid,
+                                value: item.ssid
+                            }, `${item.band || 'band ?'}${item.is24ghz === false ? ' · 5 GHz' : ''}`))
+                        ),
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet flex-none',
+                            disabled: batchBusy,
+                            onClick: () => refreshWlan()
+                        }, 'Scan'),
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet flex-none',
+                            disabled: batchBusy || !(wlan.current && wlan.current.ssid),
+                            onClick: useCurrentSsid
+                        }, 'PC Wi-Fi')
+                    )
+                ),
+                React.createElement(Field, { label: 'Password' },
+                    React.createElement('input', {
+                        type: 'password',
+                        className: 'field',
+                        value: password,
+                        maxLength: 63,
+                        disabled: batchBusy || clearWifi,
+                        autoComplete: 'off',
+                        placeholder: 'Empty = open network',
+                        onChange: (event) => handlePassword(event.target.value)
+                    })
+                )
+            ),
+            wlan.current && wlan.current.ssid && React.createElement('p', {
+                className: 'readout -mt-1'
+            }, `PC Wi-Fi: ${wlan.current.ssid}${wlan.current.band ? ` · ${wlan.current.band}` : ''}`),
+            bandWarning && React.createElement('p', {
+                className: 'text-sm text-amber-600 dark:text-amber-400'
+            }, bandWarning),
+            password && password.length > 0 && password.length < 8 && React.createElement('p', {
+                className: 'text-sm text-amber-600 dark:text-amber-400'
+            }, 'WPA passwords are usually 8+ characters. Empty means an open network.'),
             React.createElement('div', {
                 className: 'grid grid-cols-2 gap-2'
             },
@@ -269,17 +561,17 @@ const FlashPanel = () => {
                         readOnly: true
                     })
                 ),
-                React.createElement(Field, { label: 'Erase NVS' },
+                React.createElement(Field, { label: 'NVS' },
                     React.createElement('label', {
                         className: 'flex items-center gap-2 text-sm pt-1.5'
                     },
                         React.createElement('input', {
                             type: 'checkbox',
-                            checked: eraseNvs,
-                            disabled: busy,
-                            onChange: (event) => setEraseNvs(event.target.checked)
+                            checked: clearWifi,
+                            disabled: batchBusy,
+                            onChange: (event) => setClearWifi(event.target.checked)
                         }),
-                        'Clear Wi-Fi, name, and pins'
+                        'Clear saved Wi-Fi (omit STA keys)'
                     )
                 )
             ),
@@ -297,47 +589,123 @@ const FlashPanel = () => {
             artifactError && React.createElement('p', {
                 className: 'text-sm text-red-500'
             }, artifactError),
-            info && React.createElement('p', {
-                className: 'readout'
-            }, [info.chip, info.mac, info.flashSize].filter(Boolean).join(' · ')),
             error && React.createElement('p', {
                 className: 'text-sm text-red-500'
             }, error),
             React.createElement('div', {
-                className: 'flex gap-2'
+                className: 'flex flex-wrap gap-2'
             },
                 React.createElement('button', {
                     type: 'button',
                     className: 'btn-quiet',
-                    disabled: busy || !port,
+                    disabled: batchBusy,
+                    onClick: () => refreshPorts()
+                }, 'Refresh ports'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet',
+                    disabled: batchBusy || !selectedRows.length,
                     onClick: handleIdentify
-                }, busy && progress.label === 'Identifying' ? 'Identifying…' : 'Identify'),
+                }, batchBusy ? 'Working…' : `Identify selected (${selectedRows.length})`),
                 React.createElement('button', {
                     type: 'button',
                     className: 'btn-primary',
-                    disabled: busy || !port || Boolean(artifactError),
+                    disabled: batchBusy || !selectedRows.length || Boolean(artifactError),
                     onClick: handleFlash
-                }, busy ? (progress.label || 'Flashing…') : 'Flash')
+                }, batchBusy ? 'Flashing…' : `Flash selected (${selectedRows.length})`)
             ),
-            progress.label && React.createElement('div', {
-                className: 'flex flex-col gap-1'
+            React.createElement('div', {
+                className: 'overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
             },
-                React.createElement('div', {
-                    className: 'h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden'
+                React.createElement('table', {
+                    className: 'w-full text-left text-xs'
                 },
-                    React.createElement('div', {
-                        className: 'h-full bg-cyan-600 dark:bg-cyan-400',
-                        style: { width: `${Math.max(0, Math.min(100, progress.percent || 0))}%` }
-                    })
-                ),
-                React.createElement('p', {
-                    className: 'readout'
-                }, `${progress.label}${progress.percent ? ` ${progress.percent}%` : ''}`)
+                    React.createElement('thead', {
+                        className: 'text-zinc-500 border-b border-zinc-200 dark:border-zinc-800'
+                    },
+                        React.createElement('tr', null,
+                            React.createElement('th', { className: 'p-2 w-8' },
+                                React.createElement('input', {
+                                    type: 'checkbox',
+                                    checked: allSelected,
+                                    disabled: batchBusy || !rows.length,
+                                    onChange: (event) => toggleAll(event.target.checked)
+                                })
+                            ),
+                            React.createElement('th', { className: 'p-2' }, 'Port'),
+                            React.createElement('th', { className: 'p-2' }, 'Chip / MAC'),
+                            React.createElement('th', { className: 'p-2' }, 'Name'),
+                            React.createElement('th', { className: 'p-2 w-28' }, 'Progress'),
+                            React.createElement('th', { className: 'p-2' }, 'Status')
+                        )
+                    ),
+                    React.createElement('tbody', null,
+                        !rows.length && React.createElement('tr', null,
+                            React.createElement('td', {
+                                colSpan: 6,
+                                className: 'p-3 text-zinc-500 italic'
+                            }, 'No serial ports. Plug in a board and Refresh.')
+                        ),
+                        rows.map((row, index) => {
+                            const preview = row.name || resolveNodeName(namePattern, row.mac, index).long;
+                            return React.createElement('tr', {
+                                key: row.path,
+                                className: 'border-t border-zinc-100 dark:border-zinc-800 align-top'
+                            },
+                                React.createElement('td', { className: 'p-2' },
+                                    React.createElement('input', {
+                                        type: 'checkbox',
+                                        checked: row.selected,
+                                        disabled: batchBusy,
+                                        onChange: (event) => patchRow(row.path, { selected: event.target.checked })
+                                    })
+                                ),
+                                React.createElement('td', { className: 'p-2' },
+                                    React.createElement('div', { className: 'font-medium' }, row.path),
+                                    React.createElement('div', { className: 'readout' }, row.friendlyName)
+                                ),
+                                React.createElement('td', { className: 'p-2 readout' },
+                                    [row.chip, row.mac].filter(Boolean).join(' · ') || '—'
+                                ),
+                                React.createElement('td', { className: 'p-2 readout' }, preview || '—'),
+                                React.createElement('td', { className: 'p-2' },
+                                    React.createElement('div', {
+                                        className: 'h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden'
+                                    },
+                                        React.createElement('div', {
+                                            className: 'h-full bg-cyan-600 dark:bg-cyan-400',
+                                            style: { width: `${Math.max(0, Math.min(100, row.percent || 0))}%` }
+                                        })
+                                    ),
+                                    React.createElement('div', { className: 'readout mt-1' },
+                                        row.label ? `${row.label}${row.percent ? ` ${row.percent}%` : ''}` : ''
+                                    )
+                                ),
+                                React.createElement('td', { className: 'p-2' },
+                                    row.deviceId && React.createElement('button', {
+                                        type: 'button',
+                                        className: 'btn-primary mb-1',
+                                        onClick: () => onOpenDevice && onOpenDevice(row.deviceId)
+                                    }, 'Open in Devices'),
+                                    row.error && React.createElement('p', {
+                                        className: 'text-red-500'
+                                    }, row.error),
+                                    row.downloadMode && React.createElement('p', {
+                                        className: 'text-amber-600 dark:text-amber-400'
+                                    }, 'Hold BOOT, tap RESET, release BOOT.'),
+                                    !row.error && row.lastLog && React.createElement('p', {
+                                        className: 'readout truncate max-w-xs'
+                                    }, row.lastLog)
+                                )
+                            );
+                        })
+                    )
+                )
             ),
             React.createElement('pre', {
                 ref: logRef,
                 className: 'flex-1 min-h-[8rem] overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-2 readout whitespace-pre-wrap'
-            }, log.join('\n') || 'Log output appears here.')
+            }, log.join('\n') || 'Log output appears here. Passwords are not printed.')
         )
     );
 };
