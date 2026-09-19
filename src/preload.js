@@ -21,6 +21,7 @@ const INVOKE = new Set([
     'library-set-collapsed',
     'cancel-recording',
     'load-recording',
+    'timeline-overview',
     'device-status',
     'device-identify',
     'device-list',
@@ -53,6 +54,7 @@ const SEND = new Set([
     'stop-recording',
     'toggle-playback',
     'stop-playback',
+    'seek-playback',
     'unload-recording',
     'devices-scan'
 ]);

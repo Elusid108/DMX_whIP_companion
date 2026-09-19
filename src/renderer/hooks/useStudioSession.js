@@ -18,9 +18,15 @@ const fileNameFromPath = (filePath) => {
     return String(filePath).split(/[\\/]/).pop();
 };
 
-const clearPlaybackUi = (setIsFileLoaded, setLoadedFileName) => {
+const clearPlaybackUi = (setIsFileLoaded, setLoadedFileName, setTimelineOverview, setPlayheadMs) => {
     setIsFileLoaded(false);
     setLoadedFileName('');
+    if (setTimelineOverview) {
+        setTimelineOverview(null);
+    }
+    if (setPlayheadMs) {
+        setPlayheadMs(0);
+    }
 };
 
 const useStudioSession = (selectedUniverses, selectedNic) => {
@@ -45,30 +51,59 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         totalFrames: 0,
         clipTime: 0,
         totalPlayTime: 0,
+        playheadMs: 0,
         fps: 0
     });
+    const [timelineOverview, setTimelineOverview] = useState(null);
+    const [playheadMs, setPlayheadMs] = useState(0);
     const recordingStartTime = useRef(null);
     const durationTimer = useRef(null);
+    const overviewReq = useRef(0);
 
     useEffect(() => {
         setPlaybackNetwork((current) => current || selectedNic || '0.0.0.0');
     }, [selectedNic]);
 
     useEffect(() => {
+        const fetchOverview = async (filePath) => {
+            const requestId = overviewReq.current + 1;
+            overviewReq.current = requestId;
+            try {
+                const result = await ipcRenderer.invoke('timeline-overview', { filePath });
+                if (requestId !== overviewReq.current) {
+                    return;
+                }
+                if (result && result.success) {
+                    setTimelineOverview(result);
+                    return;
+                }
+                setTimelineOverview(null);
+            } catch (error) {
+                if (requestId !== overviewReq.current) {
+                    return;
+                }
+                setTimelineOverview(null);
+            }
+        };
+
         const handleFileLoaded = (event, result = {}) => {
             setIsLoading(false);
             if (result.success && result.filePath) {
                 setIsFileLoaded(true);
                 setLoadedFileName(fileNameFromPath(result.filePath));
+                setPlayheadMs(0);
                 setLoadError('');
+                fetchOverview(result.filePath);
                 return;
             }
             if (result.cleared || (result.success && !result.filePath)) {
-                clearPlaybackUi(setIsFileLoaded, setLoadedFileName);
+                overviewReq.current += 1;
+                clearPlaybackUi(setIsFileLoaded, setLoadedFileName, setTimelineOverview, setPlayheadMs);
                 return;
             }
             if (result.error && result.error !== 'No file selected') {
-                clearPlaybackUi(setIsFileLoaded, setLoadedFileName);
+                overviewReq.current += 1;
+                clearPlaybackUi(setIsFileLoaded, setLoadedFileName, setTimelineOverview, setPlayheadMs);
                 setLoadError(result.error);
             }
         };
@@ -80,6 +115,11 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
             if (stats.isReset) {
                 setIsPlaying(false);
                 setIsPaused(false);
+                setPlayheadMs(0);
+                return;
+            }
+            if (typeof stats.playheadMs === 'number') {
+                setPlayheadMs(stats.playheadMs);
             }
         };
 
@@ -130,9 +170,10 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
     }, []);
 
     const unloadPlayback = () => {
+        overviewReq.current += 1;
         ipcRenderer.send('stop-playback');
         ipcRenderer.send('unload-recording');
-        clearPlaybackUi(setIsFileLoaded, setLoadedFileName);
+        clearPlaybackUi(setIsFileLoaded, setLoadedFileName, setTimelineOverview, setPlayheadMs);
     };
 
     const handleNewFile = () => {
@@ -252,6 +293,20 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
 
     const handleStopPlayback = () => {
         ipcRenderer.send('stop-playback');
+        setPlayheadMs(0);
+    };
+
+    const handleSeek = (timeMs) => {
+        if (!isFileLoaded || isRecording) {
+            return;
+        }
+        const next = Math.max(0, Number(timeMs) || 0);
+        setPlayheadMs(next);
+        ipcRenderer.send('seek-playback', {
+            timeMs: next,
+            playbackNetwork,
+            loop: isLoopEnabled
+        });
     };
 
     const recordingFileName = fileNameFromPath(recordingPath);
@@ -285,6 +340,8 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         playbackNetwork,
         setPlaybackNetwork,
         playbackStats,
+        timelineOverview,
+        playheadMs,
         canRecord,
         showPlaybackStats,
         showPlaybackControls,
@@ -299,7 +356,8 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         handleCancelRecording,
         handleLoadFile,
         handlePlayback,
-        handleStopPlayback
+        handleStopPlayback,
+        handleSeek
     };
 };
 
