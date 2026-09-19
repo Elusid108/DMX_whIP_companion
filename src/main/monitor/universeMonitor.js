@@ -1,6 +1,7 @@
 const STALE_MS = 250;
 const REMOVE_MS = 5000;
-const SNAPSHOT_MS = 50;
+const TICK_MS = 50;
+const SNAPSHOT_MS = 200;
 const FPS_WINDOW_MS = 1000;
 
 const emptyGrid = () => new Array(512).fill(null);
@@ -24,6 +25,7 @@ class UniverseMonitor {
         this.onSnapshot = null;
         this.onGrid = null;
         this.interval = null;
+        this.lastSnapshotAt = 0;
     }
 
     start(onSnapshot, onGrid) {
@@ -32,7 +34,8 @@ class UniverseMonitor {
         if (this.interval) {
             clearInterval(this.interval);
         }
-        this.interval = setInterval(() => this.tick(), SNAPSHOT_MS);
+        this.lastSnapshotAt = 0;
+        this.interval = setInterval(() => this.tick(), TICK_MS);
     }
 
     stop() {
@@ -124,7 +127,10 @@ class UniverseMonitor {
             this.refreshFps(entry, now);
             entry.stale = age > STALE_MS;
         }
-        this.sendSnapshot();
+        if (now - this.lastSnapshotAt >= SNAPSHOT_MS) {
+            this.lastSnapshotAt = now;
+            this.sendSnapshot();
+        }
         this.sendGrid();
     }
 

@@ -1,5 +1,5 @@
 const React = require('react');
-const { useEffect, useRef } = React;
+const { useEffect, useRef, useState } = React;
 const { useUniverseLevels } = require('../../hooks/useUniverseLevels');
 
 const COLS = 32;
@@ -8,8 +8,15 @@ const CSS_W = 96;
 const CSS_H = 48;
 const ARTNET_RGB = [34, 211, 238];
 const SACN_RGB = [45, 212, 191];
+const NEAR_MARGIN = '120px 0px';
+const FAR_MARGIN = '240px 0px';
 
-const UniverseActivityGrid = ({ protocol, universeId }) => {
+const slotStyle = {
+    width: `${CSS_W}px`,
+    height: `${CSS_H}px`
+};
+
+const UniverseActivityCanvas = ({ protocol, universeId }) => {
     const canvasRef = useRef(null);
     const bufferRef = useRef(null);
     const { subscribe } = useUniverseLevels(protocol, universeId);
@@ -79,11 +86,52 @@ const UniverseActivityGrid = ({ protocol, universeId }) => {
 
     return React.createElement('canvas', {
         ref: canvasRef,
-        className: 'block flex-none',
+        className: 'block',
         width: CSS_W,
         height: CSS_H,
-        style: { width: `${CSS_W}px`, height: `${CSS_H}px` }
+        style: slotStyle
     });
+};
+
+const UniverseActivityGrid = ({ protocol, universeId }) => {
+    const wrapRef = useRef(null);
+    const [active, setActive] = useState(false);
+
+    useEffect(() => {
+        const el = wrapRef.current;
+        if (!el) {
+            return undefined;
+        }
+
+        const root = el.closest('.app-sidebar');
+        const near = new IntersectionObserver((entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) {
+                setActive(true);
+            }
+        }, { root, rootMargin: NEAR_MARGIN, threshold: 0 });
+
+        const far = new IntersectionObserver((entries) => {
+            if (entries.every((entry) => !entry.isIntersecting)) {
+                setActive(false);
+            }
+        }, { root, rootMargin: FAR_MARGIN, threshold: 0 });
+
+        near.observe(el);
+        far.observe(el);
+        return () => {
+            near.disconnect();
+            far.disconnect();
+        };
+    }, []);
+
+    return React.createElement('div', {
+        ref: wrapRef,
+        className: 'flex-none',
+        style: slotStyle
+    }, active && React.createElement(UniverseActivityCanvas, {
+        protocol,
+        universeId
+    }));
 };
 
 module.exports = UniverseActivityGrid;

@@ -73,7 +73,57 @@ const StudioPanel = ({
                     onStartRecording: session.handleStartRecording,
                     onStopRecording: session.handleStopRecording,
                     onCancelRecording: session.handleCancelRecording
-                })
+                }),
+                session.isFileLoaded && !session.isRecording && React.createElement(React.Fragment, null,
+                    React.createElement('button', {
+                        type: 'button',
+                        className: 'btn-quiet',
+                        onClick: session.handleSaveCompilation
+                    }, session.compilationDirty ? 'Save compilation…' : 'Save compilation'),
+                    React.createElement('button', {
+                        type: 'button',
+                        className: 'btn-quiet',
+                        onClick: session.handleExportFlattened
+                    }, 'Export flattened')
+                ),
+                session.saveNaming && React.createElement('div', {
+                    className: 'flex items-center gap-1.5'
+                },
+                    React.createElement('input', {
+                        className: 'field w-40',
+                        value: session.saveDraft,
+                        onChange: (event) => session.setSaveDraft(event.target.value)
+                    }),
+                    React.createElement('button', {
+                        type: 'button',
+                        className: 'btn-primary',
+                        onClick: session.handleSaveCompilationConfirm
+                    }, 'Save'),
+                    React.createElement('button', {
+                        type: 'button',
+                        className: 'btn-quiet',
+                        onClick: session.handleSaveCompilationCancel
+                    }, 'Cancel')
+                ),
+                session.exportNaming && React.createElement('div', {
+                    className: 'flex items-center gap-1.5'
+                },
+                    React.createElement('input', {
+                        className: 'field w-40',
+                        value: session.exportDraft,
+                        onChange: (event) => session.setExportDraft(event.target.value)
+                    }),
+                    React.createElement('button', {
+                        type: 'button',
+                        className: 'btn-primary',
+                        onClick: session.handleExportFlattenedConfirm
+                    }, 'Export'),
+                    React.createElement('button', {
+                        type: 'button',
+                        className: 'btn-quiet',
+                        onClick: session.handleExportFlattenedCancel
+                    }, 'Cancel')
+                )
             ),
             React.createElement(ShowTimeline, {
                 overview: session.timelineOverview,
@@ -86,7 +136,12 @@ const StudioPanel = ({
                 recordingPath: session.recordingPath,
                 isIdle: session.isIdle,
                 loadError: session.loadError,
-                onSeek: session.handleSeek
+                clips: session.clips,
+                onSeek: session.handleSeek,
+                onSplit: session.handleSplit,
+                onCutRange: session.handleCutRange,
+                onReorderClip: session.handleReorderClip,
+                onTrimClip: session.handleTrimClip
             }),
             React.createElement('div', {
                 className: 'timeline-footer'

@@ -14,9 +14,10 @@ const notify = () => {
 };
 
 const handleSnapshot = (event, snapshot = {}) => {
-    latest = snapshot.levels && typeof snapshot.levels === 'object'
-        ? snapshot.levels
-        : emptyLevels();
+    if (!snapshot.levels || typeof snapshot.levels !== 'object') {
+        return;
+    }
+    latest = snapshot.levels;
     notify();
 };
 

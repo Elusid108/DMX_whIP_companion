@@ -3,7 +3,13 @@ const { useState, useEffect, useRef } = React;
 const ipcRenderer = require('../../ipc');
 const ShowList = require('./ShowList');
 const ShowInspector = require('./ShowInspector');
-const { findNode, firstShowPath, folderExists } = require('../../../services/shared/libraryTree');
+const {
+    collectLooks,
+    findNode,
+    firstShowPath,
+    flattenFolderStack,
+    folderExists
+} = require('../../../services/shared/libraryTree');
 
 const LibraryPanel = () => {
     const [shows, setShows] = useState([]);
@@ -11,6 +17,7 @@ const LibraryPanel = () => {
     const [selection, setSelection] = useState(null);
     const [loadedPath, setLoadedPath] = useState(null);
     const [inspect, setInspect] = useState(null);
+    const [folderStack, setFolderStack] = useState([]);
     const [name, setName] = useState('');
     const [notes, setNotes] = useState('');
     const [error, setError] = useState('');
@@ -33,6 +40,9 @@ const LibraryPanel = () => {
 
     const selectedShowPath = selection && selection.type === 'show' ? selection.filePath : null;
     const selectedFolder = selection && selection.type === 'folder'
+        ? ((findNode(tree, selection.id) || {}).node || null)
+        : null;
+    const selectedCompilation = selection && selection.type === 'compilation'
         ? ((findNode(tree, selection.id) || {}).node || null)
         : null;
 
@@ -66,6 +76,9 @@ const LibraryPanel = () => {
             if (current && current.type === 'folder' && folderExists(nextTree, current.id)) {
                 return current;
             }
+            if (current && current.type === 'compilation' && findNode(nextTree, current.id)) {
+                return current;
+            }
             const first = firstShowPath(nextTree);
             return first ? { type: 'show', filePath: first } : null;
         });
@@ -87,7 +100,7 @@ const LibraryPanel = () => {
 
         const handleFileLoaded = (event, result = {}) => {
             if (result.success) {
-                setLoadedPath(result.filePath || null);
+                setLoadedPath(result.filePath || result.projectPath || null);
                 if (result.filePath) {
                     setError('');
                 }
@@ -172,6 +185,40 @@ const LibraryPanel = () => {
         };
     }, [selectedShowPath, shows]);
 
+    useEffect(() => {
+        if (!selection || selection.type !== 'folder' || !selectedFolder) {
+            setFolderStack([]);
+            return undefined;
+        }
+        let cancelled = false;
+        const rows = flattenFolderStack(selectedFolder);
+        setFolderStack(rows);
+        const loadStack = async () => {
+            const next = [];
+            for (const row of rows) {
+                if (row.kind !== 'look' || !row.show || !row.show.filePath) {
+                    next.push(row);
+                    continue;
+                }
+                const result = await ipcRenderer.invoke('library-inspect', { filePath: row.show.filePath });
+                if (cancelled) {
+                    return;
+                }
+                next.push({
+                    ...row,
+                    inspect: result && result.success ? result.show : { ...row.show, error: (result && result.error) || 'Unable to inspect' }
+                });
+            }
+            if (!cancelled) {
+                setFolderStack(next);
+            }
+        };
+        loadStack();
+        return () => {
+            cancelled = true;
+        };
+    }, [selection, selectedFolder, tree]);
+
     const queueSaveMeta = (nextName, nextNotes) => {
         clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(async () => {
@@ -220,14 +267,52 @@ const LibraryPanel = () => {
     };
 
     const handlePlay = () => runAction(async () => {
+        if (selectedCompilation && selectedCompilation.compilation) {
+            const result = await ipcRenderer.invoke('load-compilation', {
+                dirPath: selectedCompilation.compilation.dirPath
+            });
+            if (result && !result.success) {
+                setError(result.error || 'Unable to load compilation');
+            }
+            return;
+        }
+        if (selectedFolder) {
+            const sources = collectLooks(selectedFolder);
+            if (sources.length === 0) {
+                setError('This folder has no looks to load');
+                return;
+            }
+            const result = await ipcRenderer.invoke('load-compilation', {
+                name: selectedFolder.name,
+                sources
+            });
+            if (result && !result.success) {
+                setError(result.error || 'Unable to load folder');
+            } else if (result && result.skipped && result.skipped.length) {
+                setError(`Loaded with ${result.skipped.length} skipped look(s)`);
+            }
+            return;
+        }
         if (!selectedShowPath) {
             return;
         }
-        const result = await ipcRenderer.invoke('load-recording', { filePath: selectedShowPath });
+        const displayName = (inspect && (inspect.name || inspect.displayName)) || undefined;
+        const result = await ipcRenderer.invoke('load-recording', {
+            filePath: selectedShowPath,
+            displayName
+        });
         if (result && !result.success) {
             setError(result.error || 'Unable to load recording');
         }
     });
+
+    const handleRenameCompilation = (id, nextName) => {
+        ipcRenderer.invoke('library-save-compilation-meta', { id, name: nextName }).then((result) => {
+            if (result && !result.success && result.error) {
+                setError(result.error);
+            }
+        });
+    };
 
     const handleRenameShow = (filePath, nextName) => {
         if (filePath === selectedShowPath) {
@@ -340,6 +425,25 @@ const LibraryPanel = () => {
         }
     });
 
+    const handleDeleteCompilation = () => runAction(async () => {
+        if (!selectedCompilation) {
+            return;
+        }
+        const label = (selectedCompilation.compilation && selectedCompilation.compilation.name) || 'this compilation';
+        if (!window.confirm(`Delete ${label}? This does not delete the original looks.`)) {
+            return;
+        }
+        const result = await ipcRenderer.invoke('library-delete', { compilationId: selectedCompilation.id });
+        if (result && result.success) {
+            if (loadedPath === (selectedCompilation.compilation && selectedCompilation.compilation.dirPath)) {
+                setLoadedPath(null);
+            }
+            setSelection(null);
+        } else if (result && result.error) {
+            setError(result.error);
+        }
+    });
+
     const handleDeleteFolder = () => runAction(async () => {
         if (!selection || selection.type !== 'folder') {
             return;
@@ -357,6 +461,8 @@ const LibraryPanel = () => {
     });
 
     const playable = Boolean(inspect && inspect.playable);
+    const folderPlayable = Boolean(selectedFolder && collectLooks(selectedFolder).length > 0);
+    const compilationPlayable = Boolean(selectedCompilation && selectedCompilation.compilation);
     const targets = devices.filter((device) => device && device.ip && !device.stale);
     const canPush = Boolean(selectedShowPath && inspect && inspect.playable && targetId
         && targets.some((device) => device.id === targetId));
@@ -379,10 +485,11 @@ const LibraryPanel = () => {
                     selected: selection,
                     loadedPath,
                     busy,
-                    playDisabled: busy || !selectedShowPath || !playable,
+                    playDisabled: busy || !(playable || folderPlayable || compilationPlayable),
                     onSelect: setSelection,
                     onRenameShow: handleRenameShow,
                     onRenameFolder: handleRenameFolder,
+                    onRenameCompilation: handleRenameCompilation,
                     onCreateFolder: handleCreateFolder,
                     onToggleCollapsed: handleToggleCollapsed,
                     onMove: handleMove,
@@ -404,14 +511,18 @@ const LibraryPanel = () => {
                     selection,
                     show: inspect,
                     folder: selectedFolder,
+                    compilation: selectedCompilation && selectedCompilation.compilation,
+                    stack: folderStack,
                     name,
                     notes,
                     busy,
                     onNameChange: handleNameChange,
                     onNotesChange: handleNotesChange,
                     onFolderNameChange: handleRenameFolder,
+                    onCompilationNameChange: handleRenameCompilation,
                     onDelete: handleDelete,
-                    onDeleteFolder: handleDeleteFolder
+                    onDeleteFolder: handleDeleteFolder,
+                    onDeleteCompilation: handleDeleteCompilation
                 })
             )
         )

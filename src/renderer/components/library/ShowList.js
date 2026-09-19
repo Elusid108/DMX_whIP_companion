@@ -90,6 +90,7 @@ const ShowList = ({
     onSelect,
     onRenameShow,
     onRenameFolder,
+    onRenameCompilation,
     onCreateFolder,
     onToggleCollapsed,
     onMove,
@@ -150,7 +151,7 @@ const ShowList = ({
         if (!selected) {
             return '';
         }
-        if (selected.type === 'folder') {
+        if (selected.type === 'folder' || selected.type === 'compilation') {
             return selected.id;
         }
         const found = flattenRows(tree || []).find((row) => (
@@ -181,6 +182,10 @@ const ShowList = ({
             onSelect({ type: 'folder', id: node.id });
             return;
         }
+        if (node.type === 'compilation') {
+            onSelect({ type: 'compilation', id: node.id });
+            return;
+        }
         if (node.show) {
             onSelect({ type: 'show', filePath: node.show.filePath });
         }
@@ -189,7 +194,9 @@ const ShowList = ({
     const beginEdit = (node) => {
         const value = node.type === 'folder'
             ? node.name
-            : (node.show && node.show.displayName) || '';
+            : node.type === 'compilation'
+                ? (node.compilation && node.compilation.name) || ''
+                : (node.show && node.show.displayName) || '';
         setEditingId(node.id);
         setDraft(value);
     };
@@ -206,6 +213,13 @@ const ShowList = ({
             }
             return;
         }
+        if (node.type === 'compilation') {
+            const current = (node.compilation && node.compilation.name) || '';
+            if (next !== current && onRenameCompilation) {
+                onRenameCompilation(node.id, next);
+            }
+            return;
+        }
         if (node.show && next !== node.show.displayName) {
             onRenameShow(node.show.filePath, next);
         }
@@ -217,6 +231,9 @@ const ShowList = ({
         }
         if (node.type === 'folder') {
             return selected.type === 'folder' && selected.id === node.id;
+        }
+        if (node.type === 'compilation') {
+            return selected.type === 'compilation' && selected.id === node.id;
         }
         return selected.type === 'show' && node.show && selected.filePath === node.show.filePath;
     };
@@ -310,10 +327,13 @@ const ShowList = ({
             rows.map((row) => {
                 const { node, depth } = row;
                 const selectedRow = selectedIds.has(node.id) || isActive(node);
-                const loaded = node.type === 'show' && node.show && node.show.filePath === loadedPath;
+                const loaded = (node.type === 'show' && node.show && node.show.filePath === loadedPath)
+                    || (node.type === 'compilation' && node.compilation && node.compilation.dirPath === loadedPath);
                 const label = node.type === 'folder'
                     ? node.name
-                    : (node.show && node.show.displayName) || 'Untitled';
+                    : node.type === 'compilation'
+                        ? (node.compilation && node.compilation.name) || 'Compilation'
+                        : (node.show && node.show.displayName) || 'Untitled';
                 const hintHere = dropHint
                     && dropHint.parentId === row.parentId
                     && dropHint.index === row.index

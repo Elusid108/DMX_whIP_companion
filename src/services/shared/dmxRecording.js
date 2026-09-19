@@ -58,6 +58,14 @@ const parseRecording = (fileData) => {
     return frames;
 };
 
+const writeRecording = (filePath, frames = []) => {
+    const parts = [createHeader(frames.length)];
+    for (const frame of frames) {
+        parts.push(encodeFrame(frame));
+    }
+    fs.writeFileSync(filePath, Buffer.concat(parts));
+};
+
 const scanRecording = (filePath) => {
     const stat = fs.statSync(filePath);
     const created = stat.birthtimeMs || stat.ctimeMs;
@@ -161,5 +169,6 @@ module.exports = {
     createHeader,
     encodeFrame,
     parseRecording,
-    scanRecording
+    scanRecording,
+    writeRecording
 };

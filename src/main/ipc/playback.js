@@ -1,9 +1,32 @@
 const { ipcMain, dialog } = require('electron');
 const fs = require('fs');
+const path = require('path');
 const ArtNetSender = require('../../services/artnet/sender');
 const { SacnOutput } = require('../../services/sacn/output');
-const { parseRecording } = require('../../services/shared/dmxRecording');
-const { buildTimelineOverview } = require('../../services/shared/timelineOverview');
+const { parseRecording, writeRecording } = require('../../services/shared/dmxRecording');
+const {
+    buildTimelineOverview,
+    buildTimelineOverviewFromFrames
+} = require('../../services/shared/timelineOverview');
+const {
+    newId,
+    mediaDurationMs,
+    flattenToFrames,
+    publicClips,
+    splitClips,
+    trimClip,
+    reorderClips,
+    rangeCutClips,
+    serializeClips
+} = require('../../services/shared/compilationEdl');
+const {
+    ensureLibrary,
+    uniqueDmxPath,
+    uniqueCompPath,
+    writeSidecar,
+    sanitizeBaseName,
+    listLibrary
+} = require('./library');
 
 const IMMEDIATE_MS = 4;
 
@@ -27,6 +50,21 @@ function setupPlaybackHandlers(mainWindow) {
     let lastStatsSent = 0;
     let framesSentWindow = [];
     let seekToken = 0;
+    let editSession = emptyEditSession();
+
+    function emptyEditSession() {
+        return {
+            kind: null,
+            name: '',
+            notes: '',
+            projectPath: null,
+            dirty: false,
+            media: {},
+            mediaBytes: {},
+            clips: [],
+            skipped: []
+        };
+    }
 
     const sendSafe = (channel, payload) => {
         if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
@@ -331,16 +369,122 @@ function setupPlaybackHandlers(mainWindow) {
         });
     };
 
-    const loadFromPath = async (filePath) => {
-        const fileData = await fs.promises.readFile(filePath);
-        playbackData = parseRecording(fileData);
-        stopPlaybackInternal(false);
+    const sessionPayload = (extra = {}) => ({
+        success: true,
+        kind: 'compilation',
+        filePath: extra.filePath || editSession.projectPath || extra.sourcePath || null,
+        projectPath: editSession.projectPath,
+        displayName: editSession.name,
+        frameCount: playbackData ? playbackData.length : 0,
+        clips: publicClips(editSession.clips),
+        dirty: editSession.dirty,
+        skipped: editSession.skipped,
+        ...extra
+    });
 
-        const result = {
-            success: true,
-            filePath,
-            frameCount: playbackData.length
-        };
+    const applyFlattenedPlayback = () => {
+        playbackData = flattenToFrames(editSession.media, editSession.clips);
+        stopPlaybackInternal(false);
+    };
+
+    const emitCompilationUpdated = () => {
+        sendSafe('compilation-updated', {
+            clips: publicClips(editSession.clips),
+            dirty: editSession.dirty,
+            name: editSession.name,
+            projectPath: editSession.projectPath,
+            frameCount: playbackData ? playbackData.length : 0
+        });
+    };
+
+    const addMediaFromBuffer = (fileData, name) => {
+        const frames = parseRecording(fileData);
+        const mediaId = newId();
+        editSession.media[mediaId] = frames;
+        editSession.mediaBytes[mediaId] = fileData;
+        editSession.clips.push({
+            id: newId(),
+            name: name || 'Look',
+            mediaId,
+            sourceInMs: 0,
+            sourceOutMs: mediaDurationMs(frames)
+        });
+        return mediaId;
+    };
+
+    const loadFromPath = async (filePath, displayName) => {
+        const fileData = await fs.promises.readFile(filePath);
+        const label = displayName || path.parse(filePath).name;
+        editSession = emptyEditSession();
+        editSession.kind = 'compilation';
+        editSession.name = label;
+        addMediaFromBuffer(fileData, label);
+        applyFlattenedPlayback();
+        const result = sessionPayload({ filePath, sourcePath: filePath });
+        sendSafe('file-loaded', result);
+        return result;
+    };
+
+    const loadFromSources = async (sources = [], stackName) => {
+        editSession = emptyEditSession();
+        editSession.kind = 'compilation';
+        editSession.name = stackName || 'Stack';
+        const skipped = [];
+        for (const source of sources) {
+            if (!source || !source.filePath) {
+                continue;
+            }
+            try {
+                const fileData = await fs.promises.readFile(source.filePath);
+                addMediaFromBuffer(fileData, source.name || path.parse(source.filePath).name);
+            } catch (error) {
+                skipped.push({ filePath: source.filePath, error: error.message });
+            }
+        }
+        editSession.skipped = skipped;
+        if (editSession.clips.length === 0) {
+            throw new Error(skipped[0] ? skipped[0].error : 'No playable looks in this folder');
+        }
+        if (editSession.clips.length === 1) {
+            editSession.name = editSession.clips[0].name;
+        }
+        applyFlattenedPlayback();
+        const result = sessionPayload({
+            filePath: editSession.projectPath,
+            skipped
+        });
+        sendSafe('file-loaded', result);
+        return result;
+    };
+
+    const loadCompilationPackage = async (dirPath) => {
+        const projectFile = path.join(dirPath, 'project.json');
+        const raw = JSON.parse(await fs.promises.readFile(projectFile, 'utf8'));
+        editSession = emptyEditSession();
+        editSession.kind = 'compilation';
+        editSession.name = (raw && raw.name) || path.basename(dirPath, '.comp');
+        editSession.notes = (raw && raw.notes) || '';
+        editSession.projectPath = dirPath;
+        const clips = Array.isArray(raw && raw.clips) ? raw.clips : [];
+        for (const clip of clips) {
+            const mediaPath = path.join(dirPath, 'media', `${clip.mediaId}.dmx`);
+            const fileData = await fs.promises.readFile(mediaPath);
+            editSession.media[clip.mediaId] = parseRecording(fileData);
+            editSession.mediaBytes[clip.mediaId] = fileData;
+            editSession.clips.push({
+                id: clip.id || newId(),
+                name: clip.name || 'Look',
+                mediaId: clip.mediaId,
+                sourceInMs: Number(clip.sourceInMs) || 0,
+                sourceOutMs: Number(clip.sourceOutMs) || mediaDurationMs(editSession.media[clip.mediaId])
+            });
+        }
+        if (editSession.clips.length === 0) {
+            throw new Error('Compilation has no clips');
+        }
+        editSession.dirty = false;
+        applyFlattenedPlayback();
+        const result = sessionPayload({ filePath: dirPath });
         sendSafe('file-loaded', result);
         return result;
     };
@@ -364,7 +508,7 @@ function setupPlaybackHandlers(mainWindow) {
                 filePath = filePaths[0];
             }
 
-            return await loadFromPath(filePath);
+            return await loadFromPath(filePath, payload.displayName);
         } catch (error) {
             console.error('Error loading recording:', error);
             stopPlaybackInternal(false);
@@ -378,6 +522,16 @@ function setupPlaybackHandlers(mainWindow) {
     ipcMain.removeHandler('timeline-overview');
     ipcMain.handle('timeline-overview', async (event, payload = {}) => {
         try {
+            if (playbackData && playbackData.length && (!payload.filePath || editSession.kind === 'compilation')) {
+                const overview = buildTimelineOverviewFromFrames(playbackData, {
+                    bucketMs: payload && payload.bucketMs
+                });
+                return {
+                    success: true,
+                    ...overview,
+                    clips: publicClips(editSession.clips)
+                };
+            }
             const filePath = payload && payload.filePath;
             if (!filePath) {
                 return { success: false, error: 'No file path' };
@@ -388,6 +542,132 @@ function setupPlaybackHandlers(mainWindow) {
             return { success: true, ...overview };
         } catch (error) {
             console.error('Error building timeline overview:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.removeHandler('load-compilation');
+    ipcMain.handle('load-compilation', async (event, payload = {}) => {
+        try {
+            if (payload.dirPath) {
+                return await loadCompilationPackage(payload.dirPath);
+            }
+            return await loadFromSources(payload.sources || [], payload.name);
+        } catch (error) {
+            console.error('Error loading compilation:', error);
+            stopPlaybackInternal(false);
+            playbackData = null;
+            editSession = emptyEditSession();
+            const result = { success: false, error: error.message };
+            sendSafe('file-loaded', result);
+            return result;
+        }
+    });
+
+    ipcMain.removeHandler('edit-compilation');
+    ipcMain.handle('edit-compilation', async (event, payload = {}) => {
+        try {
+            if (editSession.kind !== 'compilation' || editSession.clips.length === 0) {
+                throw new Error('No compilation is loaded');
+            }
+            const op = payload.op;
+            if (op === 'trim') {
+                editSession.clips = trimClip(
+                    editSession.clips,
+                    payload.clipId,
+                    payload.edge,
+                    payload.sourceMs,
+                    editSession.media
+                );
+            } else if (op === 'split') {
+                editSession.clips = splitClips(editSession.clips, payload.timeMs);
+            } else if (op === 'reorder') {
+                editSession.clips = reorderClips(
+                    editSession.clips,
+                    payload.fromIndex,
+                    payload.toIndex
+                );
+            } else if (op === 'cut') {
+                editSession.clips = rangeCutClips(editSession.clips, payload.fromMs, payload.toMs);
+            } else {
+                throw new Error('Unknown edit');
+            }
+            if (editSession.clips.length === 0) {
+                throw new Error('That edit would remove every clip');
+            }
+            editSession.dirty = true;
+            const keepMs = Number(payload.keepPlayheadMs);
+            playbackData = flattenToFrames(editSession.media, editSession.clips);
+            if (Number.isFinite(keepMs)) {
+                applySeek(keepMs);
+            }
+            emitCompilationUpdated();
+            return { success: true, clips: publicClips(editSession.clips), dirty: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.removeHandler('save-compilation');
+    ipcMain.handle('save-compilation', async (event, payload = {}) => {
+        try {
+            if (editSession.kind !== 'compilation' || editSession.clips.length === 0) {
+                throw new Error('No compilation is loaded');
+            }
+            const dir = ensureLibrary();
+            const name = sanitizeBaseName(payload.name || editSession.name || 'Stack');
+            let dest = editSession.projectPath;
+            if (!dest || !fs.existsSync(dest)) {
+                dest = uniqueCompPath(dir, name);
+                fs.mkdirSync(path.join(dest, 'media'), { recursive: true });
+            } else {
+                fs.mkdirSync(path.join(dest, 'media'), { recursive: true });
+            }
+            const mediaIds = new Set(editSession.clips.map((clip) => clip.mediaId));
+            for (const mediaId of mediaIds) {
+                const mediaPath = path.join(dest, 'media', `${mediaId}.dmx`);
+                if (editSession.mediaBytes[mediaId]) {
+                    fs.writeFileSync(mediaPath, editSession.mediaBytes[mediaId]);
+                } else {
+                    writeRecording(mediaPath, editSession.media[mediaId] || []);
+                }
+            }
+            const project = {
+                version: 1,
+                kind: 'compilation',
+                name,
+                notes: typeof payload.notes === 'string' ? payload.notes : editSession.notes,
+                clips: serializeClips(editSession.clips)
+            };
+            fs.writeFileSync(path.join(dest, 'project.json'), `${JSON.stringify(project, null, 2)}\n`);
+            editSession.name = name;
+            editSession.projectPath = dest;
+            editSession.dirty = false;
+            sendSafe('library-updated', listLibrary());
+            const result = sessionPayload({ filePath: dest });
+            sendSafe('file-loaded', result);
+            return result;
+        } catch (error) {
+            console.error('Error saving compilation:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.removeHandler('export-flattened');
+    ipcMain.handle('export-flattened', async (event, payload = {}) => {
+        try {
+            if (!playbackData || playbackData.length === 0) {
+                throw new Error('Nothing to export');
+            }
+            const dir = ensureLibrary();
+            const name = sanitizeBaseName(payload.name || `${editSession.name || 'Stack'} flat`);
+            const filePath = uniqueDmxPath(dir, name);
+            writeRecording(filePath, playbackData);
+            writeSidecar(filePath, { name, notes: payload.notes || '' });
+            sendSafe('library-updated', listLibrary());
+            return { success: true, filePath };
+        } catch (error) {
+            console.error('Error exporting flattened recording:', error);
             return { success: false, error: error.message };
         }
     });
@@ -476,6 +756,7 @@ function setupPlaybackHandlers(mainWindow) {
     ipcMain.on('unload-recording', () => {
         stopPlaybackInternal(false);
         playbackData = null;
+        editSession = emptyEditSession();
         sendSafe('file-loaded', { success: true, filePath: null, cleared: true });
     });
 }

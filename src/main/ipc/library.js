@@ -93,6 +93,55 @@ const uniqueDmxPath = (dir, baseName) => {
     return candidate;
 };
 
+const uniqueCompPath = (dir, baseName) => {
+    const stem = String(baseName || 'Stack').replace(/\.comp$/i, '');
+    let candidate = path.join(dir, `${stem}.comp`);
+    let n = 1;
+    while (fs.existsSync(candidate)) {
+        n += 1;
+        candidate = path.join(dir, `${stem}_${n}.comp`);
+    }
+    return candidate;
+};
+
+const readCompilationSummary = (dirPath) => {
+    const id = path.basename(dirPath);
+    let name = id.replace(/\.comp$/i, '');
+    let notes = '';
+    let clipCount = 0;
+    try {
+        const raw = JSON.parse(fs.readFileSync(path.join(dirPath, 'project.json'), 'utf8'));
+        if (raw && typeof raw.name === 'string' && raw.name.trim()) {
+            name = raw.name.trim();
+        }
+        if (raw && typeof raw.notes === 'string') {
+            notes = raw.notes;
+        }
+        if (raw && Array.isArray(raw.clips)) {
+            clipCount = raw.clips.length;
+        }
+    } catch (err) {
+        // unreadable project still appears in the list
+    }
+    const stat = fs.statSync(dirPath);
+    return {
+        id,
+        dirPath,
+        name,
+        notes,
+        clipCount,
+        created: stat.birthtimeMs || stat.ctimeMs,
+        modified: stat.mtimeMs
+    };
+};
+
+const listCompilations = () => {
+    const dir = ensureLibrary();
+    return fs.readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.toLowerCase().endsWith('.comp'))
+        .map((entry) => readCompilationSummary(path.join(dir, entry.name)));
+};
+
 const findNextScenePath = () => {
     const dir = ensureLibrary();
     let sceneNum = 1;
@@ -167,10 +216,13 @@ const writeIndexItems = (items) => {
 
 const listLibrary = () => {
     const shows = listShows();
+    const compilations = listCompilations();
     const showById = new Map(shows.map((show) => [show.filename, show]));
+    const compilationById = new Map(compilations.map((item) => [item.id, item]));
     const showIds = shows.map((show) => show.filename);
+    const compilationIds = compilations.map((item) => item.id);
     const previous = readIndexFile();
-    const next = pruneAndFill(previous.items, showIds);
+    const next = pruneAndFill(previous.items, showIds, compilationIds);
     const folderIds = new Set(collectFolderIds(next));
     const nextCollapsed = previous.collapsed.filter((id) => folderIds.has(id));
     if (JSON.stringify(stripTree(previous.items)) !== JSON.stringify(next)
@@ -179,7 +231,8 @@ const listLibrary = () => {
     }
     return {
         shows,
-        tree: hydrateTree(next, showById),
+        compilations,
+        tree: hydrateTree(next, showById, compilationById),
         collapsed: nextCollapsed,
         libraryDir: getLibraryDir()
     };
@@ -297,7 +350,8 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
         'library-rename-folder',
         'library-delete-folder',
         'library-move',
-        'library-set-collapsed'
+        'library-set-collapsed',
+        'library-save-compilation-meta'
     ];
 
     ipcMain.handle('library-list', async () => {
@@ -465,8 +519,17 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
         }
     });
 
-    ipcMain.handle('library-delete', async (event, { filePath } = {}) => {
+    ipcMain.handle('library-delete', async (event, { filePath, compilationId } = {}) => {
         try {
+            if (compilationId) {
+                const dirPath = path.join(ensureLibrary(), path.basename(compilationId));
+                assertInLibrary(dirPath);
+                if (!fs.existsSync(dirPath)) {
+                    throw new Error('Compilation not found');
+                }
+                fs.rmSync(dirPath, { recursive: true, force: true });
+                return { success: true };
+            }
             assertInLibrary(filePath);
             if (isActiveRecording(filePath) && recordingHandler.isRecording()) {
                 throw new Error('Stop recording before deleting this file');
@@ -547,6 +610,29 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
         }
     });
 
+    ipcMain.handle('library-save-compilation-meta', async (event, { id, name, notes } = {}) => {
+        try {
+            const dirPath = path.join(ensureLibrary(), path.basename(id));
+            assertInLibrary(dirPath);
+            const projectFile = path.join(dirPath, 'project.json');
+            if (!fs.existsSync(projectFile)) {
+                throw new Error('Compilation not found');
+            }
+            const raw = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+            if (typeof name === 'string') {
+                raw.name = name;
+            }
+            if (typeof notes === 'string') {
+                raw.notes = notes;
+            }
+            fs.writeFileSync(projectFile, `${JSON.stringify(raw, null, 2)}\n`);
+            emitList();
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.handle('library-set-collapsed', async (event, { ids } = {}) => {
         try {
             const items = readIndexItems();
@@ -581,5 +667,7 @@ module.exports = {
     assertInLibrary,
     sanitizeBaseName,
     uniqueDmxPath,
-    writeSidecar
+    uniqueCompPath,
+    writeSidecar,
+    listLibrary
 };

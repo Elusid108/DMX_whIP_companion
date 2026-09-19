@@ -154,6 +154,41 @@
       bg-zinc-50 dark:bg-zinc-900;
   }
 
+  .timeline-clips {
+    @apply relative h-7 flex-none border-b border-zinc-200 dark:border-zinc-800
+      bg-zinc-50 dark:bg-zinc-900;
+  }
+
+  .timeline-block {
+    @apply absolute top-1 bottom-1 flex items-center rounded-sm
+      bg-cyan-500/20 border border-cyan-500/50 text-cyan-800 dark:text-cyan-100
+      overflow-hidden cursor-grab select-none;
+  }
+
+  .timeline-block.is-active {
+    @apply bg-cyan-400/30 border-cyan-400;
+  }
+
+  .timeline-block.is-moving {
+    opacity: 0.65;
+  }
+
+  .timeline-block-edge {
+    @apply absolute top-0 bottom-0 w-1.5 cursor-ew-resize;
+  }
+
+  .timeline-block-edge.is-in {
+    left: 0;
+  }
+
+  .timeline-block-edge.is-out {
+    right: 0;
+  }
+
+  .timeline-range {
+    @apply absolute top-0 bottom-0 bg-cyan-400/15 pointer-events-none;
+  }
+
   .timeline-track {
     @apply relative h-14 flex-none border-b border-zinc-200 dark:border-zinc-800
       bg-zinc-100 dark:bg-zinc-950;

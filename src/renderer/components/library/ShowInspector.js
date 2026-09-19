@@ -115,18 +115,35 @@ const countLooks = (node) => {
     }, 0);
 };
 
+const StackCard = ({ look }) => React.createElement('div', {
+    className: 'kv-row flex-col items-stretch gap-1'
+},
+    React.createElement('div', {
+        className: 'font-medium text-sm truncate'
+    }, look.displayName || look.filename || 'Untitled'),
+    React.createElement('div', {
+        className: 'text-xs text-zinc-500'
+    }, look.error
+        ? look.error
+        : `${formatDuration(look.duration)} · ${protocolLabel(look.protocols)} · ${(look.universes || []).length} univ`)
+);
+
 const ShowInspector = ({
     selection,
     show,
     folder,
+    compilation,
+    stack,
     name,
     notes,
     busy,
     onNameChange,
     onNotesChange,
     onFolderNameChange,
+    onCompilationNameChange,
     onDelete,
-    onDeleteFolder
+    onDeleteFolder,
+    onDeleteCompilation
 }) => {
     if (!selection) {
         return React.createElement('div', {
@@ -134,8 +151,45 @@ const ShowInspector = ({
         }, 'Select a look or folder.');
     }
 
+    if (selection.type === 'compilation') {
+        return React.createElement('div', {
+            className: 'overflow-y-auto h-full'
+        },
+            React.createElement('div', {
+                className: 'flex flex-col gap-3 max-w-xl mx-auto w-full'
+            },
+                React.createElement(ClickToEdit, {
+                    value: compilation ? compilation.name : '',
+                    placeholder: 'Compilation name',
+                    disabled: busy,
+                    className: 'text-lg font-medium',
+                    onCommit: (value) => {
+                        if (compilation && compilation.id) {
+                            onCompilationNameChange(compilation.id, value);
+                        }
+                    }
+                }),
+                React.createElement('p', {
+                    className: 'readout'
+                }, compilation && compilation.clipCount === 1
+                    ? '1 clip · editable stack'
+                    : `${(compilation && compilation.clipCount) || 0} clips · editable stack`),
+                React.createElement('p', {
+                    className: 'text-xs text-zinc-500'
+                }, 'Load on this PC opens the stack in Studio. Push needs a flattened .dmx export.'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-danger self-start',
+                    disabled: busy,
+                    onClick: onDeleteCompilation
+                }, 'Delete compilation')
+            )
+        );
+    }
+
     if (selection.type === 'folder') {
         const looks = countLooks(folder);
+        const rows = Array.isArray(stack) ? stack : [];
         return React.createElement('div', {
             className: 'overflow-y-auto h-full'
         },
@@ -156,6 +210,31 @@ const ShowInspector = ({
                 React.createElement('p', {
                     className: 'readout'
                 }, looks === 1 ? '1 look' : `${looks} looks`),
+                React.createElement('div', {
+                    className: 'flex flex-col gap-1.5'
+                },
+                    rows.length === 0 && React.createElement('p', {
+                        className: 'text-sm text-zinc-500 italic'
+                    }, 'This folder is empty.'),
+                    rows.map((row) => {
+                        if (row.kind === 'heading') {
+                            return React.createElement('div', {
+                                key: `heading-${row.id}`,
+                                className: 'label-micro pt-2'
+                            }, row.name);
+                        }
+                        if (row.kind === 'compilation') {
+                            return React.createElement('div', {
+                                key: `comp-${row.id}`,
+                                className: 'kv-row text-sm'
+                            }, `${row.compilation.name} · compilation`);
+                        }
+                        return React.createElement(StackCard, {
+                            key: row.id,
+                            look: row.inspect || row.show
+                        });
+                    })
+                ),
                 React.createElement('button', {
                     type: 'button',
                     className: 'btn-danger self-start',

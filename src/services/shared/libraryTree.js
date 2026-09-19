@@ -1,5 +1,6 @@
 const isFolder = (node) => Boolean(node && node.type === 'folder');
 const isShow = (node) => Boolean(node && node.type === 'show');
+const isCompilation = (node) => Boolean(node && node.type === 'compilation');
 
 const cloneTree = (items) => JSON.parse(JSON.stringify(items || []));
 
@@ -201,15 +202,22 @@ const moveNodes = (items, ids, parentId, index) => {
     return items;
 };
 
-const pruneAndFill = (items, showIds) => {
+const pruneAndFill = (items, showIds, compilationIds = []) => {
     const known = new Set(showIds);
+    const knownComps = new Set(compilationIds);
     const seen = new Set();
+    const seenComps = new Set();
     const prune = (list) => {
         const next = [];
         (list || []).forEach((node) => {
             if (isShow(node) && known.has(node.id) && !seen.has(node.id)) {
                 seen.add(node.id);
                 next.push({ type: 'show', id: node.id });
+                return;
+            }
+            if (isCompilation(node) && knownComps.has(node.id) && !seenComps.has(node.id)) {
+                seenComps.add(node.id);
+                next.push({ type: 'compilation', id: node.id });
                 return;
             }
             if (isFolder(node) && node.id) {
@@ -224,28 +232,38 @@ const pruneAndFill = (items, showIds) => {
         return next;
     };
     const tree = prune(items);
+    const newComps = compilationIds
+        .filter((id) => !seenComps.has(id))
+        .map((id) => ({ type: 'compilation', id }));
     const newcomers = showIds
         .filter((id) => !seen.has(id))
         .map((id) => ({ type: 'show', id }));
-    return [...newcomers, ...tree];
+    return [...newComps, ...newcomers, ...tree];
 };
 
-const hydrateTree = (items, showById) => (items || []).map((node) => {
+const hydrateTree = (items, showById, compilationById = new Map()) => (items || []).map((node) => {
     if (isShow(node)) {
         const show = showById.get(node.id);
         return show ? { type: 'show', id: node.id, show } : null;
+    }
+    if (isCompilation(node)) {
+        const compilation = compilationById.get(node.id);
+        return compilation ? { type: 'compilation', id: node.id, compilation } : null;
     }
     return {
         type: 'folder',
         id: node.id,
         name: node.name || 'Folder',
-        children: hydrateTree(node.children, showById).filter(Boolean)
+        children: hydrateTree(node.children, showById, compilationById).filter(Boolean)
     };
 }).filter(Boolean);
 
 const stripTree = (items) => (items || []).map((node) => {
     if (isShow(node)) {
         return { type: 'show', id: node.id };
+    }
+    if (isCompilation(node)) {
+        return { type: 'compilation', id: node.id };
     }
     return {
         type: 'folder',
@@ -255,18 +273,55 @@ const stripTree = (items) => (items || []).map((node) => {
     };
 });
 
+const collectLooks = (folder) => {
+    const looks = [];
+    walk(folder && folder.children, (node) => {
+        if (isShow(node) && node.show && node.show.filePath) {
+            looks.push({
+                filePath: node.show.filePath,
+                name: node.show.displayName || node.show.filename || node.id
+            });
+        }
+    });
+    return looks;
+};
+
+const flattenFolderStack = (folder) => {
+    const rows = [];
+    const visit = (nodes) => {
+        (nodes || []).forEach((node) => {
+            if (isFolder(node)) {
+                rows.push({ kind: 'heading', id: node.id, name: node.name || 'Folder' });
+                visit(node.children);
+                return;
+            }
+            if (isShow(node) && node.show) {
+                rows.push({ kind: 'look', id: node.id, show: node.show });
+            }
+            if (isCompilation(node) && node.compilation) {
+                rows.push({ kind: 'compilation', id: node.id, compilation: node.compilation });
+            }
+        });
+    };
+    visit(folder && folder.children);
+    return rows;
+};
+
 module.exports = {
     childrenOf,
     cloneTree,
     dissolveFolder,
     findNode,
     firstShowPath,
+    flattenFolderStack,
     flattenRows,
     collectFolderIds,
+    collectLooks,
     folderContains,
     folderExists,
     hydrateTree,
     insertNode,
+    isCompilation,
     isFolder,
     isShow,
     moveNode,

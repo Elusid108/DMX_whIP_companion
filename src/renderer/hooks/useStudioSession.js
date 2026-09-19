@@ -56,6 +56,14 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
     });
     const [timelineOverview, setTimelineOverview] = useState(null);
     const [playheadMs, setPlayheadMs] = useState(0);
+    const [clips, setClips] = useState([]);
+    const [compilationDirty, setCompilationDirty] = useState(false);
+    const [compilationName, setCompilationName] = useState('');
+    const [projectPath, setProjectPath] = useState(null);
+    const [saveNaming, setSaveNaming] = useState(false);
+    const [saveDraft, setSaveDraft] = useState('');
+    const [exportNaming, setExportNaming] = useState(false);
+    const [exportDraft, setExportDraft] = useState('');
     const recordingStartTime = useRef(null);
     const durationTimer = useRef(null);
     const overviewReq = useRef(0);
@@ -69,12 +77,15 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
             const requestId = overviewReq.current + 1;
             overviewReq.current = requestId;
             try {
-                const result = await ipcRenderer.invoke('timeline-overview', { filePath });
+                const result = await ipcRenderer.invoke('timeline-overview', filePath ? { filePath } : {});
                 if (requestId !== overviewReq.current) {
                     return;
                 }
                 if (result && result.success) {
                     setTimelineOverview(result);
+                    if (Array.isArray(result.clips)) {
+                        setClips(result.clips);
+                    }
                     return;
                 }
                 setTimelineOverview(null);
@@ -86,19 +97,39 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
             }
         };
 
+        const applyCompilation = (result = {}) => {
+            if (Array.isArray(result.clips)) {
+                setClips(result.clips);
+            }
+            setCompilationDirty(Boolean(result.dirty));
+            const label = result.displayName || result.name;
+            if (label) {
+                setCompilationName(label);
+                setLoadedFileName(label);
+            }
+            if (result.projectPath !== undefined) {
+                setProjectPath(result.projectPath || null);
+            }
+        };
+
         const handleFileLoaded = (event, result = {}) => {
             setIsLoading(false);
-            if (result.success && result.filePath) {
+            if (result.success && (result.filePath || (result.clips && result.clips.length))) {
                 setIsFileLoaded(true);
-                setLoadedFileName(fileNameFromPath(result.filePath));
+                setLoadedFileName(result.displayName || fileNameFromPath(result.filePath) || 'Stack');
                 setPlayheadMs(0);
                 setLoadError('');
-                fetchOverview(result.filePath);
+                applyCompilation(result);
+                fetchOverview(result.kind === 'compilation' ? null : result.filePath);
                 return;
             }
-            if (result.cleared || (result.success && !result.filePath)) {
+            if (result.cleared || (result.success && !result.filePath && !(result.clips && result.clips.length))) {
                 overviewReq.current += 1;
                 clearPlaybackUi(setIsFileLoaded, setLoadedFileName, setTimelineOverview, setPlayheadMs);
+                setClips([]);
+                setCompilationDirty(false);
+                setCompilationName('');
+                setProjectPath(null);
                 return;
             }
             if (result.error && result.error !== 'No file selected') {
@@ -153,7 +184,13 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
             }
         };
 
+        const handleCompilationUpdated = (event, payload = {}) => {
+            applyCompilation(payload);
+            fetchOverview(null);
+        };
+
         ipcRenderer.on('file-loaded', handleFileLoaded);
+        ipcRenderer.on('compilation-updated', handleCompilationUpdated);
         ipcRenderer.on('playback-stats', handlePlaybackStats);
         ipcRenderer.on('recording-stats-update', handleFrameRecorded);
         ipcRenderer.on('recording-error', handleRecordingError);
@@ -161,6 +198,7 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
 
         return () => {
             ipcRenderer.removeListener('file-loaded', handleFileLoaded);
+            ipcRenderer.removeListener('compilation-updated', handleCompilationUpdated);
             ipcRenderer.removeListener('playback-stats', handlePlaybackStats);
             ipcRenderer.removeListener('recording-stats-update', handleFrameRecorded);
             ipcRenderer.removeListener('recording-error', handleRecordingError);
@@ -174,6 +212,103 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         ipcRenderer.send('stop-playback');
         ipcRenderer.send('unload-recording');
         clearPlaybackUi(setIsFileLoaded, setLoadedFileName, setTimelineOverview, setPlayheadMs);
+        setClips([]);
+        setCompilationDirty(false);
+        setCompilationName('');
+        setProjectPath(null);
+    };
+
+    const handleSplit = (timeMs) => {
+        ipcRenderer.invoke('edit-compilation', {
+            op: 'split',
+            timeMs,
+            keepPlayheadMs: playheadMs
+        }).then((result) => {
+            if (result && !result.success && result.error) {
+                setLoadError(result.error);
+            }
+        });
+    };
+
+    const handleCutRange = (fromMs, toMs) => {
+        ipcRenderer.invoke('edit-compilation', {
+            op: 'cut',
+            fromMs,
+            toMs,
+            keepPlayheadMs: playheadMs
+        }).then((result) => {
+            if (result && !result.success && result.error) {
+                setLoadError(result.error);
+            }
+        });
+    };
+
+    const handleReorderClip = (fromIndex, toIndex) => {
+        ipcRenderer.invoke('edit-compilation', {
+            op: 'reorder',
+            fromIndex,
+            toIndex,
+            keepPlayheadMs: playheadMs
+        }).then((result) => {
+            if (result && !result.success && result.error) {
+                setLoadError(result.error);
+            }
+        });
+    };
+
+    const handleTrimClip = (clipId, edge, sourceMs) => {
+        ipcRenderer.invoke('edit-compilation', {
+            op: 'trim',
+            clipId,
+            edge,
+            sourceMs,
+            keepPlayheadMs: playheadMs
+        }).then((result) => {
+            if (result && !result.success && result.error) {
+                setLoadError(result.error);
+            }
+        });
+    };
+
+    const handleSaveCompilation = () => {
+        setSaveDraft(compilationName || loadedFileName || 'Stack');
+        setSaveNaming(true);
+        setExportNaming(false);
+    };
+
+    const handleSaveCompilationConfirm = async () => {
+        const name = String(saveDraft || '').trim();
+        if (!name) {
+            return;
+        }
+        const result = await ipcRenderer.invoke('save-compilation', { name });
+        if (result && result.success) {
+            setSaveNaming(false);
+            setCompilationDirty(false);
+            setCompilationName(name);
+            setLoadedFileName(name);
+        } else if (result && result.error) {
+            setLoadError(result.error);
+        }
+    };
+
+    const handleExportFlattened = () => {
+        setExportDraft(`${compilationName || loadedFileName || 'Stack'} flat`);
+        setExportNaming(true);
+        setSaveNaming(false);
+    };
+
+    const handleExportFlattenedConfirm = async () => {
+        const name = String(exportDraft || '').trim();
+        if (!name) {
+            return;
+        }
+        const result = await ipcRenderer.invoke('export-flattened', { name });
+        if (result && result.success) {
+            setExportNaming(false);
+        } else if (result && result.error) {
+            setLoadError(result.error);
+        }
     };
 
     const handleNewFile = () => {
@@ -357,7 +492,27 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         handleLoadFile,
         handlePlayback,
         handleStopPlayback,
-        handleSeek
+        handleSeek,
+        clips,
+        compilationDirty,
+        compilationName,
+        projectPath,
+        saveNaming,
+        saveDraft,
+        setSaveDraft,
+        exportNaming,
+        exportDraft,
+        setExportDraft,
+        handleSplit,
+        handleCutRange,
+        handleReorderClip,
+        handleTrimClip,
+        handleSaveCompilation,
+        handleSaveCompilationConfirm,
+        handleSaveCompilationCancel: () => setSaveNaming(false),
+        handleExportFlattened,
+        handleExportFlattenedConfirm,
+        handleExportFlattenedCancel: () => setExportNaming(false)
     };
 };
 

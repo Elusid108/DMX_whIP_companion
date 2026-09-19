@@ -1,6 +1,7 @@
 const React = require('react');
 const { useCallback, useEffect, useMemo, useRef, useState } = React;
 const TimelineLane = require('./TimelineLane');
+const TimelineClips = require('./TimelineClips');
 
 const HEADER_WIDTH = 160;
 const MIN_PPS = 4;
@@ -95,7 +96,12 @@ const ShowTimeline = ({
     recordingPath,
     isIdle,
     loadError,
-    onSeek
+    clips,
+    onSeek,
+    onSplit,
+    onCutRange,
+    onReorderClip,
+    onTrimClip
 }) => {
     const scrollRef = useRef(null);
     const didFitRef = useRef(false);
@@ -104,6 +110,8 @@ const ShowTimeline = ({
     const [viewWidth, setViewWidth] = useState(640);
     const [scrollLeft, setScrollLeft] = useState(0);
     const [selectedKey, setSelectedKey] = useState(null);
+    const [selectedClipId, setSelectedClipId] = useState(null);
+    const [range, setRange] = useState(null);
 
     const durationMs = isRecording
         ? recordingDuration
@@ -263,6 +271,33 @@ const ShowTimeline = ({
                         onClick: () => zoomBy(1.25)
                     }, '+')
                 ),
+                (clips && clips.length > 0) && React.createElement('div', {
+                    className: 'timeline-corner justify-between'
+                },
+                    React.createElement('span', {
+                        className: 'text-[10px] uppercase tracking-wide text-zinc-500'
+                    }, 'Clips'),
+                    React.createElement('div', {
+                        className: 'flex items-center gap-1'
+                    },
+                        onSplit && React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet !px-1.5 !py-0.5',
+                            onClick: () => onSplit(playheadMs)
+                        }, 'Split'),
+                        onCutRange && React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet !px-1.5 !py-0.5',
+                            disabled: !(range && range.endMs > range.startMs),
+                            onClick: () => {
+                                if (range && onCutRange) {
+                                    onCutRange(range.startMs, range.endMs);
+                                    setRange(null);
+                                }
+                            }
+                        }, 'Cut')
+                    )
+                ),
                 tracks.map((track) => React.createElement('button', {
                     key: track.key,
                     type: 'button',
@@ -309,6 +344,17 @@ const ShowTimeline = ({
                             style: { left: `${time * pixelsPerSecond}px` }
                         }, formatTick(time, ticks.step)))
                     ),
+                    (clips && clips.length > 0) && React.createElement(TimelineClips, {
+                        clips,
+                        pixelsPerSecond,
+                        durationMs,
+                        selectedId: selectedClipId,
+                        range,
+                        onSelect: setSelectedClipId,
+                        onReorder: onReorderClip,
+                        onTrim: onTrimClip,
+                        onRangeChange: setRange
+                    }),
                     isLoopEnabled && clipWidth > 0 && React.createElement('div', {
                         className: 'timeline-loop',
                         style: { left: 0, width: `${clipWidth}px` }
