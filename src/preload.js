@@ -36,7 +36,8 @@ const INVOKE = new Set([
     'flash-set-settings',
     'flash-identify',
     'flash-run',
-    'flash-wlan'
+    'flash-wlan',
+    'flash-build'
 ]);
 
 const SEND = new Set([

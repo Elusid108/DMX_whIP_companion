@@ -130,56 +130,56 @@ const App = () => {
             })
         ),
         mainView === 'monitor' && React.createElement('div', {
-            className: 'flex flex-1 min-h-0 flex-col'
+            className: 'flex flex-1 min-h-0'
         },
             React.createElement('div', {
-                className: 'app-toolbar items-end bg-zinc-50 dark:bg-zinc-900'
+                className: 'app-sidebar overflow-y-auto'
             },
-                React.createElement('div', { className: 'flex flex-col min-w-fit' },
-                    React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
-                        'Format'
-                    ),
-                    React.createElement('select', {
-                        value: displayFormat,
-                        onChange: (e) => handleDisplayFormatChange(e.target.value),
-                        className: compactSelect
-                    },
-                        React.createElement('option', { value: 'decimal' }, '0-255'),
-                        React.createElement('option', { value: 'percent' }, '0-100%'),
-                        React.createElement('option', { value: 'hex' }, '0-FF')
-                    )
-                ),
-                React.createElement('div', { className: 'flex flex-col min-w-fit' },
-                    React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
-                        'Grid'
-                    ),
-                    React.createElement('select', {
-                        value: gridDimensions,
-                        onChange: (e) => handleGridDimensionsChange(e.target.value),
-                        className: compactSelect
-                    },
-                        React.createElement('option', { value: '16x32' }, '16 × 32'),
-                        React.createElement('option', { value: '32x16' }, '32 × 16')
-                    )
-                ),
-                React.createElement('div', { className: 'flex flex-col min-w-fit' },
-                    React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
-                        'Bars'
-                    ),
-                    React.createElement('button', {
-                        type: 'button',
-                        onClick: toggleAnimations,
-                        className: 'btn-quiet'
-                    }, showAnimations ? 'On' : 'Off')
-                )
+                React.createElement(UniverseSidebar, universeSidebar)
             ),
             React.createElement('div', {
-                className: 'flex flex-1 min-h-0'
+                className: 'flex flex-1 min-w-0 min-h-0 flex-col'
             },
                 React.createElement('div', {
-                    className: 'app-sidebar overflow-y-auto'
+                    className: 'app-toolbar items-end bg-zinc-50 dark:bg-zinc-900'
                 },
-                    React.createElement(UniverseSidebar, universeSidebar)
+                    React.createElement('div', { className: 'flex flex-col min-w-fit' },
+                        React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
+                            'Format'
+                        ),
+                        React.createElement('select', {
+                            value: displayFormat,
+                            onChange: (e) => handleDisplayFormatChange(e.target.value),
+                            className: compactSelect
+                        },
+                            React.createElement('option', { value: 'decimal' }, '0-255'),
+                            React.createElement('option', { value: 'percent' }, '0-100%'),
+                            React.createElement('option', { value: 'hex' }, '0-FF')
+                        )
+                    ),
+                    React.createElement('div', { className: 'flex flex-col min-w-fit' },
+                        React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
+                            'Grid'
+                        ),
+                        React.createElement('select', {
+                            value: gridDimensions,
+                            onChange: (e) => handleGridDimensionsChange(e.target.value),
+                            className: compactSelect
+                        },
+                            React.createElement('option', { value: '16x32' }, '16 × 32'),
+                            React.createElement('option', { value: '32x16' }, '32 × 16')
+                        )
+                    ),
+                    React.createElement('div', { className: 'flex flex-col min-w-fit' },
+                        React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
+                            'Bars'
+                        ),
+                        React.createElement('button', {
+                            type: 'button',
+                            onClick: toggleAnimations,
+                            className: 'btn-quiet'
+                        }, showAnimations ? 'On' : 'Off')
+                    )
                 ),
                 React.createElement(DmxGrid, {
                     dmxData,

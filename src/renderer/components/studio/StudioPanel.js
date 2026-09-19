@@ -31,61 +31,61 @@ const StudioPanel = ({
     const session = useStudioSession(selectedUniverses, selectedNic);
 
     return React.createElement('div', {
-        className: 'flex-1 min-h-0 flex flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950'
+        className: 'flex-1 min-h-0 flex overflow-hidden bg-zinc-50 dark:bg-zinc-950'
     },
         React.createElement('div', {
-            className: 'app-toolbar bg-zinc-50 dark:bg-zinc-900'
+            className: 'app-sidebar overflow-y-auto'
         },
-            React.createElement(RecordingControls, {
+            React.createElement(UniverseSidebar, {
+                artnetUniverses,
+                sacnUniverses,
+                selectedUniverse,
+                selectedProtocol,
                 selectedUniverses,
-                isRecording: session.isRecording,
-                isPlaying: session.isPlaying,
-                isLoading: session.isLoading,
-                recordingPath: session.recordingPath,
-                naming: session.naming,
-                nameDraft: session.nameDraft,
-                onNameDraftChange: session.setNameDraft,
-                onNewFile: session.handleNewFile,
-                onNewFileCancel: session.handleNewFileCancel,
-                onNewFileConfirm: session.handleNewFileConfirm,
-                showLoad: session.showLoad,
-                onStartRecording: session.handleStartRecording,
-                onStopRecording: session.handleStopRecording,
-                onCancelRecording: session.handleCancelRecording,
-                onLoadFile: session.handleLoadFile
-            }),
-            session.showPlaybackControls && React.createElement(PlaybackControls, {
+                selectedNic,
                 networkInterfaces,
-                isFileLoaded: session.isFileLoaded,
-                isPlaying: session.isPlaying,
-                isRecording: session.isRecording,
-                isLoopEnabled: session.isLoopEnabled,
-                playbackNetwork: session.playbackNetwork,
-                displayFileName: session.displayFileName,
-                onLoopChange: session.setIsLoopEnabled,
-                onPlaybackNetworkChange: session.setPlaybackNetwork,
-                onPlayback: session.handlePlayback,
-                onStopPlayback: session.handleStopPlayback
+                onNetworkChange,
+                onUniverseSelect,
+                onSelectAll,
+                onUniverseClick
             })
         ),
         React.createElement('div', {
-            className: 'flex flex-1 min-h-0'
+            className: 'flex flex-1 min-w-0 min-h-0 flex-col'
         },
             React.createElement('div', {
-                className: 'app-sidebar overflow-y-auto'
+                className: 'app-toolbar bg-zinc-50 dark:bg-zinc-900'
             },
-                React.createElement(UniverseSidebar, {
-                    artnetUniverses,
-                    sacnUniverses,
-                    selectedUniverse,
-                    selectedProtocol,
+                React.createElement(RecordingControls, {
                     selectedUniverses,
-                    selectedNic,
+                    isRecording: session.isRecording,
+                    isPlaying: session.isPlaying,
+                    isLoading: session.isLoading,
+                    recordingPath: session.recordingPath,
+                    naming: session.naming,
+                    nameDraft: session.nameDraft,
+                    onNameDraftChange: session.setNameDraft,
+                    onNewFile: session.handleNewFile,
+                    onNewFileCancel: session.handleNewFileCancel,
+                    onNewFileConfirm: session.handleNewFileConfirm,
+                    showLoad: session.showLoad,
+                    onStartRecording: session.handleStartRecording,
+                    onStopRecording: session.handleStopRecording,
+                    onCancelRecording: session.handleCancelRecording,
+                    onLoadFile: session.handleLoadFile
+                }),
+                session.showPlaybackControls && React.createElement(PlaybackControls, {
                     networkInterfaces,
-                    onNetworkChange,
-                    onUniverseSelect,
-                    onSelectAll,
-                    onUniverseClick
+                    isFileLoaded: session.isFileLoaded,
+                    isPlaying: session.isPlaying,
+                    isRecording: session.isRecording,
+                    isLoopEnabled: session.isLoopEnabled,
+                    playbackNetwork: session.playbackNetwork,
+                    displayFileName: session.displayFileName,
+                    onLoopChange: session.setIsLoopEnabled,
+                    onPlaybackNetworkChange: session.setPlaybackNetwork,
+                    onPlayback: session.handlePlayback,
+                    onStopPlayback: session.handleStopPlayback
                 })
             ),
             React.createElement('div', {

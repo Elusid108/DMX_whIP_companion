@@ -101,9 +101,13 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
     const [artifactNote, setArtifactNote] = useState('');
     const [artifactError, setArtifactError] = useState('');
     const [batchBusy, setBatchBusy] = useState(false);
+    const [buildBusy, setBuildBusy] = useState(false);
+    const [buildStatus, setBuildStatus] = useState('');
+    const [buildOk, setBuildOk] = useState(false);
     const [error, setError] = useState('');
     const [log, setLog] = useState([]);
     const logRef = useRef(null);
+    const busy = batchBusy || buildBusy;
 
     const persist = (patch) => {
         ipcRenderer.invoke('flash-set-settings', patch).catch(() => {});
@@ -220,7 +224,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                 return;
             }
             const line = payload.port ? `${payload.port}  ${payload.line}` : payload.line;
-            if (payload.port) {
+            if (payload.port && payload.port !== 'build') {
                 patchRow(payload.port, { lastLog: payload.line });
             }
             setLog((prev) => [...prev.slice(-200), line]);
@@ -305,8 +309,54 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
         setRows((prev) => prev.map((row) => ({ ...row, selected: checked })));
     };
 
+    const applyArtifacts = (artifacts) => {
+        if (artifacts && artifacts.error) {
+            setArtifactError(artifacts.error);
+            setArtifactNote('');
+            return;
+        }
+        if (artifacts && artifacts.source) {
+            setArtifactNote(artifacts.source);
+            setArtifactError('');
+        }
+    };
+
+    const handleBuild = async () => {
+        if (busy) {
+            return;
+        }
+        setBuildBusy(true);
+        setBuildStatus('');
+        setBuildOk(false);
+        setError('');
+        try {
+            const result = await ipcRenderer.invoke('flash-build', { boardId });
+            if (!result || !result.success) {
+                setBuildOk(false);
+                setBuildStatus((result && result.error) || 'Build failed');
+                return;
+            }
+            if (result.source) {
+                applyArtifacts({ source: result.source });
+            } else {
+                const catalogResult = await ipcRenderer.invoke('flash-catalog');
+                if (catalogResult && catalogResult.success) {
+                    applyArtifacts(catalogResult.artifacts);
+                }
+            }
+            const extra = result.warning ? ` ${result.warning}` : '';
+            setBuildOk(true);
+            setBuildStatus(`Build succeeded.${result.source ? ` Image: ${result.source}.` : ''}${extra}`);
+        } catch (err) {
+            setBuildOk(false);
+            setBuildStatus(err.message);
+        } finally {
+            setBuildBusy(false);
+        }
+    };
+
     const runBatch = async (work) => {
-        if (batchBusy) {
+        if (busy) {
             return;
         }
         setBatchBusy(true);
@@ -437,7 +487,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
             max: 48,
             className: 'field',
             value: sdPins[key],
-            disabled: batchBusy,
+            disabled: busy,
             onChange: (event) => handlePin(key, event.target.value)
         })
     );
@@ -459,7 +509,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                     React.createElement('input', {
                         type: 'checkbox',
                         checked: allSelected,
-                        disabled: batchBusy || !rows.length,
+                        disabled: busy || !rows.length,
                         onChange: (event) => toggleAll(event.target.checked),
                         className: 'h-3.5 w-3.5 accent-cyan-400'
                     }),
@@ -470,19 +520,19 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                 React.createElement('button', {
                     type: 'button',
                     className: 'btn-quiet w-full justify-center',
-                    disabled: batchBusy,
+                    disabled: busy,
                     onClick: () => refreshPorts()
                 }, 'Refresh ports'),
                 React.createElement('button', {
                     type: 'button',
                     className: 'btn-quiet w-full justify-center',
-                    disabled: batchBusy || !selectedRows.length,
+                    disabled: busy || !selectedRows.length,
                     onClick: handleIdentify
                 }, batchBusy ? 'Working…' : `Identify selected (${selectedRows.length})`),
                 React.createElement('button', {
                     type: 'button',
                     className: 'btn-primary w-full justify-center',
-                    disabled: batchBusy || !selectedRows.length || Boolean(artifactError),
+                    disabled: busy || !selectedRows.length || Boolean(artifactError),
                     onClick: handleFlash
                 }, batchBusy ? 'Flashing…' : `Flash selected (${selectedRows.length})`)
             ),
@@ -502,7 +552,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                             type: 'checkbox',
                             className: 'mt-0.5 flex-none',
                             checked: row.selected,
-                            disabled: batchBusy,
+                            disabled: busy,
                             onChange: (event) => patchRow(row.path, { selected: event.target.checked })
                         }),
                         React.createElement('div', {
@@ -549,6 +599,21 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                     );
                 })
             ),
+            React.createElement('div', {
+                className: 'flex-none flex flex-col gap-1 p-2 border-t border-zinc-200 dark:border-zinc-800'
+            },
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet w-full justify-center',
+                    disabled: busy,
+                    onClick: handleBuild
+                }, buildBusy ? 'Building…' : 'Build firmware'),
+                buildStatus && React.createElement('p', {
+                    className: buildOk
+                        ? 'text-xs text-emerald-600 dark:text-emerald-400'
+                        : 'text-xs text-red-500'
+                }, buildStatus)
+            ),
             React.createElement('pre', {
                 ref: logRef,
                 className: 'flex-none h-[12.5%] overflow-auto border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-2 readout whitespace-pre-wrap'
@@ -575,7 +640,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                         className: 'field',
                         value: namePattern,
                         maxLength: 40,
-                        disabled: batchBusy,
+                        disabled: busy,
                         placeholder: 'Whip',
                         onChange: (event) => handleNamePattern(event.target.value)
                     })
@@ -584,7 +649,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                     React.createElement('select', {
                         className: 'field',
                         value: boardId,
-                        disabled: batchBusy || boards.length < 2,
+                        disabled: busy || boards.length < 2,
                         onChange: (event) => handleBoardChange(event.target.value)
                     },
                         boards.map((item) => React.createElement('option', {
@@ -609,7 +674,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                             list: 'flash-ssid-list',
                             value: ssid,
                             maxLength: 32,
-                            disabled: batchBusy || clearWifi,
+                            disabled: busy || clearWifi,
                             placeholder: wlan.current && wlan.current.ssid
                                 ? wlan.current.ssid
                                 : 'Network name or hidden SSID',
@@ -624,13 +689,13 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                         React.createElement('button', {
                             type: 'button',
                             className: 'btn-quiet flex-none',
-                            disabled: batchBusy,
+                            disabled: busy,
                             onClick: () => refreshWlan()
                         }, 'Scan'),
                         React.createElement('button', {
                             type: 'button',
                             className: 'btn-quiet flex-none',
-                            disabled: batchBusy || !(wlan.current && wlan.current.ssid),
+                            disabled: busy || !(wlan.current && wlan.current.ssid),
                             onClick: useCurrentSsid
                         }, 'PC Wi-Fi')
                     )
@@ -641,7 +706,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                         className: 'field',
                         value: password,
                         maxLength: 63,
-                        disabled: batchBusy || clearWifi,
+                        disabled: busy || clearWifi,
                         autoComplete: 'off',
                         placeholder: 'Empty = open network',
                         onChange: (event) => handlePassword(event.target.value)
@@ -675,7 +740,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                         React.createElement('input', {
                             type: 'checkbox',
                             checked: clearWifi,
-                            disabled: batchBusy,
+                            disabled: busy,
                             onChange: (event) => setClearWifi(event.target.checked)
                         }),
                         'Clear saved Wi-Fi (omit STA keys)'

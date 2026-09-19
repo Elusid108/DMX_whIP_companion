@@ -1,6 +1,8 @@
 const { ipcMain, app } = require('electron');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { SerialPort } = require('serialport');
 const { postForm, SOFTAP_IP } = require('./deviceHttp');
@@ -71,6 +73,117 @@ const resolveArtifacts = (board) => {
     throw new Error(
         `No firmware image for ${flashClass}. Build [env:${env}] in DMX_whIP_embedded or copy bootloader.bin, partitions.bin, and firmware.bin into firmware/artifacts/${flashClass}/.`
     );
+};
+
+const siblingFirmwareRoot = () => {
+    if (app && app.isPackaged) {
+        throw new Error('Build firmware is only available when running from the companion source tree.');
+    }
+    const root = path.join(repoRoot(), '..', 'DMX_whIP_embedded');
+    if (!fs.existsSync(path.join(root, 'platformio.ini'))) {
+        throw new Error('DMX_whIP_embedded not found next to this repo (missing platformio.ini).');
+    }
+    return root;
+};
+
+const pioEnvName = (board) => {
+    const raw = String((board && board.pioEnv) || 'matrix');
+    const env = raw.replace(/[^a-zA-Z0-9_-]/g, '');
+    return env || 'matrix';
+};
+
+const findOnPath = (names) => {
+    const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+    const exts = process.platform === 'win32'
+        ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';').filter(Boolean)
+        : [''];
+    for (const dir of dirs) {
+        for (const name of names) {
+            const base = path.join(dir, name);
+            if (fs.existsSync(base)) {
+                return base;
+            }
+            if (process.platform === 'win32' && !path.extname(name)) {
+                for (const ext of exts) {
+                    const full = base + ext;
+                    if (fs.existsSync(full)) {
+                        return full;
+                    }
+                }
+            }
+        }
+    }
+    return null;
+};
+
+const findPio = () => {
+    const fromPath = findOnPath(['pio', 'platformio']);
+    if (fromPath) {
+        return fromPath;
+    }
+    const home = os.homedir();
+    const extras = process.platform === 'win32'
+        ? [
+            path.join(home, '.platformio', 'penv', 'Scripts', 'pio.exe'),
+            path.join(home, '.platformio', 'penv', 'Scripts', 'platformio.exe')
+        ]
+        : [
+            path.join(home, '.platformio', 'penv', 'bin', 'pio'),
+            path.join(home, '.platformio', 'penv', 'bin', 'platformio')
+        ];
+    const found = extras.find((file) => fs.existsSync(file));
+    if (found) {
+        return found;
+    }
+    throw new Error('PlatformIO CLI not found. Install PlatformIO Core or open a shell where pio works.');
+};
+
+const pipeLines = (stream, onLine) => {
+    let rest = '';
+    stream.on('data', (chunk) => {
+        rest += String(chunk);
+        const lines = rest.split(/\r?\n/);
+        rest = lines.pop() || '';
+        lines.forEach((line) => {
+            const trimmed = line.replace(/\s+$/g, '');
+            if (trimmed) {
+                onLine(trimmed);
+            }
+        });
+    });
+    stream.on('end', () => {
+        const trimmed = rest.replace(/\s+$/g, '');
+        if (trimmed) {
+            onLine(trimmed);
+        }
+    });
+};
+
+const runPioBuild = (pioPath, env, cwd, log) => {
+    log(`${pioPath} run -e ${env}`);
+    const child = spawn(pioPath, ['run', '-e', env], {
+        cwd,
+        windowsHide: true,
+        shell: false,
+        env: process.env
+    });
+    const done = new Promise((resolve, reject) => {
+        pipeLines(child.stdout, log);
+        pipeLines(child.stderr, log);
+        child.on('error', reject);
+        child.on('close', (code, signal) => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+            if (signal) {
+                reject(new Error(`pio run -e ${env} ended (${signal})`));
+                return;
+            }
+            reject(new Error(`pio run -e ${env} exited ${code == null ? 'null' : code}`));
+        });
+    });
+    return { child, done };
 };
 
 const readBin = (filePath) => Uint8Array.from(fs.readFileSync(filePath));
@@ -190,6 +303,9 @@ const failResult = (error) => {
 };
 
 function setupFirmwareFlashHandlers(mainWindow) {
+    let buildInFlight = false;
+    let buildChild = null;
+
     const send = (channel, payload) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send(channel, payload);
@@ -433,13 +549,76 @@ function setupFirmwareFlashHandlers(mainWindow) {
         }
     });
 
+    ipcMain.handle('flash-build', async (event, { boardId } = {}) => {
+        if (buildInFlight) {
+            return { success: false, error: 'A firmware build is already running' };
+        }
+        buildInFlight = true;
+        const log = (line) => logPort('build', line);
+        try {
+            const catalog = loadCatalog();
+            const board = boardById(catalog, boardId);
+            const env = pioEnvName(board);
+            const sibling = siblingFirmwareRoot();
+            const pioPath = findPio();
+            log(`Building [env:${env}] in ${sibling}`);
+            const started = runPioBuild(pioPath, env, sibling, log);
+            buildChild = started.child;
+            await started.done;
+            const flashClass = board.artifact || board.flashClass;
+            const bundled = allBins(path.join(repoRoot(), 'firmware', 'artifacts', flashClass));
+            let artifacts = null;
+            try {
+                artifacts = resolveArtifacts(board);
+            } catch (err) {
+                return {
+                    success: true,
+                    env,
+                    source: '',
+                    bundledPreferred: Boolean(bundled),
+                    warning: err.message
+                };
+            }
+            const warning = bundled
+                ? `Flash still uses firmware/artifacts/${flashClass} (copies take priority over this PIO build).`
+                : '';
+            if (warning) {
+                log(warning);
+            } else {
+                log(`Build succeeded. Image: ${artifacts.source}`);
+            }
+            return {
+                success: true,
+                env,
+                source: artifacts.source,
+                bundledPreferred: Boolean(bundled),
+                warning
+            };
+        } catch (error) {
+            log(error.message);
+            return { success: false, error: error.message };
+        } finally {
+            buildInFlight = false;
+            buildChild = null;
+        }
+    });
+
     return () => {
+        if (buildChild) {
+            try {
+                buildChild.kill();
+            } catch (err) {
+                // already exited
+            }
+            buildChild = null;
+        }
         ipcMain.removeHandler('flash-catalog');
         ipcMain.removeHandler('flash-ports');
         ipcMain.removeHandler('flash-wlan');
         ipcMain.removeHandler('flash-set-settings');
         ipcMain.removeHandler('flash-identify');
         ipcMain.removeHandler('flash-run');
+        ipcMain.removeHandler('flash-build');
     };
 }
 
