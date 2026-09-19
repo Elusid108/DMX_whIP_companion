@@ -2,8 +2,10 @@ const React = require('react');
 const { useCallback, useEffect, useMemo, useRef, useState } = React;
 const TimelineLane = require('./TimelineLane');
 const TimelineClips = require('./TimelineClips');
+const TimelineAudio = require('./TimelineAudio');
+const ClipInspector = require('./ClipInspector');
 
-const HEADER_WIDTH = 160;
+const HEADER_WIDTH = 252;
 const MIN_PPS = 4;
 const MAX_PPS = 400;
 const PAD_PX = 24;
@@ -19,9 +21,7 @@ const parseUniverseKey = (key) => {
     };
 };
 
-const trackLabel = (protocol, universe) => (
-    protocol === 'sacn' ? `sACN ${universe}` : `Art-Net ${universe}`
-);
+const protocolLabel = (protocol) => (protocol === 'sacn' ? 'sACN' : 'Art-Net');
 
 const formatTick = (seconds, step) => {
     const total = Math.max(0, seconds);
@@ -41,49 +41,48 @@ const tickStep = (pixelsPerSecond) => {
     return steps.find((step) => step >= raw) || 600;
 };
 
-const buildTracks = (overview, selectedUniverses, recordingPath, isRecording) => {
-    if (overview && overview.tracks && overview.tracks.length > 0) {
-        return overview.tracks.map((track) => {
-            const key = `${track.protocol}-${track.universe}`;
-            return {
-                key,
-                protocol: track.protocol,
-                universe: track.universe,
-                wokenChannels: track.wokenChannels || 0,
-                bands: track.bands,
-                bucketCount: overview.bucketCount,
-                bandsPerBucket: overview.bandsPerBucket || 8,
-                armed: selectedUniverses ? selectedUniverses.has(key) : false,
-                ghost: false
-            };
-        });
+const buildProtocolTracks = (overview, selectedUniverses, recordingPath, isRecording) => {
+    const fromOverview = overview && (overview.protocolTracks || overview.tracks);
+    if (fromOverview && fromOverview.length > 0 && overview.protocolTracks) {
+        return overview.protocolTracks.map((track) => ({
+            key: track.protocol,
+            protocol: track.protocol,
+            wokenChannels: track.wokenChannels || 0,
+            bands: track.bands,
+            bucketCount: overview.bucketCount,
+            bandsPerBucket: overview.bandsPerBucket || 8,
+            armed: true,
+            ghost: false
+        }));
     }
 
     if (!recordingPath || !selectedUniverses || selectedUniverses.size === 0) {
         return [];
     }
 
-    return [...selectedUniverses]
-        .map(parseUniverseKey)
-        .filter((item) => item && Number.isFinite(item.universe))
-        .sort((a, b) => {
-            if (a.protocol !== b.protocol) {
-                return a.protocol.localeCompare(b.protocol);
-            }
-            return a.universe - b.universe;
-        })
-        .map((item) => ({
-            key: `${item.protocol}-${item.universe}`,
-            protocol: item.protocol,
-            universe: item.universe,
-            wokenChannels: 0,
-            bands: null,
-            bucketCount: 0,
-            bandsPerBucket: 8,
-            armed: true,
-            ghost: !isRecording
-        }));
+    const protocols = new Set();
+    for (const key of selectedUniverses) {
+        const parsed = parseUniverseKey(key);
+        if (parsed) {
+            protocols.add(parsed.protocol);
+        }
+    }
+    return ['artnet', 'sacn'].filter((protocol) => protocols.has(protocol)).map((protocol) => ({
+        key: protocol,
+        protocol,
+        wokenChannels: 0,
+        bands: null,
+        bucketCount: 0,
+        bandsPerBucket: 8,
+        armed: true,
+        ghost: !isRecording
+    }));
 };
+
+const lastEndMs = (items = []) => items.reduce((max, item) => {
+    const end = (item.startMs || 0) + Math.max(0, (item.sourceOutMs || 0) - (item.sourceInMs || 0));
+    return end > max ? end : max;
+}, 0);
 
 const ShowTimeline = ({
     overview,
@@ -97,11 +96,27 @@ const ShowTimeline = ({
     isIdle,
     loadError,
     clips,
+    audioClips,
+    audioMedia,
+    trackCount,
+    isPlaying,
+    isPaused,
     onSeek,
     onSplit,
     onCutRange,
-    onReorderClip,
-    onTrimClip
+    onMoveClip,
+    onTrimClip,
+    onAddTrack,
+    onInspectClip,
+    onInspectApply,
+    inspector,
+    onCloseInspector,
+    onImportAudio,
+    onPlay,
+    onPause,
+    onStop,
+    onBack,
+    onNext
 }) => {
     const scrollRef = useRef(null);
     const didFitRef = useRef(false);
@@ -113,19 +128,25 @@ const ShowTimeline = ({
     const [selectedClipId, setSelectedClipId] = useState(null);
     const [range, setRange] = useState(null);
 
-    const durationMs = isRecording
-        ? recordingDuration
-        : (overview && overview.durationMs) || 0;
+    const durationMs = Math.max(
+        isRecording ? recordingDuration : 0,
+        (overview && overview.durationMs) || 0,
+        lastEndMs(clips),
+        lastEndMs(audioClips)
+    );
     const durationSec = Math.max(durationMs / 1000, 0);
     const tracks = useMemo(
-        () => buildTracks(overview, selectedUniverses, recordingPath, isRecording),
+        () => buildProtocolTracks(overview, selectedUniverses, recordingPath, isRecording),
         [overview, selectedUniverses, recordingPath, isRecording]
     );
+    const lightingTracks = Math.max(1, trackCount || 1);
+    const hasClips = Boolean(clips && clips.length > 0);
 
     const contentWidth = Math.max(viewWidth, (durationSec * pixelsPerSecond) + PAD_PX);
     const playheadX = Math.max(0, (playheadMs / 1000) * pixelsPerSecond);
     const clipWidth = Math.max(durationMs > 0 || isRecording ? 2 : 0, durationSec * pixelsPerSecond);
     const canSeek = Boolean(isFileLoaded && !isRecording && onSeek);
+    const canTransport = Boolean(isFileLoaded && !isRecording);
 
     const applyFit = useCallback(() => {
         const width = scrollRef.current ? scrollRef.current.clientWidth : viewWidth;
@@ -151,7 +172,11 @@ const ShowTimeline = ({
     }, []);
 
     useEffect(() => {
-        if (overview && overview.tracks && overview.tracks.length && !didFitRef.current) {
+        const hasOverview = overview && (
+            (overview.protocolTracks && overview.protocolTracks.length)
+            || (overview.tracks && overview.tracks.length)
+        );
+        if (hasOverview && !didFitRef.current) {
             didFitRef.current = true;
             applyFit();
         }
@@ -241,8 +266,15 @@ const ShowTimeline = ({
         return { list, step };
     }, [pixelsPerSecond, scrollLeft, viewWidth]);
 
+    const transportBtn = (label, onClick, disabled) => React.createElement('button', {
+        type: 'button',
+        className: 'btn-quiet !px-1.5 !py-0.5',
+        disabled: Boolean(disabled),
+        onClick
+    }, label);
+
     return React.createElement('div', {
-        className: 'flex flex-1 min-h-0 flex-col bg-white dark:bg-zinc-900'
+        className: 'flex flex-1 min-h-0 flex-col bg-white dark:bg-zinc-900 relative'
     },
         loadError && React.createElement('p', {
             className: 'px-3 pt-2 text-sm text-red-500'
@@ -254,24 +286,33 @@ const ShowTimeline = ({
                 className: 'flex flex-col flex-none',
                 style: { width: HEADER_WIDTH }
             },
-                React.createElement('div', { className: 'timeline-corner' },
-                    React.createElement('button', {
-                        type: 'button',
-                        className: 'btn-quiet !px-1.5 !py-0.5',
-                        onClick: applyFit
-                    }, 'Fit'),
-                    React.createElement('button', {
-                        type: 'button',
-                        className: 'btn-quiet !px-1.5 !py-0.5',
-                        onClick: () => zoomBy(1 / 1.25)
-                    }, '−'),
-                    React.createElement('button', {
-                        type: 'button',
-                        className: 'btn-quiet !px-1.5 !py-0.5',
-                        onClick: () => zoomBy(1.25)
-                    }, '+')
+                React.createElement('div', { className: 'timeline-corner justify-between' },
+                    React.createElement('div', { className: 'flex items-center gap-0.5' },
+                        transportBtn('Play', onPlay, !canTransport || isPlaying),
+                        transportBtn('Pause', onPause, !canTransport || !isPlaying),
+                        transportBtn('Stop', onStop, !canTransport),
+                        transportBtn('Back', onBack, !canTransport),
+                        transportBtn('Next', onNext, !canTransport)
+                    ),
+                    React.createElement('div', { className: 'flex items-center gap-0.5' },
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet !px-1.5 !py-0.5',
+                            onClick: applyFit
+                        }, 'Fit'),
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet !px-1.5 !py-0.5',
+                            onClick: () => zoomBy(1 / 1.25)
+                        }, '−'),
+                        React.createElement('button', {
+                            type: 'button',
+                            className: 'btn-quiet !px-1.5 !py-0.5',
+                            onClick: () => zoomBy(1.25)
+                        }, '+')
+                    )
                 ),
-                (clips && clips.length > 0) && React.createElement('div', {
+                hasClips && React.createElement('div', {
                     className: 'timeline-corner justify-between'
                 },
                     React.createElement('span', {
@@ -298,6 +339,15 @@ const ShowTimeline = ({
                         }, 'Cut')
                     )
                 ),
+                hasClips && Array.from({ length: lightingTracks }, (_, index) => React.createElement('div', {
+                    key: `track-${index}`,
+                    className: 'timeline-header-sm'
+                }, `Track ${index + 1}`)),
+                hasClips && React.createElement('button', {
+                    type: 'button',
+                    className: 'timeline-header-sm is-ghost',
+                    onClick: onAddTrack
+                }, '+ Track'),
                 tracks.map((track) => React.createElement('button', {
                     key: track.key,
                     type: 'button',
@@ -314,7 +364,7 @@ const ShowTimeline = ({
                         }),
                         React.createElement('span', {
                             className: 'text-xs font-medium truncate'
-                        }, trackLabel(track.protocol, track.universe))
+                        }, protocolLabel(track.protocol))
                     ),
                     React.createElement('span', {
                         className: 'text-[10px] text-zinc-500'
@@ -322,7 +372,16 @@ const ShowTimeline = ({
                 )),
                 tracks.length === 0 && React.createElement('div', {
                     className: 'timeline-header text-xs text-zinc-500'
-                }, 'No layers')
+                }, 'No layers'),
+                isFileLoaded && !isRecording && React.createElement(React.Fragment, null,
+                    React.createElement('div', { className: 'timeline-header-audio' }, 'Audio L'),
+                    React.createElement('div', { className: 'timeline-header-audio' }, 'Audio R'),
+                    React.createElement('button', {
+                        type: 'button',
+                        className: 'timeline-header-sm is-ghost',
+                        onClick: () => onImportAudio && onImportAudio(playheadMs)
+                    }, '+ Audio')
+                )
             ),
             React.createElement('div', {
                 ref: scrollRef,
@@ -344,16 +403,23 @@ const ShowTimeline = ({
                             style: { left: `${time * pixelsPerSecond}px` }
                         }, formatTick(time, ticks.step)))
                     ),
-                    (clips && clips.length > 0) && React.createElement(TimelineClips, {
+                    hasClips && React.createElement('div', { className: 'timeline-corner-spacer' }),
+                    hasClips && React.createElement(TimelineClips, {
                         clips,
+                        trackCount: lightingTracks,
                         pixelsPerSecond,
                         durationMs,
                         selectedId: selectedClipId,
                         range,
                         onSelect: setSelectedClipId,
-                        onReorder: onReorderClip,
+                        onMove: onMoveClip,
                         onTrim: onTrimClip,
-                        onRangeChange: setRange
+                        onRangeChange: setRange,
+                        onInspect: onInspectClip,
+                        onAddTrack
+                    }),
+                    hasClips && React.createElement('div', {
+                        className: 'timeline-clips is-ghost'
                     }),
                     isLoopEnabled && clipWidth > 0 && React.createElement('div', {
                         className: 'timeline-loop',
@@ -373,6 +439,27 @@ const ShowTimeline = ({
                     tracks.length === 0 && React.createElement('div', {
                         className: 'timeline-track'
                     }),
+                    isFileLoaded && !isRecording && React.createElement(TimelineAudio, {
+                        clips: audioClips,
+                        audioMedia,
+                        pixelsPerSecond,
+                        durationMs,
+                        selectedId: selectedClipId,
+                        range,
+                        onSelect: setSelectedClipId,
+                        onMove: onMoveClip,
+                        onTrim: onTrimClip,
+                        onRangeChange: setRange
+                    }),
+                    isFileLoaded && !isRecording && React.createElement('div', {
+                        className: 'timeline-clips is-ghost cursor-pointer',
+                        onPointerDown: (event) => {
+                            event.stopPropagation();
+                            if (onImportAudio) {
+                                onImportAudio(playheadMs);
+                            }
+                        }
+                    }),
                     (isFileLoaded || isRecording) && React.createElement('div', {
                         className: 'timeline-playhead',
                         style: { left: `${playheadX}px` }
@@ -382,7 +469,14 @@ const ShowTimeline = ({
                     }, 'Select universes, create a file in Studio or load a look from Library, then record or play.')
                 )
             )
-        )
+        ),
+        inspector && inspector.clip && React.createElement(ClipInspector, {
+            info: inspector.clip,
+            x: inspector.x,
+            y: inspector.y,
+            onClose: onCloseInspector,
+            onApply: onInspectApply
+        })
     );
 };
 

@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const dgram = require('dgram');
 const { Sender } = require('sacn');
-const { createSacnDiscoveryPacket } = require('./utils');
+const { createSacnDiscoveryPacket, createSacnDmxPacket } = require('./utils');
 
 const dmxToPayload = (dmxData) => {
     const payload = {};
@@ -76,12 +76,28 @@ class SacnOutput {
         await new Promise((resolve) => setTimeout(resolve, 75));
     }
 
-    send(universe, dmxData, extra = {}) {
+    send(universe, dmxData, destIp) {
+        if (typeof destIp === 'string' && destIp.trim() && this.discoverySocket) {
+            try {
+                const { packet } = createSacnDmxPacket(universe, dmxData, {
+                    cid: this.cid,
+                    sourceName: this.sourceName,
+                    priority: this.priority
+                });
+                this.discoverySocket.send(packet, 5568, destIp.trim(), (err) => {
+                    if (err) {
+                        console.error('sACN unicast send error:', err);
+                    }
+                });
+            } catch (err) {
+                console.error('sACN unicast send error:', err);
+            }
+            return;
+        }
         const sender = this.ensureSender(universe);
         sender.send({
             payload: dmxToPayload(dmxData),
-            useRawDmxValues: true,
-            ...extra
+            useRawDmxValues: true
         }).catch((err) => {
             console.error('sACN send error:', err);
         });

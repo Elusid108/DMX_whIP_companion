@@ -87,13 +87,43 @@ const finalizeTracks = (tracks, bucketMs) => {
         return a.universe - b.universe;
     });
 
+    const protocolTracks = ['artnet', 'sacn'].map((protocol) => {
+        const members = list.filter((track) => track.protocol === protocol);
+        if (members.length === 0) {
+            return null;
+        }
+        const bands = new Array(bucketCount * BANDS).fill(0);
+        let packets = 0;
+        let wokenChannels = 0;
+        for (const track of members) {
+            packets += track.packets;
+            if (track.wokenChannels > wokenChannels) {
+                wokenChannels = track.wokenChannels;
+            }
+            for (let i = 0; i < bands.length; i += 1) {
+                const value = track.bands[i] || 0;
+                if (value > bands[i]) {
+                    bands[i] = value;
+                }
+            }
+        }
+        return {
+            protocol,
+            universe: null,
+            packets,
+            wokenChannels,
+            bands
+        };
+    }).filter(Boolean);
+
     return {
         durationMs: maxTs,
         bucketMs,
         bucketCount,
         bandsPerBucket: BANDS,
         frameCount: tracks.frameCount,
-        tracks: list
+        tracks: list,
+        protocolTracks
     };
 };
 

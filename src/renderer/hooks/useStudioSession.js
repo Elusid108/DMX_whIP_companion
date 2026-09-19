@@ -1,6 +1,29 @@
 const { useState, useEffect, useRef } = require('react');
 const ipcRenderer = require('../ipc');
 
+const neighborStarts = (clips, audioClips, timeMs) => {
+    const t = Math.max(0, Number(timeMs) || 0);
+    const starts = [...new Set([
+        ...(clips || []).map((clip) => Number(clip.startMs) || 0),
+        ...(audioClips || []).map((clip) => Number(clip.startMs) || 0)
+    ])].sort((a, b) => a - b);
+    if (starts.length === 0) {
+        return { back: 0, next: 0 };
+    }
+    let back = 0;
+    let next = starts[starts.length - 1];
+    for (const start of starts) {
+        if (start < t - 1) {
+            back = start;
+        }
+        if (start > t + 1) {
+            next = start;
+            break;
+        }
+    }
+    return { back, next };
+};
+
 const formatDuration = (ms) => {
     if (!ms && ms !== 0) {
         return '00:00:00';
@@ -57,6 +80,10 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
     const [timelineOverview, setTimelineOverview] = useState(null);
     const [playheadMs, setPlayheadMs] = useState(0);
     const [clips, setClips] = useState([]);
+    const [audioClips, setAudioClips] = useState([]);
+    const [audioMedia, setAudioMedia] = useState({});
+    const [trackCount, setTrackCount] = useState(1);
+    const [inspector, setInspector] = useState(null);
     const [compilationDirty, setCompilationDirty] = useState(false);
     const [compilationName, setCompilationName] = useState('');
     const [projectPath, setProjectPath] = useState(null);
@@ -67,6 +94,7 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
     const recordingStartTime = useRef(null);
     const durationTimer = useRef(null);
     const overviewReq = useRef(0);
+    const audioRef = useRef(null);
 
     useEffect(() => {
         setPlaybackNetwork((current) => current || selectedNic || '0.0.0.0');
@@ -86,6 +114,15 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
                     if (Array.isArray(result.clips)) {
                         setClips(result.clips);
                     }
+                    if (Array.isArray(result.audioClips)) {
+                        setAudioClips(result.audioClips);
+                    }
+                    if (result.audioMedia) {
+                        setAudioMedia(result.audioMedia);
+                    }
+                    if (result.trackCount) {
+                        setTrackCount(result.trackCount);
+                    }
                     return;
                 }
                 setTimelineOverview(null);
@@ -100,6 +137,15 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         const applyCompilation = (result = {}) => {
             if (Array.isArray(result.clips)) {
                 setClips(result.clips);
+            }
+            if (Array.isArray(result.audioClips)) {
+                setAudioClips(result.audioClips);
+            }
+            if (result.audioMedia) {
+                setAudioMedia(result.audioMedia);
+            }
+            if (result.trackCount) {
+                setTrackCount(result.trackCount);
             }
             setCompilationDirty(Boolean(result.dirty));
             const label = result.displayName || result.name;
@@ -127,6 +173,10 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
                 overviewReq.current += 1;
                 clearPlaybackUi(setIsFileLoaded, setLoadedFileName, setTimelineOverview, setPlayheadMs);
                 setClips([]);
+                setAudioClips([]);
+                setAudioMedia({});
+                setTrackCount(1);
+                setInspector(null);
                 setCompilationDirty(false);
                 setCompilationName('');
                 setProjectPath(null);
@@ -213,6 +263,10 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         ipcRenderer.send('unload-recording');
         clearPlaybackUi(setIsFileLoaded, setLoadedFileName, setTimelineOverview, setPlayheadMs);
         setClips([]);
+        setAudioClips([]);
+        setAudioMedia({});
+        setTrackCount(1);
+        setInspector(null);
         setCompilationDirty(false);
         setCompilationName('');
         setProjectPath(null);
@@ -243,11 +297,13 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         });
     };
 
-    const handleReorderClip = (fromIndex, toIndex) => {
+    const handleMoveClip = (clipId, startMs, trackId, target) => {
         ipcRenderer.invoke('edit-compilation', {
-            op: 'reorder',
-            fromIndex,
-            toIndex,
+            op: 'move',
+            clipId,
+            startMs,
+            trackId,
+            target,
             keepPlayheadMs: playheadMs
         }).then((result) => {
             if (result && !result.success && result.error) {
@@ -256,18 +312,102 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         });
     };
 
-    const handleTrimClip = (clipId, edge, sourceMs) => {
+    const handleTrimClip = (clipId, edge, sourceMs, target) => {
         ipcRenderer.invoke('edit-compilation', {
             op: 'trim',
             clipId,
             edge,
             sourceMs,
+            target,
             keepPlayheadMs: playheadMs
         }).then((result) => {
             if (result && !result.success && result.error) {
                 setLoadError(result.error);
             }
         });
+    };
+
+    const handleAddTrack = () => {
+        ipcRenderer.invoke('edit-compilation', {
+            op: 'add-track',
+            keepPlayheadMs: playheadMs
+        }).then((result) => {
+            if (result && !result.success && result.error) {
+                setLoadError(result.error);
+            }
+        });
+    };
+
+    const handleInspectClip = (clip, pos) => {
+        ipcRenderer.invoke('inspect-clip', { clipId: clip.id }).then((result) => {
+            if (result && result.success) {
+                setInspector({
+                    clip: result.clip,
+                    x: pos && pos.x,
+                    y: pos && pos.y
+                });
+                return;
+            }
+            if (result && result.error) {
+                setLoadError(result.error);
+            }
+        });
+    };
+
+    const handleInspectApply = (patch) => {
+        if (!inspector || !inspector.clip) {
+            return;
+        }
+        ipcRenderer.invoke('edit-compilation', {
+            op: 'update',
+            clipId: inspector.clip.id,
+            patch,
+            keepPlayheadMs: playheadMs
+        }).then((result) => {
+            if (result && !result.success && result.error) {
+                setLoadError(result.error);
+                return;
+            }
+            setInspector(null);
+        });
+    };
+
+    const handleImportAudio = (startMs) => {
+        ipcRenderer.invoke('import-audio', { startMs }).then((result) => {
+            if (result && result.error && result.error !== 'No file selected') {
+                setLoadError(result.error);
+            }
+        });
+    };
+
+    const handlePlay = () => {
+        if (!isFileLoaded || isPlaying) {
+            return;
+        }
+        ipcRenderer.send('toggle-playback', {
+            loop: isLoopEnabled,
+            playbackNetwork
+        });
+    };
+
+    const handlePause = () => {
+        if (!isPlaying) {
+            return;
+        }
+        ipcRenderer.send('toggle-playback', {
+            loop: isLoopEnabled,
+            playbackNetwork
+        });
+    };
+
+    const handleBack = () => {
+        const { back } = neighborStarts(clips, audioClips, playheadMs);
+        handleSeek(back);
+    };
+
+    const handleNext = () => {
+        const { next } = neighborStarts(clips, audioClips, playheadMs);
+        handleSeek(next);
     };
 
     const handleSaveCompilation = () => {
@@ -444,6 +584,36 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         });
     };
 
+    useEffect(() => {
+        const el = audioRef.current;
+        if (!el) {
+            return;
+        }
+        const clip = (audioClips || []).find((item) => (
+            playheadMs >= (item.startMs || 0)
+            && playheadMs < ((item.startMs || 0) + Math.max(0, (item.sourceOutMs || 0) - (item.sourceInMs || 0)))
+        ));
+        if (!clip || !isPlaying) {
+            el.pause();
+            if (!isPlaying && !isPaused) {
+                el.currentTime = 0;
+            }
+            return;
+        }
+        const src = `compmedia://${clip.mediaId}`;
+        const mediaTime = ((clip.sourceInMs || 0) + (playheadMs - (clip.startMs || 0))) / 1000;
+        if (el.getAttribute('src') !== src) {
+            el.src = src;
+        }
+        if (Math.abs((el.currentTime || 0) - mediaTime) > 0.12) {
+            el.currentTime = Math.max(0, mediaTime);
+        }
+        const play = el.play();
+        if (play && play.catch) {
+            play.catch(() => {});
+        }
+    }, [audioClips, isPaused, isPlaying, playheadMs]);
+
     const recordingFileName = fileNameFromPath(recordingPath);
     const displayFileName = loadedFileName || recordingFileName;
     const canRecord = Boolean(recordingPath) && (isRecording || (selectedUniverses && selectedUniverses.size > 0));
@@ -491,9 +661,18 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         handleCancelRecording,
         handleLoadFile,
         handlePlayback,
+        handlePlay,
+        handlePause,
         handleStopPlayback,
         handleSeek,
+        handleBack,
+        handleNext,
         clips,
+        audioClips,
+        audioMedia,
+        trackCount,
+        inspector,
+        audioRef,
         compilationDirty,
         compilationName,
         projectPath,
@@ -505,8 +684,13 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         setExportDraft,
         handleSplit,
         handleCutRange,
-        handleReorderClip,
+        handleMoveClip,
         handleTrimClip,
+        handleAddTrack,
+        handleInspectClip,
+        handleInspectApply,
+        handleCloseInspector: () => setInspector(null),
+        handleImportAudio,
         handleSaveCompilation,
         handleSaveCompilationConfirm,
         handleSaveCompilationCancel: () => setSaveNaming(false),

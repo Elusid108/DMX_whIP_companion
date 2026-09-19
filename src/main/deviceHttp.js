@@ -148,6 +148,22 @@ const postIdentify = async (ip, ms = 3000) => {
 
 const postReboot = async (ip) => postForm(ip, '/reboot', {});
 
+const sidecarPath = (dmxPath) => {
+    const parsed = path.parse(dmxPath);
+    return path.join(parsed.dir, `${parsed.name}.json`);
+};
+
+const readLocalTitle = (dmxPath) => {
+    try {
+        const raw = fs.readFileSync(sidecarPath(dmxPath), 'utf8');
+        const parsed = JSON.parse(raw);
+        const name = parsed && typeof parsed.name === 'string' ? parsed.name.trim() : '';
+        return name;
+    } catch (err) {
+        return '';
+    }
+};
+
 const destUploadPath = (filePath) => {
     const trimmed = String(path.parse(filePath).name || '').trim().replace(/\.dmx$/i, '');
     const base = trimmed.replace(INVALID_NAME, '').replace(/[. ]+$/g, '') || 'show';
@@ -378,17 +394,29 @@ const postUpload = (ip, filePath, onProgress) => {
         return mapNodeError(result.json, result.statusCode);
     };
 
+    const finishUpload = async (result) => {
+        const uploaded = mapResult(result);
+        if (uploaded.success) {
+            const dest = (uploaded.result && uploaded.result.path) || destPath;
+            const name = readLocalTitle(filePath);
+            if (name) {
+                await postForm(ip, '/meta', { path: dest, name });
+            }
+        }
+        return uploaded;
+    };
+
     return (async () => {
         try {
             const result = await sendTo(ip);
             result.via = ip;
-            return mapResult(result);
+            return finishUpload(result);
         } catch (err) {
             if (ip !== SOFTAP_IP && isImmediateConnectFail(err) && lastSent === 0) {
                 try {
                     const result = await sendTo(SOFTAP_IP);
                     result.via = SOFTAP_IP;
-                    return mapResult(result);
+                    return finishUpload(result);
                 } catch (apErr) {
                     emit({ phase: 'error', sent: lastSent, total: lastTotal });
                     return uploadFail(apErr, lastSent, lastTotal);

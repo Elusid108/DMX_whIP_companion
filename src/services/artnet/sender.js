@@ -34,14 +34,18 @@ class ArtNetSender {
         });
     }
 
-    async send(universe, dmxData) {
+    async send(universe, dmxData, destIp) {
         if (!this.socket) {
             throw new Error('Art-Net sender not initialized');
         }
 
+        const dest = typeof destIp === 'string' && destIp.trim()
+            ? destIp.trim()
+            : '255.255.255.255';
+
         return new Promise((resolve, reject) => {
             const packet = createArtNetDmxPacket(universe, dmxData);
-            this.socket.send(packet, 6454, '255.255.255.255', (err) => {
+            this.socket.send(packet, 6454, dest, (err) => {
                 if (err) reject(err);
                 else resolve();
             });

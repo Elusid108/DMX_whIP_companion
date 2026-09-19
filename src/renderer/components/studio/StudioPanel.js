@@ -137,11 +137,32 @@ const StudioPanel = ({
                 isIdle: session.isIdle,
                 loadError: session.loadError,
                 clips: session.clips,
+                audioClips: session.audioClips,
+                audioMedia: session.audioMedia,
+                trackCount: session.trackCount,
+                isPlaying: session.isPlaying,
+                isPaused: session.isPaused,
                 onSeek: session.handleSeek,
                 onSplit: session.handleSplit,
                 onCutRange: session.handleCutRange,
-                onReorderClip: session.handleReorderClip,
-                onTrimClip: session.handleTrimClip
+                onMoveClip: session.handleMoveClip,
+                onTrimClip: session.handleTrimClip,
+                onAddTrack: session.handleAddTrack,
+                onInspectClip: session.handleInspectClip,
+                onInspectApply: session.handleInspectApply,
+                inspector: session.inspector,
+                onCloseInspector: session.handleCloseInspector,
+                onImportAudio: session.handleImportAudio,
+                onPlay: session.handlePlay,
+                onPause: session.handlePause,
+                onStop: session.handleStopPlayback,
+                onBack: session.handleBack,
+                onNext: session.handleNext
+            }),
+            React.createElement('audio', {
+                ref: session.audioRef,
+                className: 'hidden',
+                preload: 'auto'
             }),
             React.createElement('div', {
                 className: 'timeline-footer'

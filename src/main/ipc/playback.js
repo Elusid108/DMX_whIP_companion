@@ -15,10 +15,17 @@ const {
     publicClips,
     splitClips,
     trimClip,
-    reorderClips,
+    moveClip,
+    updateClip,
     rangeCutClips,
-    serializeClips
+    serializeClips,
+    serializeAudioClips,
+    timelineDurationMs,
+    trackCountOf,
+    inspectClip
 } = require('../../services/shared/compilationEdl');
+const { describeWav } = require('../../services/shared/audioWav');
+const { convertToStudioWav, tempWavPath } = require('../audioConvert');
 const {
     ensureLibrary,
     uniqueDmxPath,
@@ -29,6 +36,9 @@ const {
 } = require('./library');
 
 const IMMEDIATE_MS = 4;
+const AUDIO_FILTERS = [
+    { name: 'Audio', extensions: ['wav', 'aiff', 'aif', 'mp3', 'm4a', 'flac', 'ogg'] }
+];
 
 function setupPlaybackHandlers(mainWindow) {
     let playbackData = null;
@@ -62,7 +72,11 @@ function setupPlaybackHandlers(mainWindow) {
             media: {},
             mediaBytes: {},
             clips: [],
-            skipped: []
+            skipped: [],
+            trackCount: 1,
+            audioClips: [],
+            audioMedia: {},
+            audioBytes: {}
         };
     }
 
@@ -79,6 +93,11 @@ function setupPlaybackHandlers(mainWindow) {
         }
         return playbackData[playbackData.length - 1].timestamp;
     };
+
+    const timelineEndMs = () => Math.max(
+        clipDurationMs(),
+        timelineDurationMs(editSession.clips, editSession.audioClips)
+    );
 
     const elapsedMs = () => Number((process.hrtime.bigint() - playbackOriginNs) / 1000000n);
 
@@ -110,7 +129,7 @@ function setupPlaybackHandlers(mainWindow) {
             if (frame.timestamp > timeMs) {
                 break;
             }
-            latest.set(`${frame.protocol}:${frame.universe}`, frame);
+            latest.set(`${frame.protocol}:${frame.universe}:${frame.destIp || ''}`, frame);
         }
         return [...latest.values()];
     };
@@ -141,6 +160,18 @@ function setupPlaybackHandlers(mainWindow) {
             sacnOutput.close();
             sacnOutput = null;
         }
+    };
+
+    const publicAudioMedia = () => {
+        const out = {};
+        for (const [id, media] of Object.entries(editSession.audioMedia)) {
+            out[id] = {
+                durationMs: media.durationMs,
+                peaksL: media.peaksL,
+                peaksR: media.peaksR
+            };
+        }
+        return out;
     };
 
     const emitStats = (extra = {}) => {
@@ -212,14 +243,14 @@ function setupPlaybackHandlers(mainWindow) {
         }
         if (frame.protocol === 'artnet') {
             if (artnetSender) {
-                artnetSender.send(frame.universe, frame.data).catch((err) => {
+                artnetSender.send(frame.universe, frame.data, frame.destIp).catch((err) => {
                     console.error('Art-Net playback send error:', err);
                 });
             }
             return;
         }
         if (sacnOutput) {
-            sacnOutput.send(frame.universe, frame.data);
+            sacnOutput.send(frame.universe, frame.data, frame.destIp);
         }
     };
 
@@ -281,7 +312,7 @@ function setupPlaybackHandlers(mainWindow) {
             emitStats();
         }
 
-        if (currentPlaybackFrame >= playbackData.length) {
+        if (elapsed >= timelineEndMs()) {
             if (loopEnabled) {
                 currentPlaybackFrame = 0;
                 lastSentFrame = null;
@@ -292,6 +323,12 @@ function setupPlaybackHandlers(mainWindow) {
                 return;
             }
             stopPlaybackInternal(true);
+            return;
+        }
+
+        if (currentPlaybackFrame >= playbackData.length) {
+            const remaining = timelineEndMs() - elapsed;
+            armTick(Math.min(100, Math.max(16, remaining)));
             return;
         }
 
@@ -322,7 +359,7 @@ function setupPlaybackHandlers(mainWindow) {
     };
 
     const applySeek = (timeMs) => {
-        const duration = clipDurationMs();
+        const duration = timelineEndMs();
         const t = Math.max(0, Math.min(Math.round(Number(timeMs) || 0), duration));
         currentPlaybackFrame = firstFrameAfter(t);
         pausedElapsed = t;
@@ -376,7 +413,11 @@ function setupPlaybackHandlers(mainWindow) {
         projectPath: editSession.projectPath,
         displayName: editSession.name,
         frameCount: playbackData ? playbackData.length : 0,
+        durationMs: timelineEndMs(),
         clips: publicClips(editSession.clips),
+        audioClips: publicClips(editSession.audioClips),
+        audioMedia: publicAudioMedia(),
+        trackCount: Math.max(editSession.trackCount, trackCountOf(editSession.clips, 1)),
         dirty: editSession.dirty,
         skipped: editSession.skipped,
         ...extra
@@ -390,26 +431,54 @@ function setupPlaybackHandlers(mainWindow) {
     const emitCompilationUpdated = () => {
         sendSafe('compilation-updated', {
             clips: publicClips(editSession.clips),
+            audioClips: publicClips(editSession.audioClips),
+            audioMedia: publicAudioMedia(),
+            trackCount: Math.max(editSession.trackCount, trackCountOf(editSession.clips, 1)),
             dirty: editSession.dirty,
             name: editSession.name,
             projectPath: editSession.projectPath,
-            frameCount: playbackData ? playbackData.length : 0
+            frameCount: playbackData ? playbackData.length : 0,
+            durationMs: timelineEndMs()
         });
     };
 
-    const addMediaFromBuffer = (fileData, name) => {
+    const addMediaFromBuffer = (fileData, name, startMs) => {
         const frames = parseRecording(fileData);
         const mediaId = newId();
         editSession.media[mediaId] = frames;
         editSession.mediaBytes[mediaId] = fileData;
+        const duration = mediaDurationMs(frames);
+        const start = startMs != null ? startMs : timelineDurationMs(editSession.clips);
         editSession.clips.push({
             id: newId(),
             name: name || 'Look',
             mediaId,
+            trackId: 0,
+            startMs: start,
             sourceInMs: 0,
-            sourceOutMs: mediaDurationMs(frames)
+            sourceOutMs: duration,
+            universeOffset: 0,
+            channelOffset: 0,
+            destIp: ''
         });
         return mediaId;
+    };
+
+    const rememberAudio = (mediaId, filePath, bytes) => {
+        const info = describeWav(bytes);
+        editSession.audioMedia[mediaId] = {
+            durationMs: info.durationMs,
+            peaksL: info.peaksL,
+            peaksR: info.peaksR,
+            filePath
+        };
+        editSession.audioBytes[mediaId] = bytes;
+        return info;
+    };
+
+    const resolveAudioPath = (mediaId) => {
+        const media = editSession.audioMedia[mediaId];
+        return media && media.filePath ? media.filePath : null;
     };
 
     const loadFromPath = async (filePath, displayName) => {
@@ -418,7 +487,7 @@ function setupPlaybackHandlers(mainWindow) {
         editSession = emptyEditSession();
         editSession.kind = 'compilation';
         editSession.name = label;
-        addMediaFromBuffer(fileData, label);
+        addMediaFromBuffer(fileData, label, 0);
         applyFlattenedPlayback();
         const result = sessionPayload({ filePath, sourcePath: filePath });
         sendSafe('file-loaded', result);
@@ -466,27 +535,67 @@ function setupPlaybackHandlers(mainWindow) {
         editSession.notes = (raw && raw.notes) || '';
         editSession.projectPath = dirPath;
         const clips = Array.isArray(raw && raw.clips) ? raw.clips : [];
+        let cursor = 0;
         for (const clip of clips) {
             const mediaPath = path.join(dirPath, 'media', `${clip.mediaId}.dmx`);
             const fileData = await fs.promises.readFile(mediaPath);
             editSession.media[clip.mediaId] = parseRecording(fileData);
             editSession.mediaBytes[clip.mediaId] = fileData;
+            const sourceInMs = Number(clip.sourceInMs) || 0;
+            const sourceOutMs = Number(clip.sourceOutMs) || mediaDurationMs(editSession.media[clip.mediaId]);
+            const duration = Math.max(0, sourceOutMs - sourceInMs);
+            const hasStart = clip.startMs != null && clip.startMs !== '';
+            const startMs = hasStart ? Math.max(0, Number(clip.startMs) || 0) : cursor;
             editSession.clips.push({
                 id: clip.id || newId(),
                 name: clip.name || 'Look',
                 mediaId: clip.mediaId,
-                sourceInMs: Number(clip.sourceInMs) || 0,
-                sourceOutMs: Number(clip.sourceOutMs) || mediaDurationMs(editSession.media[clip.mediaId])
+                trackId: Math.max(0, Math.round(Number(clip.trackId) || 0)),
+                startMs,
+                sourceInMs,
+                sourceOutMs,
+                universeOffset: Math.round(Number(clip.universeOffset) || 0),
+                channelOffset: Math.round(Number(clip.channelOffset) || 0),
+                destIp: typeof clip.destIp === 'string' ? clip.destIp : ''
             });
+            cursor = startMs + duration;
         }
         if (editSession.clips.length === 0) {
             throw new Error('Compilation has no clips');
+        }
+        editSession.trackCount = Math.max(
+            Number(raw.trackCount) || 1,
+            trackCountOf(editSession.clips, 1)
+        );
+        const audioClips = Array.isArray(raw && raw.audioClips) ? raw.audioClips : [];
+        for (const clip of audioClips) {
+            const audioPath = path.join(dirPath, 'audio', `${clip.mediaId}.wav`);
+            const bytes = await fs.promises.readFile(audioPath);
+            rememberAudio(clip.mediaId, audioPath, bytes);
+            const sourceInMs = Number(clip.sourceInMs) || 0;
+            const sourceOutMs = Number(clip.sourceOutMs) || editSession.audioMedia[clip.mediaId].durationMs;
+            editSession.audioClips.push({
+                id: clip.id || newId(),
+                name: clip.name || 'Audio',
+                mediaId: clip.mediaId,
+                startMs: Math.max(0, Number(clip.startMs) || 0),
+                sourceInMs,
+                sourceOutMs
+            });
         }
         editSession.dirty = false;
         applyFlattenedPlayback();
         const result = sessionPayload({ filePath: dirPath });
         sendSafe('file-loaded', result);
         return result;
+    };
+
+    const audioDurationMap = () => {
+        const map = {};
+        for (const [id, media] of Object.entries(editSession.audioMedia)) {
+            map[id] = { durationMs: media.durationMs };
+        }
+        return map;
     };
 
     ipcMain.removeHandler('load-recording');
@@ -500,7 +609,7 @@ function setupPlaybackHandlers(mainWindow) {
                     properties: ['openFile']
                 });
 
-                if (canceled || !filePaths || filePaths.length === 0) {
+                if (canceled || !filePaths || !filePaths.length) {
                     const result = { success: false, error: 'No file selected' };
                     sendSafe('file-loaded', result);
                     return result;
@@ -529,7 +638,11 @@ function setupPlaybackHandlers(mainWindow) {
                 return {
                     success: true,
                     ...overview,
-                    clips: publicClips(editSession.clips)
+                    durationMs: Math.max(overview.durationMs || 0, timelineEndMs()),
+                    clips: publicClips(editSession.clips),
+                    audioClips: publicClips(editSession.audioClips),
+                    audioMedia: publicAudioMedia(),
+                    trackCount: Math.max(editSession.trackCount, trackCountOf(editSession.clips, 1))
                 };
             }
             const filePath = payload && payload.filePath;
@@ -564,6 +677,65 @@ function setupPlaybackHandlers(mainWindow) {
         }
     });
 
+    ipcMain.removeHandler('inspect-clip');
+    ipcMain.handle('inspect-clip', async (event, payload = {}) => {
+        try {
+            const clip = editSession.clips.find((item) => item.id === payload.clipId);
+            if (!clip) {
+                throw new Error('Clip not found');
+            }
+            return { success: true, clip: inspectClip(editSession.media, clip) };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.removeHandler('import-audio');
+    ipcMain.handle('import-audio', async (event, payload = {}) => {
+        try {
+            if (editSession.kind !== 'compilation' || editSession.clips.length === 0) {
+                throw new Error('Load a look or compilation first');
+            }
+            let filePath = payload && payload.filePath;
+            if (!filePath) {
+                const { filePaths, canceled } = await dialog.showOpenDialog({
+                    title: 'Import audio',
+                    filters: AUDIO_FILTERS,
+                    properties: ['openFile']
+                });
+                if (canceled || !filePaths || !filePaths.length) {
+                    return { success: false, error: 'No file selected' };
+                }
+                filePath = filePaths[0];
+            }
+            const mediaId = newId();
+            const dest = tempWavPath(mediaId);
+            await convertToStudioWav(filePath, dest);
+            const bytes = await fs.promises.readFile(dest);
+            const info = rememberAudio(mediaId, dest, bytes);
+            const startMs = Math.max(0, Math.round(Number(payload.startMs) || 0));
+            editSession.audioClips.push({
+                id: newId(),
+                name: path.parse(filePath).name || 'Audio',
+                mediaId,
+                startMs,
+                sourceInMs: 0,
+                sourceOutMs: info.durationMs
+            });
+            editSession.dirty = true;
+            emitCompilationUpdated();
+            return {
+                success: true,
+                audioClips: publicClips(editSession.audioClips),
+                audioMedia: publicAudioMedia(),
+                dirty: true
+            };
+        } catch (error) {
+            console.error('Error importing audio:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.removeHandler('edit-compilation');
     ipcMain.handle('edit-compilation', async (event, payload = {}) => {
         try {
@@ -571,30 +743,62 @@ function setupPlaybackHandlers(mainWindow) {
                 throw new Error('No compilation is loaded');
             }
             const op = payload.op;
+            const target = payload.target === 'audio' ? 'audio' : 'light';
             if (op === 'trim') {
-                editSession.clips = trimClip(
-                    editSession.clips,
-                    payload.clipId,
-                    payload.edge,
-                    payload.sourceMs,
-                    editSession.media
-                );
+                if (target === 'audio') {
+                    editSession.audioClips = trimClip(
+                        editSession.audioClips,
+                        payload.clipId,
+                        payload.edge,
+                        payload.sourceMs,
+                        audioDurationMap()
+                    );
+                } else {
+                    editSession.clips = trimClip(
+                        editSession.clips,
+                        payload.clipId,
+                        payload.edge,
+                        payload.sourceMs,
+                        editSession.media
+                    );
+                }
             } else if (op === 'split') {
                 editSession.clips = splitClips(editSession.clips, payload.timeMs);
-            } else if (op === 'reorder') {
-                editSession.clips = reorderClips(
-                    editSession.clips,
-                    payload.fromIndex,
-                    payload.toIndex
-                );
+                editSession.audioClips = splitClips(editSession.audioClips, payload.timeMs);
+            } else if (op === 'move') {
+                if (target === 'audio') {
+                    editSession.audioClips = moveClip(
+                        editSession.audioClips,
+                        payload.clipId,
+                        payload.startMs,
+                        0
+                    );
+                } else {
+                    const nextTrack = Math.max(0, Math.round(Number(payload.trackId) || 0));
+                    if (nextTrack >= editSession.trackCount) {
+                        editSession.trackCount = nextTrack + 1;
+                    }
+                    editSession.clips = moveClip(
+                        editSession.clips,
+                        payload.clipId,
+                        payload.startMs,
+                        nextTrack
+                    );
+                }
+            } else if (op === 'update') {
+                editSession.clips = updateClip(editSession.clips, payload.clipId, payload.patch || {});
+            } else if (op === 'add-track') {
+                editSession.trackCount += 1;
             } else if (op === 'cut') {
                 editSession.clips = rangeCutClips(editSession.clips, payload.fromMs, payload.toMs);
+                editSession.audioClips = rangeCutClips(editSession.audioClips, payload.fromMs, payload.toMs);
             } else {
                 throw new Error('Unknown edit');
             }
             if (editSession.clips.length === 0) {
                 throw new Error('That edit would remove every clip');
             }
+            editSession.trackCount = Math.max(editSession.trackCount, trackCountOf(editSession.clips, 1));
             editSession.dirty = true;
             const keepMs = Number(payload.keepPlayheadMs);
             playbackData = flattenToFrames(editSession.media, editSession.clips);
@@ -602,7 +806,7 @@ function setupPlaybackHandlers(mainWindow) {
                 applySeek(keepMs);
             }
             emitCompilationUpdated();
-            return { success: true, clips: publicClips(editSession.clips), dirty: true };
+            return sessionPayload();
         } catch (error) {
             return { success: false, error: error.message };
         }
@@ -619,10 +823,9 @@ function setupPlaybackHandlers(mainWindow) {
             let dest = editSession.projectPath;
             if (!dest || !fs.existsSync(dest)) {
                 dest = uniqueCompPath(dir, name);
-                fs.mkdirSync(path.join(dest, 'media'), { recursive: true });
-            } else {
-                fs.mkdirSync(path.join(dest, 'media'), { recursive: true });
             }
+            fs.mkdirSync(path.join(dest, 'media'), { recursive: true });
+            fs.mkdirSync(path.join(dest, 'audio'), { recursive: true });
             const mediaIds = new Set(editSession.clips.map((clip) => clip.mediaId));
             for (const mediaId of mediaIds) {
                 const mediaPath = path.join(dest, 'media', `${mediaId}.dmx`);
@@ -632,12 +835,26 @@ function setupPlaybackHandlers(mainWindow) {
                     writeRecording(mediaPath, editSession.media[mediaId] || []);
                 }
             }
+            const audioIds = new Set(editSession.audioClips.map((clip) => clip.mediaId));
+            for (const mediaId of audioIds) {
+                const audioPath = path.join(dest, 'audio', `${mediaId}.wav`);
+                if (editSession.audioBytes[mediaId]) {
+                    fs.writeFileSync(audioPath, editSession.audioBytes[mediaId]);
+                } else if (editSession.audioMedia[mediaId] && editSession.audioMedia[mediaId].filePath) {
+                    fs.copyFileSync(editSession.audioMedia[mediaId].filePath, audioPath);
+                }
+                if (editSession.audioMedia[mediaId]) {
+                    editSession.audioMedia[mediaId].filePath = audioPath;
+                }
+            }
             const project = {
                 version: 1,
                 kind: 'compilation',
                 name,
                 notes: typeof payload.notes === 'string' ? payload.notes : editSession.notes,
-                clips: serializeClips(editSession.clips)
+                trackCount: Math.max(editSession.trackCount, trackCountOf(editSession.clips, 1)),
+                clips: serializeClips(editSession.clips),
+                audioClips: serializeAudioClips(editSession.audioClips)
             };
             fs.writeFileSync(path.join(dest, 'project.json'), `${JSON.stringify(project, null, 2)}\n`);
             editSession.name = name;
@@ -656,13 +873,14 @@ function setupPlaybackHandlers(mainWindow) {
     ipcMain.removeHandler('export-flattened');
     ipcMain.handle('export-flattened', async (event, payload = {}) => {
         try {
-            if (!playbackData || playbackData.length === 0) {
+            const frames = flattenToFrames(editSession.media, editSession.clips, { ignoreDest: true });
+            if (!frames.length) {
                 throw new Error('Nothing to export');
             }
             const dir = ensureLibrary();
             const name = sanitizeBaseName(payload.name || `${editSession.name || 'Stack'} flat`);
             const filePath = uniqueDmxPath(dir, name);
-            writeRecording(filePath, playbackData);
+            writeRecording(filePath, frames);
             writeSidecar(filePath, { name, notes: payload.notes || '' });
             sendSafe('library-updated', listLibrary());
             return { success: true, filePath };
@@ -702,7 +920,7 @@ function setupPlaybackHandlers(mainWindow) {
 
         try {
             let startMs = pausedElapsed;
-            const duration = clipDurationMs();
+            const duration = timelineEndMs();
             if (startMs >= duration) {
                 startMs = 0;
             }
@@ -759,6 +977,8 @@ function setupPlaybackHandlers(mainWindow) {
         editSession = emptyEditSession();
         sendSafe('file-loaded', { success: true, filePath: null, cleared: true });
     });
+
+    return { resolveAudioPath };
 }
 
 module.exports = setupPlaybackHandlers;

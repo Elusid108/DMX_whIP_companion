@@ -1,5 +1,20 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, protocol, net } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const { pathToFileURL } = require('url');
+
+protocol.registerSchemesAsPrivileged([
+    {
+        scheme: 'compmedia',
+        privileges: {
+            standard: true,
+            secure: true,
+            supportFetchAPI: true,
+            stream: true,
+            corsEnabled: true
+        }
+    }
+]);
 const setupNetworkHandlers = require('./ipc/network');
 const setupRecordingHandlers = require('./ipc/recording');
 const setupPlaybackHandlers = require('./ipc/playback');
@@ -82,7 +97,20 @@ function createWindow() {
 
     const recordingHandler = setupRecordingHandlers(mainWindow);
     const cleanupNetwork = setupNetworkHandlers(mainWindow, recordingHandler);
-    setupPlaybackHandlers(mainWindow);
+    const playback = setupPlaybackHandlers(mainWindow);
+    protocol.handle('compmedia', (request) => {
+        try {
+            const parsed = new URL(request.url);
+            const id = decodeURIComponent((parsed.hostname || parsed.pathname || '').replace(/\//g, ''));
+            const filePath = playback && playback.resolveAudioPath ? playback.resolveAudioPath(id) : null;
+            if (!filePath || !fs.existsSync(filePath)) {
+                return new Response('Not found', { status: 404 });
+            }
+            return net.fetch(pathToFileURL(filePath).href);
+        } catch (err) {
+            return new Response('Bad request', { status: 400 });
+        }
+    });
     const cleanupLibrary = setupLibraryHandlers(mainWindow, recordingHandler);
     const cleanupSettings = setupSettingsHandlers();
     const cleanupFlash = setupFirmwareFlashHandlers(mainWindow);

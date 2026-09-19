@@ -159,6 +159,75 @@
       bg-zinc-50 dark:bg-zinc-900;
   }
 
+  .timeline-clips.is-ghost,
+  .timeline-header-sm.is-ghost {
+    @apply text-[11px] text-zinc-400 dark:text-zinc-500;
+  }
+
+  .timeline-clip-stack {
+    @apply relative flex-none;
+  }
+
+  .timeline-header-sm {
+    @apply flex items-center px-2.5 h-7 flex-none border-b border-r
+      border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-left
+      text-[11px] text-zinc-600 dark:text-zinc-300;
+  }
+
+  .timeline-header-audio {
+    @apply flex items-center px-2.5 h-10 flex-none border-b border-r
+      border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-left
+      text-[11px] text-zinc-600 dark:text-zinc-300;
+  }
+
+  .timeline-corner-spacer {
+    @apply h-7 flex-none border-b border-zinc-200 dark:border-zinc-800
+      bg-zinc-50 dark:bg-zinc-900;
+  }
+
+  .timeline-audio-stack {
+    @apply relative flex-none;
+    height: 80px;
+  }
+
+  .timeline-audio-row {
+    @apply relative h-10 flex-none border-b border-zinc-200 dark:border-zinc-800
+      bg-zinc-100 dark:bg-zinc-950;
+  }
+
+  .timeline-audio-block {
+    @apply absolute top-1 bottom-1 flex items-center rounded-sm
+      bg-amber-400/15 border border-amber-400/40 text-amber-900 dark:text-amber-100
+      overflow-hidden cursor-grab select-none z-[1];
+    height: 72px;
+    top: 4px;
+  }
+
+  .timeline-audio-block.is-active {
+    @apply border-amber-300 bg-amber-400/25;
+  }
+
+  .timeline-inspector {
+    @apply fixed z-20 w-72 rounded-md border border-zinc-200 dark:border-zinc-700
+      bg-white dark:bg-zinc-900 p-3 shadow-lg text-xs;
+  }
+
+  .timeline-inspector-field {
+    @apply flex flex-col gap-0.5 mb-2 text-[10px] uppercase tracking-wide text-zinc-500;
+  }
+
+  .timeline-inspector-meta {
+    @apply grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[11px] text-zinc-500 mb-1;
+  }
+
+  .timeline-inspector-meta dt {
+    @apply text-zinc-400;
+  }
+
+  .timeline-inspector-meta dd {
+    @apply text-zinc-700 dark:text-zinc-200 text-right;
+  }
+
   .timeline-block {
     @apply absolute top-1 bottom-1 flex items-center rounded-sm
       bg-cyan-500/20 border border-cyan-500/50 text-cyan-800 dark:text-cyan-100

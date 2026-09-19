@@ -23,6 +23,8 @@ const INVOKE = new Set([
     'load-recording',
     'load-compilation',
     'edit-compilation',
+    'inspect-clip',
+    'import-audio',
     'save-compilation',
     'export-flattened',
     'timeline-overview',

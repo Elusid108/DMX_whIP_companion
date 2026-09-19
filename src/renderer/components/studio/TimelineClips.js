@@ -2,24 +2,29 @@ const React = require('react');
 const { useRef, useState } = React;
 
 const EDGE = 7;
+const ROW_H = 28;
 
 const TimelineClips = ({
     clips,
+    trackCount,
     pixelsPerSecond,
     durationMs,
     selectedId,
     range,
     onSelect,
-    onReorder,
+    onMove,
     onTrim,
-    onRangeChange
+    onRangeChange,
+    onInspect,
+    onAddTrack
 }) => {
-    const rowRef = useRef(null);
+    const stackRef = useRef(null);
     const dragRef = useRef(null);
     const [preview, setPreview] = useState(null);
 
+    const rows = Math.max(1, trackCount || 1);
     const timeFromClientX = (clientX) => {
-        const node = rowRef.current;
+        const node = stackRef.current;
         if (!node) {
             return 0;
         }
@@ -28,9 +33,19 @@ const TimelineClips = ({
         return Math.max(0, Math.min(durationMs, (x / pixelsPerSecond) * 1000));
     };
 
+    const trackFromClientY = (clientY, originTrack) => {
+        const node = stackRef.current;
+        if (!node) {
+            return originTrack;
+        }
+        const rect = node.getBoundingClientRect();
+        const index = Math.floor((clientY - rect.top) / ROW_H);
+        return Math.max(0, Math.min(rows, index));
+    };
+
     const displayClips = preview && preview.clips ? preview.clips : (clips || []);
 
-    const onPointerDown = (event, clip, index, edge) => {
+    const onPointerDown = (event, clip, edge) => {
         if (event.button !== 0) {
             return;
         }
@@ -51,14 +66,18 @@ const TimelineClips = ({
                 edge,
                 startX: event.clientX,
                 sourceInMs: clip.sourceInMs,
-                sourceOutMs: clip.sourceOutMs
+                sourceOutMs: clip.sourceOutMs,
+                startMs: clip.startMs
             };
             return;
         }
         dragRef.current = {
             kind: 'move',
-            fromIndex: index,
-            startX: event.clientX
+            clipId: clip.id,
+            startX: event.clientX,
+            startY: event.clientY,
+            startMs: clip.startMs || 0,
+            trackId: clip.trackId || 0
         };
     };
 
@@ -78,33 +97,33 @@ const TimelineClips = ({
         }
         if (drag.kind === 'trim') {
             const deltaMs = ((event.clientX - drag.startX) / pixelsPerSecond) * 1000;
-            const next = drag.edge === 'in'
-                ? drag.sourceInMs + deltaMs
-                : drag.sourceOutMs + deltaMs;
             setPreview({
                 clips: (clips || []).map((clip) => {
                     if (clip.id !== drag.clipId) {
                         return clip;
                     }
                     if (drag.edge === 'in') {
-                        return { ...clip, sourceInMs: Math.min(next, clip.sourceOutMs) };
+                        const sourceInMs = Math.min(drag.sourceInMs + deltaMs, clip.sourceOutMs);
+                        return {
+                            ...clip,
+                            sourceInMs,
+                            startMs: Math.max(0, drag.startMs + (sourceInMs - drag.sourceInMs))
+                        };
                     }
-                    return { ...clip, sourceOutMs: Math.max(next, clip.sourceInMs) };
+                    return { ...clip, sourceOutMs: Math.max(drag.sourceOutMs + deltaMs, clip.sourceInMs) };
                 })
             });
             return;
         }
         if (drag.kind === 'move') {
-            const t = timeFromClientX(event.clientX);
-            let dest = (clips || []).length;
-            for (let i = 0; i < (clips || []).length; i += 1) {
-                const mid = (clips[i].startMs + clips[i].endMs) / 2;
-                if (t < mid) {
-                    dest = i;
-                    break;
-                }
-            }
-            setPreview({ dest, fromIndex: drag.fromIndex });
+            const deltaMs = ((event.clientX - drag.startX) / pixelsPerSecond) * 1000;
+            const startMs = Math.max(0, drag.startMs + deltaMs);
+            const trackId = trackFromClientY(event.clientY, drag.trackId);
+            setPreview({
+                clips: (clips || []).map((clip) => (
+                    clip.id === drag.clipId ? { ...clip, startMs, trackId } : clip
+                ))
+            });
         }
     };
 
@@ -124,26 +143,23 @@ const TimelineClips = ({
             }
             return;
         }
-        if (drag.kind === 'move' && nextPreview && nextPreview.dest != null && onReorder) {
-            let dest = nextPreview.dest;
-            if (dest > drag.fromIndex) {
-                dest -= 1;
+        if (drag.kind === 'move' && nextPreview && nextPreview.clips && onMove) {
+            const clip = nextPreview.clips.find((item) => item.id === drag.clipId);
+            if (!clip) {
+                return;
             }
-            if (dest !== drag.fromIndex) {
-                onReorder(drag.fromIndex, dest);
-            }
+            onMove(clip.id, clip.startMs, clip.trackId);
         }
     };
 
-    if (!clips || clips.length === 0 || durationMs <= 0) {
-        return React.createElement('div', {
-            className: 'timeline-clips'
-        });
-    }
+    const rowCount = Math.max(rows, preview && preview.clips
+        ? preview.clips.reduce((max, clip) => Math.max(max, (clip.trackId || 0) + 1), rows)
+        : rows);
 
     return React.createElement('div', {
-        ref: rowRef,
-        className: 'timeline-clips',
+        ref: stackRef,
+        className: 'timeline-clip-stack',
+        style: { height: `${rowCount * ROW_H}px` },
         onPointerMove,
         onPointerUp,
         onPointerCancel: onPointerUp
@@ -155,36 +171,40 @@ const TimelineClips = ({
                 width: `${((range.endMs - range.startMs) / 1000) * pixelsPerSecond}px`
             }
         }),
-        displayClips.map((clip, index) => {
-            const start = clip.startMs != null
-                ? clip.startMs
-                : displayClips.slice(0, index).reduce((sum, item) => (
-                    sum + Math.max(0, (item.sourceOutMs || 0) - (item.sourceInMs || 0))
-                ), 0);
+        Array.from({ length: rowCount }, (_, trackId) => React.createElement('div', {
+            key: `row-${trackId}`,
+            className: 'timeline-clips'
+        })),
+        displayClips.map((clip) => {
+            const start = clip.startMs || 0;
             const widthMs = Math.max(0, (clip.sourceOutMs || 0) - (clip.sourceInMs || 0));
             const left = (start / 1000) * pixelsPerSecond;
             const width = Math.max(8, (widthMs / 1000) * pixelsPerSecond);
-            const moving = preview && preview.fromIndex === index && preview.dest != null;
+            const top = ((clip.trackId || 0) * ROW_H) + 2;
             return React.createElement('div', {
                 key: clip.id,
-                className: `timeline-block ${selectedId === clip.id ? 'is-active' : ''} ${moving ? 'is-moving' : ''}`,
-                style: { left: `${left}px`, width: `${width}px` },
+                className: `timeline-block ${selectedId === clip.id ? 'is-active' : ''}`,
+                style: { left: `${left}px`, width: `${width}px`, top: `${top}px`, height: `${ROW_H - 4}px` },
+                onContextMenu: (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onSelect(clip.id);
+                    if (onInspect) {
+                        onInspect(clip, { x: event.clientX, y: event.clientY });
+                    }
+                },
                 onPointerDown: (event) => {
                     const rect = event.currentTarget.getBoundingClientRect();
                     const x = event.clientX - rect.left;
                     const edge = x <= EDGE ? 'in' : (x >= rect.width - EDGE ? 'out' : null);
-                    onPointerDown(event, clip, index, edge);
+                    onPointerDown(event, clip, edge);
                 }
             },
-                React.createElement('span', {
-                    className: 'timeline-block-edge is-in'
-                }),
+                React.createElement('span', { className: 'timeline-block-edge is-in' }),
                 React.createElement('span', {
                     className: 'truncate px-1.5 text-[10px] font-medium'
                 }, clip.name || 'Clip'),
-                React.createElement('span', {
-                    className: 'timeline-block-edge is-out'
-                })
+                React.createElement('span', { className: 'timeline-block-edge is-out' })
             );
         })
     );
