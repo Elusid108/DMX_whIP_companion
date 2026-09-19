@@ -4,6 +4,7 @@ const INVOKE = new Set([
     'get-network-interfaces',
     'get-settings',
     'set-theme',
+    'open-external-url',
     'library-list',
     'library-new-file',
     'library-inspect',

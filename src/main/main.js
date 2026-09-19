@@ -1,6 +1,5 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
-const { version } = require('../../package.json');
 const setupNetworkHandlers = require('./ipc/network');
 const setupRecordingHandlers = require('./ipc/recording');
 const setupPlaybackHandlers = require('./ipc/playback');
@@ -14,7 +13,7 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1280,
         height: 800,
-        title: `DMX whIP Companion v${version}`,
+        title: 'DMX whIP Companion',
         webPreferences: {
             preload: path.join(__dirname, '../preload.js'),
             contextIsolation: true,

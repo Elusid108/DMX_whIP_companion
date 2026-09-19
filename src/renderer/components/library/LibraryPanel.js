@@ -201,25 +201,6 @@ const LibraryPanel = () => {
         }
     };
 
-    const handleChangeFolder = () => runAction(async () => {
-        const result = await ipcRenderer.invoke('library-choose-dir');
-        if (result && result.success) {
-            setLibraryDir(result.libraryDir || '');
-            applyList(result.shows || []);
-        } else if (result && result.error && result.error !== 'No file selected') {
-            setError(result.error);
-        }
-    });
-
-    const handleImport = () => runAction(async () => {
-        const result = await ipcRenderer.invoke('library-import');
-        if (result && result.success) {
-            setSelectedPath(result.filePath);
-        } else if (result && result.error && result.error !== 'No file selected') {
-            setError(result.error);
-        }
-    });
-
     const handleExport = () => runAction(async () => {
         if (!selectedPath) {
             return;
@@ -331,30 +312,6 @@ const LibraryPanel = () => {
     return React.createElement('div', {
         className: 'flex-1 min-h-0 flex flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950'
     },
-        React.createElement('div', {
-            className: 'app-toolbar justify-between bg-zinc-50 dark:bg-zinc-900'
-        },
-            React.createElement('div', {
-                className: 'text-xs text-zinc-500 truncate',
-                title: libraryDir
-            }, libraryDir || 'Library'),
-            React.createElement('div', {
-                className: 'flex items-center gap-1.5 flex-none'
-            },
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet',
-                    disabled: busy,
-                    onClick: handleChangeFolder
-                }, 'Change folder'),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet',
-                    disabled: busy,
-                    onClick: handleImport
-                }, 'Import')
-            )
-        ),
         error && React.createElement('div', {
             className: 'px-3 pt-2 text-sm text-red-500'
         }, error),

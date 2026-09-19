@@ -3,6 +3,7 @@ const { useState, useEffect, useRef } = React;
 const ipcRenderer = require('../../ipc');
 const DeviceList = require('./DeviceList');
 const DeviceInspector = require('./DeviceInspector');
+const NetworkSelect = require('../controls/NetworkSelect');
 
 const showSortName = (sdPath) => String(sdPath || '')
     .split('/')
@@ -22,7 +23,12 @@ const clampBri = (value) => {
     return Math.max(0, Math.min(255, Math.round(n)));
 };
 
-const DevicesPanel = ({ focusDeviceId } = {}) => {
+const DevicesPanel = ({
+    focusDeviceId,
+    selectedNic,
+    networkInterfaces,
+    onNetworkChange
+} = {}) => {
     const [devices, setDevices] = useState([]);
     const [nic, setNic] = useState({ name: '', ip: '' });
     const [selectedId, setSelectedId] = useState(null);
@@ -519,23 +525,28 @@ const DevicesPanel = ({ focusDeviceId } = {}) => {
         className: 'flex-1 min-h-0 flex flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950'
     },
         React.createElement('div', {
-            className: 'app-toolbar justify-between bg-zinc-50 dark:bg-zinc-900'
-        },
-            React.createElement('div', {
-                className: 'readout truncate'
-            }, nic.ip ? `NIC ${nic.name} · ${nic.ip}` : 'Devices'),
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-quiet',
-                onClick: handleScan
-            }, 'Scan')
-        ),
-        React.createElement('div', {
             className: 'flex flex-1 min-h-0'
         },
             React.createElement('div', {
-                className: 'app-sidebar p-2 overflow-y-auto'
+                className: 'app-sidebar overflow-hidden'
             },
+                React.createElement('div', {
+                    className: 'flex-none p-2 border-b border-zinc-200 dark:border-zinc-800 flex flex-col gap-1.5'
+                },
+                    React.createElement(NetworkSelect, {
+                        selectedNic,
+                        networkInterfaces: networkInterfaces || [],
+                        onChange: onNetworkChange
+                    }),
+                    React.createElement('button', {
+                        type: 'button',
+                        className: 'btn-quiet w-full justify-center',
+                        onClick: handleScan
+                    }, 'Scan')
+                ),
+                React.createElement('div', {
+                    className: 'flex-1 min-h-0 overflow-y-auto p-2'
+                },
                 React.createElement(DeviceList, {
                     devices: devices.map((device) => (
                         device.id === selectedId && nodeName
@@ -551,6 +562,7 @@ const DevicesPanel = ({ focusDeviceId } = {}) => {
                         ipcRenderer.invoke('device-open-portal', { ip: device.ip });
                     }
                 })
+                )
             ),
             React.createElement('div', {
                 className: 'flex-1 p-3 min-h-0 overflow-hidden'

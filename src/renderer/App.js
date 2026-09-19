@@ -5,10 +5,10 @@ const LibraryPanel = require('./components/library/LibraryPanel');
 const DevicesPanel = require('./components/devices/DevicesPanel');
 const FlashPanel = require('./components/flash/FlashPanel');
 const StudioPanel = require('./components/studio/StudioPanel');
+const SettingsMenu = require('./components/controls/SettingsMenu');
 const useUniverseData = require('./hooks/useUniverseData');
 const useDmxMonitor = require('./hooks/useDmxMonitor');
 const ipcRenderer = require('./ipc');
-const { version } = require('../../package.json');
 
 const applyThemeClass = (theme) => {
     const root = document.documentElement;
@@ -96,28 +96,8 @@ const App = () => {
     return React.createElement('div', {
         className: 'h-screen flex flex-col font-sans bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-200'
     },
-        React.createElement('header', {
-            className: 'h-11 flex-none flex items-center justify-between gap-3 px-3 border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900'
-        },
-            React.createElement('div', {
-                className: 'flex items-baseline gap-2 min-w-0'
-            },
-                React.createElement('h1', {
-                    className: 'text-sm font-semibold truncate'
-                }, 'DMX whIP Companion'),
-                React.createElement('span', {
-                    className: 'text-xs text-zinc-500'
-                }, `v${version}`)
-            ),
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-quiet',
-                onClick: handleToggleTheme,
-                title: theme === 'dark' ? 'Light mode' : 'Dark mode'
-            }, theme === 'dark' ? 'Light mode' : 'Dark mode')
-        ),
         React.createElement('div', {
-            className: 'flex-none flex gap-1 px-3 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
+            className: 'flex-none flex items-center gap-1 px-3 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
         },
             React.createElement('button', {
                 type: 'button',
@@ -143,7 +123,11 @@ const App = () => {
                 type: 'button',
                 className: `tab-btn ${mainView === 'flash' ? 'is-active' : ''}`,
                 onClick: () => setMainView('flash')
-            }, 'Flash')
+            }, 'Flash'),
+            React.createElement(SettingsMenu, {
+                theme,
+                onToggleTheme: handleToggleTheme
+            })
         ),
         mainView === 'monitor' && React.createElement('div', {
             className: 'flex flex-1 min-h-0 flex-col'
@@ -224,7 +208,10 @@ const App = () => {
             }
         }),
         mainView === 'devices' && React.createElement(DevicesPanel, {
-            focusDeviceId
+            focusDeviceId,
+            selectedNic,
+            networkInterfaces,
+            onNetworkChange: handleNetworkChange
         })
     );
 };

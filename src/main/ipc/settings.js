@@ -1,5 +1,12 @@
-const { ipcMain } = require('electron');
+const { ipcMain, shell } = require('electron');
 const { loadSettings, saveSettings } = require('../settings');
+
+const ALLOWED_EXTERNAL = new Set([
+    'https://chrismoore.me',
+    'https://chrismoore.me/',
+    'https://www.chrismoore.me',
+    'https://www.chrismoore.me/'
+]);
 
 function setupSettingsHandlers() {
     ipcMain.handle('get-settings', async () => {
@@ -19,9 +26,23 @@ function setupSettingsHandlers() {
         }
     });
 
+    ipcMain.handle('open-external-url', async (event, { url } = {}) => {
+        const href = String(url || '').trim();
+        if (!ALLOWED_EXTERNAL.has(href)) {
+            return { success: false, error: 'URL is not allowed' };
+        }
+        try {
+            await shell.openExternal(href);
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
     return () => {
         ipcMain.removeHandler('get-settings');
         ipcMain.removeHandler('set-theme');
+        ipcMain.removeHandler('open-external-url');
     };
 }
 
