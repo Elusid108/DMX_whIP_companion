@@ -445,10 +445,117 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
     const allSelected = rows.length > 0 && rows.every((row) => row.selected);
 
     return React.createElement('div', {
-        className: 'flex-1 min-h-0 overflow-y-auto bg-zinc-50 dark:bg-zinc-950'
+        className: 'flex-1 min-h-0 flex overflow-hidden bg-zinc-50 dark:bg-zinc-950'
     },
         React.createElement('div', {
-            className: 'h-full flex flex-col max-w-5xl mx-auto w-full min-h-0 p-3 gap-3'
+            className: 'app-sidebar overflow-hidden'
+        },
+            React.createElement('div', {
+                className: 'flex-none flex flex-col gap-1.5 p-2 border-b border-zinc-200 dark:border-zinc-800'
+            },
+                React.createElement('div', {
+                    className: 'flex items-center gap-2'
+                },
+                    React.createElement('input', {
+                        type: 'checkbox',
+                        checked: allSelected,
+                        disabled: batchBusy || !rows.length,
+                        onChange: (event) => toggleAll(event.target.checked),
+                        className: 'h-3.5 w-3.5 accent-cyan-400'
+                    }),
+                    React.createElement('span', {
+                        className: 'text-xs text-zinc-500'
+                    }, 'Select all')
+                ),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet w-full justify-center',
+                    disabled: batchBusy,
+                    onClick: () => refreshPorts()
+                }, 'Refresh ports'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet w-full justify-center',
+                    disabled: batchBusy || !selectedRows.length,
+                    onClick: handleIdentify
+                }, batchBusy ? 'Working…' : `Identify selected (${selectedRows.length})`),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-primary w-full justify-center',
+                    disabled: batchBusy || !selectedRows.length || Boolean(artifactError),
+                    onClick: handleFlash
+                }, batchBusy ? 'Flashing…' : `Flash selected (${selectedRows.length})`)
+            ),
+            React.createElement('div', {
+                className: 'flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-1'
+            },
+                !rows.length && React.createElement('div', {
+                    className: 'text-zinc-500 text-xs italic p-2'
+                }, 'No serial ports. Plug in a board and Refresh.'),
+                rows.map((row, index) => {
+                    const preview = row.name || resolveNodeName(namePattern, row.mac, index).long;
+                    return React.createElement('div', {
+                        key: row.path,
+                        className: `kv-row items-start ${row.selected ? 'is-active' : ''}`
+                    },
+                        React.createElement('input', {
+                            type: 'checkbox',
+                            className: 'mt-0.5 flex-none',
+                            checked: row.selected,
+                            disabled: batchBusy,
+                            onChange: (event) => patchRow(row.path, { selected: event.target.checked })
+                        }),
+                        React.createElement('div', {
+                            className: 'min-w-0 flex-1'
+                        },
+                            React.createElement('div', {
+                                className: 'font-medium truncate text-sm'
+                            }, row.path),
+                            React.createElement('div', {
+                                className: 'readout truncate'
+                            }, row.friendlyName),
+                            React.createElement('div', {
+                                className: 'readout truncate'
+                            }, [row.chip, row.mac].filter(Boolean).join(' · ') || '—'),
+                            React.createElement('div', {
+                                className: 'readout truncate'
+                            }, preview || '—'),
+                            React.createElement('div', {
+                                className: 'h-1.5 mt-1 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden'
+                            },
+                                React.createElement('div', {
+                                    className: 'h-full bg-cyan-600 dark:bg-cyan-400',
+                                    style: { width: `${Math.max(0, Math.min(100, row.percent || 0))}%` }
+                                })
+                            ),
+                            row.label && React.createElement('div', {
+                                className: 'readout mt-1'
+                            }, `${row.label}${row.percent ? ` ${row.percent}%` : ''}`),
+                            row.deviceId && React.createElement('button', {
+                                type: 'button',
+                                className: 'btn-primary mt-1',
+                                onClick: () => onOpenDevice && onOpenDevice(row.deviceId)
+                            }, 'Open in Devices'),
+                            row.error && React.createElement('p', {
+                                className: 'text-xs text-red-500 mt-1'
+                            }, row.error),
+                            row.downloadMode && React.createElement('p', {
+                                className: 'text-xs text-amber-600 dark:text-amber-400 mt-1'
+                            }, 'Hold BOOT, tap RESET, release BOOT.'),
+                            !row.error && row.lastLog && React.createElement('p', {
+                                className: 'readout truncate mt-1'
+                            }, row.lastLog)
+                        )
+                    );
+                })
+            ),
+            React.createElement('pre', {
+                ref: logRef,
+                className: 'flex-none h-[12.5%] overflow-auto border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-2 readout whitespace-pre-wrap'
+            }, log.join('\n') || 'Log output appears here. Passwords are not printed.')
+        ),
+        React.createElement('div', {
+            className: 'flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3'
         },
             React.createElement('div', {
                 className: 'status-strip'
@@ -591,121 +698,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
             }, artifactError),
             error && React.createElement('p', {
                 className: 'text-sm text-red-500'
-            }, error),
-            React.createElement('div', {
-                className: 'flex flex-wrap gap-2'
-            },
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet',
-                    disabled: batchBusy,
-                    onClick: () => refreshPorts()
-                }, 'Refresh ports'),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet',
-                    disabled: batchBusy || !selectedRows.length,
-                    onClick: handleIdentify
-                }, batchBusy ? 'Working…' : `Identify selected (${selectedRows.length})`),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-primary',
-                    disabled: batchBusy || !selectedRows.length || Boolean(artifactError),
-                    onClick: handleFlash
-                }, batchBusy ? 'Flashing…' : `Flash selected (${selectedRows.length})`)
-            ),
-            React.createElement('div', {
-                className: 'overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
-            },
-                React.createElement('table', {
-                    className: 'w-full text-left text-xs'
-                },
-                    React.createElement('thead', {
-                        className: 'text-zinc-500 border-b border-zinc-200 dark:border-zinc-800'
-                    },
-                        React.createElement('tr', null,
-                            React.createElement('th', { className: 'p-2 w-8' },
-                                React.createElement('input', {
-                                    type: 'checkbox',
-                                    checked: allSelected,
-                                    disabled: batchBusy || !rows.length,
-                                    onChange: (event) => toggleAll(event.target.checked)
-                                })
-                            ),
-                            React.createElement('th', { className: 'p-2' }, 'Port'),
-                            React.createElement('th', { className: 'p-2' }, 'Chip / MAC'),
-                            React.createElement('th', { className: 'p-2' }, 'Name'),
-                            React.createElement('th', { className: 'p-2 w-28' }, 'Progress'),
-                            React.createElement('th', { className: 'p-2' }, 'Status')
-                        )
-                    ),
-                    React.createElement('tbody', null,
-                        !rows.length && React.createElement('tr', null,
-                            React.createElement('td', {
-                                colSpan: 6,
-                                className: 'p-3 text-zinc-500 italic'
-                            }, 'No serial ports. Plug in a board and Refresh.')
-                        ),
-                        rows.map((row, index) => {
-                            const preview = row.name || resolveNodeName(namePattern, row.mac, index).long;
-                            return React.createElement('tr', {
-                                key: row.path,
-                                className: 'border-t border-zinc-100 dark:border-zinc-800 align-top'
-                            },
-                                React.createElement('td', { className: 'p-2' },
-                                    React.createElement('input', {
-                                        type: 'checkbox',
-                                        checked: row.selected,
-                                        disabled: batchBusy,
-                                        onChange: (event) => patchRow(row.path, { selected: event.target.checked })
-                                    })
-                                ),
-                                React.createElement('td', { className: 'p-2' },
-                                    React.createElement('div', { className: 'font-medium' }, row.path),
-                                    React.createElement('div', { className: 'readout' }, row.friendlyName)
-                                ),
-                                React.createElement('td', { className: 'p-2 readout' },
-                                    [row.chip, row.mac].filter(Boolean).join(' · ') || '—'
-                                ),
-                                React.createElement('td', { className: 'p-2 readout' }, preview || '—'),
-                                React.createElement('td', { className: 'p-2' },
-                                    React.createElement('div', {
-                                        className: 'h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden'
-                                    },
-                                        React.createElement('div', {
-                                            className: 'h-full bg-cyan-600 dark:bg-cyan-400',
-                                            style: { width: `${Math.max(0, Math.min(100, row.percent || 0))}%` }
-                                        })
-                                    ),
-                                    React.createElement('div', { className: 'readout mt-1' },
-                                        row.label ? `${row.label}${row.percent ? ` ${row.percent}%` : ''}` : ''
-                                    )
-                                ),
-                                React.createElement('td', { className: 'p-2' },
-                                    row.deviceId && React.createElement('button', {
-                                        type: 'button',
-                                        className: 'btn-primary mb-1',
-                                        onClick: () => onOpenDevice && onOpenDevice(row.deviceId)
-                                    }, 'Open in Devices'),
-                                    row.error && React.createElement('p', {
-                                        className: 'text-red-500'
-                                    }, row.error),
-                                    row.downloadMode && React.createElement('p', {
-                                        className: 'text-amber-600 dark:text-amber-400'
-                                    }, 'Hold BOOT, tap RESET, release BOOT.'),
-                                    !row.error && row.lastLog && React.createElement('p', {
-                                        className: 'readout truncate max-w-xs'
-                                    }, row.lastLog)
-                                )
-                            );
-                        })
-                    )
-                )
-            ),
-            React.createElement('pre', {
-                ref: logRef,
-                className: 'flex-1 min-h-[8rem] overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-2 readout whitespace-pre-wrap'
-            }, log.join('\n') || 'Log output appears here. Passwords are not printed.')
+            }, error)
         )
     );
 };

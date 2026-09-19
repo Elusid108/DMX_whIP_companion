@@ -8,7 +8,7 @@ const useDmxMonitor = (selectedUniverse, selectedProtocol) => {
     const [networkInterfaces, setNetworkInterfaces] = useState([]);
     const [selectedNic, setSelectedNic] = useState('0.0.0.0');
     const [displayFormat, setDisplayFormat] = useState('decimal');
-    const [gridDimensions, setGridDimensions] = useState('16x32');
+    const [gridDimensions, setGridDimensions] = useState('32x16');
     const [showAnimations, setShowAnimations] = useState(true);
 
     useEffect(() => {

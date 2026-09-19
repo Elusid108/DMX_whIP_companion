@@ -27,7 +27,7 @@ const DmxGrid = React.memo(({
     selectedUniverse,
     selectedProtocol,
     displayFormat,
-    gridDimensions = '16x32',
+    gridDimensions = '32x16',
     showAnimations
 }) => {
     const gridStyle = React.useMemo(() =>

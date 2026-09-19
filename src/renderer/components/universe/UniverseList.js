@@ -16,14 +16,6 @@ const UniverseList = ({
         selectedUniverses.has(`${protocol}-${universe.id ?? universe.universe}`)
     );
 
-    console.log('UniverseList render:', {
-        protocol,
-        universeCount: universes.length,
-        universes,
-        selectedUniverse,
-        selectedProtocol
-    });
-
     return React.createElement('div', {
         className: 'flex-none p-2 border-b border-zinc-200 dark:border-zinc-800'
     },

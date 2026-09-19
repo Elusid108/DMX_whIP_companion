@@ -128,6 +128,20 @@ function setupRecordingHandlers(mainWindow) {
         });
     });
 
+    ipcMain.removeHandler('cancel-recording');
+    ipcMain.handle('cancel-recording', async () => {
+        if (!isRecording) {
+            return { success: false, error: 'Not recording', filePath: recordingPath };
+        }
+        const filePath = recordingPath;
+        isRecording = false;
+        pending = [];
+        pendingBytes = 0;
+        closeFd();
+        resetSession();
+        return { success: true, filePath };
+    });
+
     return {
         isRecording: () => isRecording,
         getRecordingPath: () => recordingPath,
@@ -181,6 +195,7 @@ function setupRecordingHandlers(mainWindow) {
                 }
             }
             closeFd();
+            ipcMain.removeHandler('cancel-recording');
         }
     };
 }

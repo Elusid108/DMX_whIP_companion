@@ -125,4 +125,12 @@
   .module-rule {
     @apply pt-3 mt-3 border-t border-zinc-200 dark:border-zinc-800;
   }
+
+  .app-sidebar {
+    @apply w-64 flex flex-col min-h-0 border-r border-zinc-200 dark:border-zinc-800;
+  }
+
+  .app-toolbar {
+    @apply flex items-center flex-wrap gap-x-3 gap-y-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800;
+  }
 }

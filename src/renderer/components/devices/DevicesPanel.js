@@ -519,7 +519,7 @@ const DevicesPanel = ({ focusDeviceId } = {}) => {
         className: 'flex-1 min-h-0 flex flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950'
     },
         React.createElement('div', {
-            className: 'flex items-center justify-between gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800'
+            className: 'app-toolbar justify-between bg-zinc-50 dark:bg-zinc-900'
         },
             React.createElement('div', {
                 className: 'readout truncate'
@@ -534,7 +534,7 @@ const DevicesPanel = ({ focusDeviceId } = {}) => {
             className: 'flex flex-1 min-h-0'
         },
             React.createElement('div', {
-                className: 'w-72 border-r border-zinc-200 dark:border-zinc-800 p-2 overflow-y-auto'
+                className: 'app-sidebar p-2 overflow-y-auto'
             },
                 React.createElement(DeviceList, {
                     devices: devices.map((device) => (

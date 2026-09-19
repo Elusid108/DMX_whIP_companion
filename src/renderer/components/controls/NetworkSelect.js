@@ -7,7 +7,7 @@ const NetworkSelect = ({ selectedNic, networkInterfaces, onChange }) => {
     };
 
     return React.createElement('div', {
-        className: 'flex flex-col min-w-fit'
+        className: 'flex flex-col min-w-0'
     },
         React.createElement('label', {
             className: 'text-xs font-medium text-zinc-500 mb-0.5'
@@ -15,7 +15,7 @@ const NetworkSelect = ({ selectedNic, networkInterfaces, onChange }) => {
         React.createElement('select', {
             value: selectedNic,
             onChange: handleChange,
-            className: 'field w-auto min-w-[10rem] py-1'
+            className: 'field w-full py-1'
         },
             networkInterfaces.map(nic =>
                 React.createElement('option', {

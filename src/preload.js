@@ -13,6 +13,7 @@ const INVOKE = new Set([
     'library-rename',
     'library-delete',
     'library-choose-dir',
+    'cancel-recording',
     'load-recording',
     'device-status',
     'device-identify',
@@ -45,6 +46,7 @@ const SEND = new Set([
     'stop-recording',
     'toggle-playback',
     'stop-playback',
+    'unload-recording',
     'devices-scan'
 ]);
 
@@ -57,6 +59,7 @@ const RECEIVE = new Set([
     'playback-stats',
     'recording-stats-update',
     'recording-error',
+    'recording-saved',
     'library-updated',
     'devices-update',
     'device-push-progress',

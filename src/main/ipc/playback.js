@@ -320,6 +320,12 @@ function setupPlaybackHandlers(mainWindow) {
     ipcMain.on('stop-playback', () => {
         stopPlaybackInternal(false);
     });
+
+    ipcMain.on('unload-recording', () => {
+        stopPlaybackInternal(false);
+        playbackData = null;
+        sendSafe('file-loaded', { success: true, filePath: null, cleared: true });
+    });
 }
 
 module.exports = setupPlaybackHandlers;
