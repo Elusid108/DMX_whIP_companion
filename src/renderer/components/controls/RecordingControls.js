@@ -5,19 +5,16 @@ const RecordingControls = ({
     selectedUniverses,
     isRecording,
     isPlaying,
-    isLoading,
     recordingPath,
     naming,
     nameDraft,
-    showLoad,
     onNameDraftChange,
     onNewFile,
     onNewFileCancel,
     onNewFileConfirm,
     onStartRecording,
     onStopRecording,
-    onCancelRecording,
-    onLoadFile
+    onCancelRecording
 }) => {
     const nameRef = useRef(null);
 
@@ -48,13 +45,6 @@ const RecordingControls = ({
             onClick: onCancelRecording,
             className: 'btn-quiet'
         }, 'Cancel'),
-
-        showLoad && React.createElement('button', {
-            type: 'button',
-            onClick: onLoadFile,
-            className: 'btn-quiet',
-            disabled: isRecording || isLoading
-        }, isLoading ? 'Loading...' : 'Load'),
 
         naming && React.createElement('div', {
             className: 'flex items-center gap-1.5 min-w-0'

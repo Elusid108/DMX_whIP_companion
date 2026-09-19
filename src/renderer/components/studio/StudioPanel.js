@@ -1,8 +1,6 @@
 const React = require('react');
 const UniverseSidebar = require('../universe/UniverseSidebar');
 const RecordingControls = require('../controls/RecordingControls');
-const PlaybackControls = require('../controls/PlaybackControls');
-const useStudioSession = require('../../hooks/useStudioSession');
 
 const Kv = ({ label, value, danger }) => React.createElement('div', {
     className: 'kv-row text-sm'
@@ -16,6 +14,7 @@ const Kv = ({ label, value, danger }) => React.createElement('div', {
 );
 
 const StudioPanel = ({
+    session,
     selectedUniverses,
     networkInterfaces,
     selectedNic,
@@ -28,8 +27,6 @@ const StudioPanel = ({
     onSelectAll,
     onUniverseClick
 }) => {
-    const session = useStudioSession(selectedUniverses, selectedNic);
-
     return React.createElement('div', {
         className: 'flex-1 min-h-0 flex overflow-hidden bg-zinc-50 dark:bg-zinc-950'
     },
@@ -60,7 +57,6 @@ const StudioPanel = ({
                     selectedUniverses,
                     isRecording: session.isRecording,
                     isPlaying: session.isPlaying,
-                    isLoading: session.isLoading,
                     recordingPath: session.recordingPath,
                     naming: session.naming,
                     nameDraft: session.nameDraft,
@@ -68,24 +64,9 @@ const StudioPanel = ({
                     onNewFile: session.handleNewFile,
                     onNewFileCancel: session.handleNewFileCancel,
                     onNewFileConfirm: session.handleNewFileConfirm,
-                    showLoad: session.showLoad,
                     onStartRecording: session.handleStartRecording,
                     onStopRecording: session.handleStopRecording,
-                    onCancelRecording: session.handleCancelRecording,
-                    onLoadFile: session.handleLoadFile
-                }),
-                session.showPlaybackControls && React.createElement(PlaybackControls, {
-                    networkInterfaces,
-                    isFileLoaded: session.isFileLoaded,
-                    isPlaying: session.isPlaying,
-                    isRecording: session.isRecording,
-                    isLoopEnabled: session.isLoopEnabled,
-                    playbackNetwork: session.playbackNetwork,
-                    displayFileName: session.displayFileName,
-                    onLoopChange: session.setIsLoopEnabled,
-                    onPlaybackNetworkChange: session.setPlaybackNetwork,
-                    onPlayback: session.handlePlayback,
-                    onStopPlayback: session.handleStopPlayback
+                    onCancelRecording: session.handleCancelRecording
                 })
             ),
             React.createElement('div', {
@@ -96,7 +77,7 @@ const StudioPanel = ({
                 }, session.loadError),
                 session.isIdle && React.createElement('p', {
                     className: 'text-sm text-zinc-500'
-                }, 'Select universes, create or load a file, then record or play.'),
+                }, 'Select universes, create a file in Studio or load a look from Library, then record or play.'),
                 !session.isIdle && React.createElement('div', {
                     className: 'flex flex-col gap-1.5 max-w-xl'
                 },

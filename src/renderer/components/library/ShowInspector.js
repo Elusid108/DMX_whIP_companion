@@ -1,4 +1,5 @@
 const React = require('react');
+const { useEffect, useState } = React;
 
 const formatDuration = (ms) => {
     const value = Number(ms) || 0;
@@ -40,15 +41,6 @@ const protocolLabel = (protocols) => {
     return protocols.map((protocol) => (protocol === 'artnet' ? 'Art-Net' : 'sACN')).join(', ');
 };
 
-const Field = ({ label, children }) => React.createElement('div', {
-    className: 'flex flex-col gap-1'
-},
-    React.createElement('label', {
-        className: 'text-xs font-medium text-zinc-500'
-    }, label),
-    children
-);
-
 const Kv = ({ label, value }) => React.createElement('div', {
     className: 'kv-row text-sm'
 },
@@ -56,92 +48,155 @@ const Kv = ({ label, value }) => React.createElement('div', {
     React.createElement('span', { className: 'truncate' }, value)
 );
 
+const ClickToEdit = ({
+    value,
+    placeholder,
+    multiline,
+    disabled,
+    className,
+    onCommit
+}) => {
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState(value || '');
+
+    useEffect(() => {
+        if (!editing) {
+            setDraft(value || '');
+        }
+    }, [value, editing]);
+
+    const commit = () => {
+        setEditing(false);
+        onCommit(draft);
+    };
+
+    if (!editing) {
+        return React.createElement('button', {
+            type: 'button',
+            className: `text-left w-full min-h-[1.75rem] ${className || ''} ${value ? '' : 'text-zinc-500 italic'}`,
+            disabled,
+            onClick: () => setEditing(true)
+        }, value || placeholder);
+    }
+
+    const shared = {
+        className: 'field',
+        value: draft,
+        autoFocus: true,
+        disabled,
+        onChange: (event) => setDraft(event.target.value),
+        onBlur: commit,
+        onKeyDown: (event) => {
+            if (event.key === 'Escape') {
+                setDraft(value || '');
+                setEditing(false);
+            }
+            if (event.key === 'Enter' && !multiline) {
+                event.preventDefault();
+                commit();
+            }
+        }
+    };
+
+    return multiline
+        ? React.createElement('textarea', { ...shared, className: 'field min-h-[5rem]' })
+        : React.createElement('input', shared);
+};
+
+const countLooks = (node) => {
+    if (!node) {
+        return 0;
+    }
+    return (node.children || []).reduce((sum, child) => {
+        if (child.type === 'show') {
+            return sum + 1;
+        }
+        return sum + countLooks(child);
+    }, 0);
+};
+
 const ShowInspector = ({
+    selection,
     show,
+    folder,
     name,
     notes,
     busy,
-    devices,
-    targetId,
-    pushing,
-    pushProgress,
-    pushError,
     onNameChange,
     onNotesChange,
-    renaming,
-    renameDraft,
-    onPlay,
-    onRename,
-    onRenameDraftChange,
-    onRenameConfirm,
-    onRenameCancel,
+    onFolderNameChange,
     onDelete,
-    onExport,
-    onTargetChange,
-    onPush
+    onDeleteFolder
 }) => {
+    if (!selection) {
+        return React.createElement('div', {
+            className: 'text-sm text-zinc-500 italic p-2'
+        }, 'Select a look or folder.');
+    }
+
+    if (selection.type === 'folder') {
+        const looks = countLooks(folder);
+        return React.createElement('div', {
+            className: 'overflow-y-auto h-full'
+        },
+            React.createElement('div', {
+                className: 'flex flex-col gap-3 max-w-xl mx-auto w-full'
+            },
+                React.createElement(ClickToEdit, {
+                    value: folder ? folder.name : '',
+                    placeholder: 'Folder name',
+                    disabled: busy,
+                    className: 'text-lg font-medium',
+                    onCommit: (value) => {
+                        if (folder && folder.id) {
+                            onFolderNameChange(folder.id, value);
+                        }
+                    }
+                }),
+                React.createElement('p', {
+                    className: 'readout'
+                }, looks === 1 ? '1 look' : `${looks} looks`),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-danger self-start',
+                    disabled: busy,
+                    onClick: onDeleteFolder
+                }, 'Delete folder')
+            )
+        );
+    }
+
     if (!show) {
         return React.createElement('div', {
             className: 'text-sm text-zinc-500 italic p-2'
-        }, 'Select a show to see details.');
-    }
-
-    const playable = Boolean(show.playable);
-    const targets = (devices || []).filter((device) => device && device.ip && !device.stale);
-    const canPush = playable && Boolean(targetId) && targets.some((device) => device.id === targetId);
-    const sent = Number(pushProgress && pushProgress.sent) || 0;
-    const total = Number(pushProgress && pushProgress.total) || 0;
-    const percent = total > 0 ? Math.min(100, Math.round((sent / total) * 100)) : 0;
-    const phase = pushProgress && pushProgress.phase;
-    const phaseLabel = phase === 'connecting'
-        ? 'Connecting…'
-        : phase === 'waiting'
-            ? 'Waiting for the node…'
-            : phase === 'sending'
-                ? 'Sending…'
-                : '';
-    const elapsed = pushProgress && pushProgress.startedAt
-        ? Date.now() - pushProgress.startedAt
-        : 0;
-    let etaLabel = '';
-    if (phase === 'sending' && sent > 256 * 1024 && elapsed > 1000 && sent < total) {
-        const remainMs = ((total - sent) / sent) * elapsed;
-        const remainSec = Math.max(1, Math.round(remainMs / 1000));
-        const minutes = Math.floor(remainSec / 60);
-        const seconds = remainSec % 60;
-        etaLabel = minutes > 0
-            ? `~${minutes} min ${seconds}s left`
-            : `~${seconds}s left`;
+        }, 'Select a look to see details.');
     }
 
     return React.createElement('div', {
         className: 'overflow-y-auto h-full'
     },
         React.createElement('div', {
-            className: 'flex flex-col gap-2 w-[60%] mx-auto'
+            className: 'flex flex-col gap-3 max-w-xl mx-auto w-full'
         },
-            React.createElement(Field, { label: 'Display name' },
-                React.createElement('input', {
-                    className: 'field',
-                    value: name,
-                    disabled: busy,
-                    onChange: (event) => onNameChange(event.target.value)
-                })
-            ),
-            React.createElement(Field, { label: 'Notes' },
-                React.createElement('textarea', {
-                    className: 'field min-h-[5rem]',
-                    value: notes,
-                    disabled: busy,
-                    onChange: (event) => onNotesChange(event.target.value)
-                })
-            ),
+            React.createElement(ClickToEdit, {
+                value: name,
+                placeholder: 'Untitled look',
+                disabled: busy,
+                className: 'text-lg font-medium',
+                onCommit: onNameChange
+            }),
+            React.createElement(ClickToEdit, {
+                value: notes,
+                placeholder: 'Add notes',
+                multiline: true,
+                disabled: busy,
+                onCommit: onNotesChange
+            }),
             React.createElement('div', {
                 className: 'grid grid-cols-2 gap-1.5'
             },
-                React.createElement(Kv, { label: 'File', value: show.filename }),
-                React.createElement(Kv, { label: 'Size', value: formatBytes(show.size) }),
                 React.createElement(Kv, { label: 'Duration', value: formatDuration(show.duration) }),
+                React.createElement(Kv, { label: 'Size', value: formatBytes(show.size) }),
                 React.createElement(Kv, { label: 'Frames', value: String(show.frameCount || 0) }),
                 React.createElement(Kv, { label: 'Packet rate', value: `${formatRate(show.packetRate)} /s` }),
                 React.createElement(Kv, { label: 'Protocol', value: protocolLabel(show.protocols) }),
@@ -182,110 +237,12 @@ const ShowInspector = ({
                     )
                 )
             ),
-            React.createElement('div', {
-                className: 'flex flex-wrap gap-1.5 pt-1'
-            },
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-primary',
-                    disabled: busy || !playable,
-                    onClick: onPlay
-                }, 'Load on this PC'),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet',
-                    disabled: busy,
-                    onClick: onExport
-                }, 'Export'),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet',
-                    disabled: busy,
-                    onClick: onRename
-                }, 'Rename'),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-danger',
-                    disabled: busy,
-                    onClick: onDelete
-                }, 'Delete')
-            ),
-            renaming && React.createElement('div', {
-                className: 'flex items-center gap-1.5'
-            },
-                React.createElement('input', {
-                    className: 'field',
-                    value: renameDraft,
-                    disabled: busy,
-                    autoFocus: true,
-                    onChange: (event) => onRenameDraftChange(event.target.value)
-                }),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-primary flex-none',
-                    disabled: busy || !String(renameDraft || '').trim(),
-                    onClick: onRenameConfirm
-                }, 'Save name'),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet flex-none',
-                    disabled: busy,
-                    onClick: onRenameCancel
-                }, 'Cancel')
-            ),
-            React.createElement('div', {
-                className: 'flex flex-col gap-1.5 pt-2 border-t border-zinc-200 dark:border-zinc-800'
-            },
-                React.createElement(Field, { label: 'Target device' },
-                    React.createElement('select', {
-                        className: 'field',
-                        value: targetId || '',
-                        disabled: busy || pushing || targets.length === 0,
-                        onChange: (event) => onTargetChange(event.target.value || null)
-                    },
-                        targets.length === 0
-                            ? React.createElement('option', { value: '' }, 'No idle nodes on this NIC')
-                            : [
-                                React.createElement('option', { key: '', value: '' }, 'Select a node'),
-                                ...targets.map((device) => React.createElement('option', {
-                                    key: device.id,
-                                    value: device.id
-                                }, `${device.longName || device.shortName || 'dmxwhip'} (${device.ip})`))
-                            ]
-                    )
-                ),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-primary self-start',
-                    disabled: busy || pushing || !canPush,
-                    onClick: onPush
-                }, pushing ? 'Pushing…' : 'Push to SD'),
-                pushing && React.createElement('div', {
-                    className: 'flex flex-col gap-1'
-                },
-                    React.createElement('div', {
-                        className: 'h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden'
-                    },
-                        React.createElement('div', {
-                            className: 'h-full bg-cyan-500',
-                            style: { width: `${percent}%` }
-                        })
-                    ),
-                    React.createElement('p', {
-                        className: 'readout'
-                    }, [
-                        total > 0 ? `${percent}% · ${formatBytes(sent)} / ${formatBytes(total)}` : phaseLabel || 'Connecting…',
-                        total > 0 ? phaseLabel : null,
-                        etaLabel
-                    ].filter(Boolean).join(' · '))
-                ),
-                React.createElement('p', {
-                    className: 'text-xs text-zinc-500'
-                }, 'Copies this .dmx onto the node SD. Load on this PC uses the toolbar; device Play/Stop live on Devices.'),
-                pushError && React.createElement('div', {
-                    className: pushError.startsWith('Pushed ') ? 'text-sm text-cyan-600 dark:text-cyan-400' : 'text-sm text-red-500'
-                }, pushError)
-            )
+            React.createElement('button', {
+                type: 'button',
+                className: 'btn-danger self-start',
+                disabled: busy,
+                onClick: onDelete
+            }, 'Delete')
         )
     );
 };

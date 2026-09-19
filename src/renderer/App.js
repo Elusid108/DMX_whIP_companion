@@ -6,8 +6,10 @@ const DevicesPanel = require('./components/devices/DevicesPanel');
 const FlashPanel = require('./components/flash/FlashPanel');
 const StudioPanel = require('./components/studio/StudioPanel');
 const SettingsMenu = require('./components/controls/SettingsMenu');
+const PlaybackControls = require('./components/controls/PlaybackControls');
 const useUniverseData = require('./hooks/useUniverseData');
 const useDmxMonitor = require('./hooks/useDmxMonitor');
+const useStudioSession = require('./hooks/useStudioSession');
 const ipcRenderer = require('./ipc');
 
 const applyThemeClass = (theme) => {
@@ -47,6 +49,7 @@ const App = () => {
     const [mainView, setMainView] = React.useState('monitor');
     const [theme, setTheme] = React.useState('dark');
     const [focusDeviceId, setFocusDeviceId] = React.useState(null);
+    const session = useStudioSession(selectedUniverses, selectedNic);
 
     const handleUniverseClick = (id, protocol) => {
         setSelectedUniverse(id);
@@ -129,6 +132,23 @@ const App = () => {
                 onToggleTheme: handleToggleTheme
             })
         ),
+        React.createElement('div', {
+            className: 'app-toolbar flex-none bg-zinc-50 dark:bg-zinc-900'
+        },
+            React.createElement(PlaybackControls, {
+                networkInterfaces,
+                isFileLoaded: session.isFileLoaded,
+                isPlaying: session.isPlaying,
+                isRecording: session.isRecording,
+                isLoopEnabled: session.isLoopEnabled,
+                playbackNetwork: session.playbackNetwork,
+                displayFileName: session.displayFileName,
+                onLoopChange: session.setIsLoopEnabled,
+                onPlaybackNetworkChange: session.setPlaybackNetwork,
+                onPlayback: session.handlePlayback,
+                onStopPlayback: session.handleStopPlayback
+            })
+        ),
         mainView === 'monitor' && React.createElement('div', {
             className: 'flex flex-1 min-h-0'
         },
@@ -195,6 +215,7 @@ const App = () => {
             className: mainView === 'studio' ? 'flex flex-1 min-h-0 flex-col' : 'hidden'
         },
             React.createElement(StudioPanel, {
+                session,
                 networkInterfaces,
                 selectedNic,
                 ...universeSidebar

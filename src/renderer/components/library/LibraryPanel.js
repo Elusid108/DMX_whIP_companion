@@ -3,11 +3,12 @@ const { useState, useEffect, useRef } = React;
 const ipcRenderer = require('../../ipc');
 const ShowList = require('./ShowList');
 const ShowInspector = require('./ShowInspector');
+const { findNode, firstShowPath, folderExists } = require('../../../services/shared/libraryTree');
 
 const LibraryPanel = () => {
     const [shows, setShows] = useState([]);
-    const [libraryDir, setLibraryDir] = useState('');
-    const [selectedPath, setSelectedPath] = useState(null);
+    const [tree, setTree] = useState([]);
+    const [selection, setSelection] = useState(null);
     const [loadedPath, setLoadedPath] = useState(null);
     const [inspect, setInspect] = useState(null);
     const [name, setName] = useState('');
@@ -19,17 +20,21 @@ const LibraryPanel = () => {
     const [pushing, setPushing] = useState(false);
     const [pushError, setPushError] = useState('');
     const [pushProgress, setPushProgress] = useState(null);
-    const [renaming, setRenaming] = useState(false);
-    const [renameDraft, setRenameDraft] = useState('');
+    const [collapsed, setCollapsed] = useState([]);
     const saveTimer = useRef(null);
     const selectedRef = useRef(null);
     const dirtyRef = useRef(false);
     const nameRef = useRef('');
     const notesRef = useRef('');
 
-    selectedRef.current = selectedPath;
+    selectedRef.current = selection;
     nameRef.current = name;
     notesRef.current = notes;
+
+    const selectedShowPath = selection && selection.type === 'show' ? selection.filePath : null;
+    const selectedFolder = selection && selection.type === 'folder'
+        ? ((findNode(tree, selection.id) || {}).node || null)
+        : null;
 
     useEffect(() => {
         const handleProgress = (event, progress = {}) => {
@@ -43,17 +48,26 @@ const LibraryPanel = () => {
 
     useEffect(() => {
         dirtyRef.current = false;
-        setRenaming(false);
-        setRenameDraft('');
-    }, [selectedPath]);
+    }, [selectedShowPath]);
 
-    const applyList = (nextShows) => {
+    const applyLibrary = (payload = {}) => {
+        const nextShows = payload.shows || [];
+        const nextTree = payload.tree || [];
         setShows(nextShows);
-        setSelectedPath((current) => {
-            if (current && nextShows.some((show) => show.filePath === current)) {
+        setTree(nextTree);
+        if (Array.isArray(payload.collapsed)) {
+            setCollapsed(payload.collapsed);
+        }
+        setSelection((current) => {
+            if (current && current.type === 'show'
+                && nextShows.some((show) => show.filePath === current.filePath)) {
                 return current;
             }
-            return nextShows[0] ? nextShows[0].filePath : null;
+            if (current && current.type === 'folder' && folderExists(nextTree, current.id)) {
+                return current;
+            }
+            const first = firstShowPath(nextTree);
+            return first ? { type: 'show', filePath: first } : null;
         });
     };
 
@@ -61,16 +75,14 @@ const LibraryPanel = () => {
         const loadList = async () => {
             const result = await ipcRenderer.invoke('library-list');
             if (result && result.success) {
-                setLibraryDir(result.libraryDir || '');
-                applyList(result.shows || []);
+                applyLibrary(result);
             } else if (result && result.error) {
                 setError(result.error);
             }
         };
 
         const handleUpdated = (event, payload = {}) => {
-            setLibraryDir(payload.libraryDir || '');
-            applyList(payload.shows || []);
+            applyLibrary(payload);
         };
 
         const handleFileLoaded = (event, result = {}) => {
@@ -112,9 +124,10 @@ const LibraryPanel = () => {
             ipcRenderer.removeListener('file-loaded', handleFileLoaded);
             ipcRenderer.removeListener('devices-update', handleDevices);
             clearTimeout(saveTimer.current);
-            if (dirtyRef.current && selectedRef.current) {
+            const current = selectedRef.current;
+            if (dirtyRef.current && current && current.type === 'show' && current.filePath) {
                 ipcRenderer.invoke('library-save-meta', {
-                    filePath: selectedRef.current,
+                    filePath: current.filePath,
                     name: nameRef.current,
                     notes: notesRef.current
                 });
@@ -123,7 +136,7 @@ const LibraryPanel = () => {
     }, []);
 
     useEffect(() => {
-        if (!selectedPath) {
+        if (!selectedShowPath) {
             setInspect(null);
             setName('');
             setNotes('');
@@ -132,14 +145,18 @@ const LibraryPanel = () => {
 
         let cancelled = false;
         const loadInspect = async () => {
-            const result = await ipcRenderer.invoke('library-inspect', { filePath: selectedPath });
-            if (cancelled || selectedRef.current !== selectedPath) {
+            const result = await ipcRenderer.invoke('library-inspect', { filePath: selectedShowPath });
+            if (cancelled) {
+                return;
+            }
+            const current = selectedRef.current;
+            if (!current || current.type !== 'show' || current.filePath !== selectedShowPath) {
                 return;
             }
             if (result && result.success) {
                 setInspect(result.show);
                 if (!dirtyRef.current) {
-                    setName(result.show.name || '');
+                    setName(result.show.name || result.show.displayName || '');
                     setNotes(result.show.notes || '');
                 }
                 setError('');
@@ -153,16 +170,17 @@ const LibraryPanel = () => {
         return () => {
             cancelled = true;
         };
-    }, [selectedPath, shows]);
+    }, [selectedShowPath, shows]);
 
     const queueSaveMeta = (nextName, nextNotes) => {
         clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(async () => {
-            if (!selectedRef.current) {
+            const current = selectedRef.current;
+            if (!current || current.type !== 'show' || !current.filePath) {
                 return;
             }
             const result = await ipcRenderer.invoke('library-save-meta', {
-                filePath: selectedRef.current,
+                filePath: current.filePath,
                 name: nextName,
                 notes: nextNotes
             });
@@ -201,67 +219,80 @@ const LibraryPanel = () => {
         }
     };
 
-    const handleExport = () => runAction(async () => {
-        if (!selectedPath) {
-            return;
-        }
-        const result = await ipcRenderer.invoke('library-export', { filePath: selectedPath });
-        if (result && result.error && result.error !== 'No file selected') {
-            setError(result.error);
-        }
-    });
-
     const handlePlay = () => runAction(async () => {
-        if (!selectedPath) {
+        if (!selectedShowPath) {
             return;
         }
-        const result = await ipcRenderer.invoke('load-recording', { filePath: selectedPath });
+        const result = await ipcRenderer.invoke('load-recording', { filePath: selectedShowPath });
         if (result && !result.success) {
             setError(result.error || 'Unable to load recording');
         }
     });
 
-    const handleRename = () => {
-        if (!selectedPath) {
+    const handleRenameShow = (filePath, nextName) => {
+        if (filePath === selectedShowPath) {
+            handleNameChange(nextName);
             return;
         }
-        const current = inspect && inspect.filename
-            ? inspect.filename.replace(/\.dmx$/i, '')
-            : '';
-        setRenameDraft(current);
-        setRenaming(true);
-    };
-
-    const handleRenameCancel = () => {
-        setRenaming(false);
-        setRenameDraft('');
-    };
-
-    const handleRenameConfirm = () => runAction(async () => {
-        if (!selectedPath) {
-            return;
-        }
-        const next = String(renameDraft || '').trim();
-        if (!next) {
-            return;
-        }
-        const result = await ipcRenderer.invoke('library-rename', {
-            filePath: selectedPath,
-            name: next
-        });
-        if (result && result.success) {
-            setRenaming(false);
-            setSelectedPath(result.filePath);
-            if (loadedPath === selectedPath) {
-                setLoadedPath(result.filePath);
+        const listed = shows.find((show) => show.filePath === filePath);
+        ipcRenderer.invoke('library-save-meta', {
+            filePath,
+            name: nextName,
+            notes: listed && typeof listed.notes === 'string' ? listed.notes : undefined
+        }).then((result) => {
+            if (result && !result.success && result.error) {
+                setError(result.error);
             }
-        } else if (result && result.error) {
-            setError(result.error);
+        });
+    };
+
+    const handleRenameFolder = (id, nextName) => {
+        ipcRenderer.invoke('library-rename-folder', { id, name: nextName }).then((result) => {
+            if (result && !result.success && result.error) {
+                setError(result.error);
+            }
+        });
+    };
+
+    const handleCreateFolder = () => {
+        ipcRenderer.invoke('library-create-folder', { name: 'Folder' }).then((result) => {
+            if (result && result.success) {
+                setSelection({ type: 'folder', id: result.id });
+            } else if (result && result.error) {
+                setError(result.error);
+            }
+        });
+    };
+
+    const handleMove = (ids, parentId, index) => {
+        const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+        if (!list.length) {
+            return;
         }
-    });
+        ipcRenderer.invoke('library-move', { ids: list, parentId, index }).then((result) => {
+            if (result && !result.success && result.error) {
+                setError(result.error);
+            }
+        });
+    };
+
+    const handleToggleCollapsed = (id) => {
+        if (!id) {
+            return;
+        }
+        const next = collapsed.includes(id)
+            ? collapsed.filter((item) => item !== id)
+            : [...collapsed, id];
+        setCollapsed(next);
+        ipcRenderer.invoke('library-set-collapsed', { ids: next }).then((result) => {
+            if (result && !result.success && result.error) {
+                setError(result.error);
+            }
+        });
+    };
 
     const handlePush = () => {
-        if (!selectedPath || !targetId || pushing) {
+        if (!selectedShowPath || !targetId || pushing) {
             return;
         }
         const target = devices.find((device) => device.id === targetId);
@@ -274,7 +305,7 @@ const LibraryPanel = () => {
         setPushProgress({ phase: 'connecting', sent: 0, total: 0 });
         ipcRenderer.invoke('device-push-show', {
             ip: target.ip,
-            filePath: selectedPath
+            filePath: selectedShowPath
         }).then((result) => {
             if (!result || !result.success) {
                 setPushError((result && result.error) || 'Push failed');
@@ -291,23 +322,44 @@ const LibraryPanel = () => {
     };
 
     const handleDelete = () => runAction(async () => {
-        if (!selectedPath) {
+        if (!selectedShowPath) {
             return;
         }
-        const label = (inspect && inspect.displayName) || 'this show';
+        const label = (inspect && inspect.displayName) || 'this look';
         if (!window.confirm(`Delete ${label} from the library?`)) {
             return;
         }
-        const result = await ipcRenderer.invoke('library-delete', { filePath: selectedPath });
+        const result = await ipcRenderer.invoke('library-delete', { filePath: selectedShowPath });
         if (result && result.success) {
-            if (loadedPath === selectedPath) {
+            if (loadedPath === selectedShowPath) {
                 setLoadedPath(null);
             }
-            setSelectedPath(null);
+            setSelection(null);
         } else if (result && result.error) {
             setError(result.error);
         }
     });
+
+    const handleDeleteFolder = () => runAction(async () => {
+        if (!selection || selection.type !== 'folder') {
+            return;
+        }
+        const label = (selectedFolder && selectedFolder.name) || 'this folder';
+        if (!window.confirm(`Remove ${label}? Looks inside stay in the library.`)) {
+            return;
+        }
+        const result = await ipcRenderer.invoke('library-delete-folder', { id: selection.id });
+        if (result && result.success) {
+            setSelection(null);
+        } else if (result && result.error) {
+            setError(result.error);
+        }
+    });
+
+    const playable = Boolean(inspect && inspect.playable);
+    const targets = devices.filter((device) => device && device.ip && !device.stale);
+    const canPush = Boolean(selectedShowPath && inspect && inspect.playable && targetId
+        && targets.some((device) => device.id === targetId));
 
     return React.createElement('div', {
         className: 'flex-1 min-h-0 flex flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950'
@@ -319,41 +371,47 @@ const LibraryPanel = () => {
             className: 'flex flex-1 min-h-0'
         },
             React.createElement('div', {
-                className: 'app-sidebar p-2 overflow-y-auto'
+                className: 'app-sidebar overflow-hidden p-2 flex flex-col'
             },
                 React.createElement(ShowList, {
-                    shows,
-                    selectedPath,
+                    tree,
+                    collapsed,
+                    selected: selection,
                     loadedPath,
-                    onSelect: setSelectedPath
-                })
-            ),
-            React.createElement('div', {
-                className: 'flex-1 p-3 min-h-0 overflow-hidden'
-            },
-                React.createElement(ShowInspector, {
-                    show: inspect,
-                    name,
-                    notes,
                     busy,
-                    onNameChange: handleNameChange,
-                    onNotesChange: handleNotesChange,
-                    renaming,
-                    renameDraft,
+                    playDisabled: busy || !selectedShowPath || !playable,
+                    onSelect: setSelection,
+                    onRenameShow: handleRenameShow,
+                    onRenameFolder: handleRenameFolder,
+                    onCreateFolder: handleCreateFolder,
+                    onToggleCollapsed: handleToggleCollapsed,
+                    onMove: handleMove,
                     onPlay: handlePlay,
-                    onRename: handleRename,
-                    onRenameDraftChange: setRenameDraft,
-                    onRenameConfirm: handleRenameConfirm,
-                    onRenameCancel: handleRenameCancel,
-                    onDelete: handleDelete,
-                    onExport: handleExport,
                     devices,
                     targetId,
                     pushing,
                     pushProgress,
                     pushError,
                     onTargetChange: setTargetId,
-                    onPush: handlePush
+                    onPush: handlePush,
+                    canPush
+                })
+            ),
+            React.createElement('div', {
+                className: 'flex-1 p-3 min-h-0 overflow-hidden'
+            },
+                React.createElement(ShowInspector, {
+                    selection,
+                    show: inspect,
+                    folder: selectedFolder,
+                    name,
+                    notes,
+                    busy,
+                    onNameChange: handleNameChange,
+                    onNotesChange: handleNotesChange,
+                    onFolderNameChange: handleRenameFolder,
+                    onDelete: handleDelete,
+                    onDeleteFolder: handleDeleteFolder
                 })
             )
         )

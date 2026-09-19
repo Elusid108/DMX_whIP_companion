@@ -1,8 +1,20 @@
 const { ipcMain, dialog } = require('electron');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { createHeader, scanRecording } = require('../../services/shared/dmxRecording');
 const { getLibraryDir, saveSettings } = require('../settings');
+const {
+    cloneTree,
+    collectFolderIds,
+    dissolveFolder,
+    hydrateTree,
+    insertNode,
+    moveNodes,
+    pruneAndFill,
+    renameFolder,
+    stripTree
+} = require('../../services/shared/libraryTree');
 
 const INVALID_NAME = new RegExp('[<>:"/\\\\|?*\\x00-\\x1f]', 'g');
 
@@ -117,6 +129,62 @@ const listShows = () => {
         .sort((a, b) => b.modified - a.modified);
 };
 
+const indexPath = () => path.join(ensureLibrary(), 'library.json');
+
+const sanitizeFolderName = (name) => {
+    const cleaned = String(name || '').trim().replace(INVALID_NAME, '').replace(/[. ]+$/g, '');
+    return (cleaned || 'Folder').slice(0, 60);
+};
+
+const readIndexFile = () => {
+    try {
+        const raw = JSON.parse(fs.readFileSync(indexPath(), 'utf8'));
+        return {
+            items: raw && Array.isArray(raw.items) ? raw.items : [],
+            collapsed: raw && Array.isArray(raw.collapsed)
+                ? raw.collapsed.filter((id) => typeof id === 'string')
+                : []
+        };
+    } catch (err) {
+        // first run or unreadable index
+    }
+    return { items: [], collapsed: [] };
+};
+
+const writeIndexFile = (items, collapsed) => {
+    fs.writeFileSync(indexPath(), `${JSON.stringify({
+        version: 1,
+        items,
+        collapsed: collapsed || []
+    }, null, 2)}\n`, 'utf8');
+};
+
+const readIndexItems = () => readIndexFile().items;
+
+const writeIndexItems = (items) => {
+    writeIndexFile(items, readIndexFile().collapsed);
+};
+
+const listLibrary = () => {
+    const shows = listShows();
+    const showById = new Map(shows.map((show) => [show.filename, show]));
+    const showIds = shows.map((show) => show.filename);
+    const previous = readIndexFile();
+    const next = pruneAndFill(previous.items, showIds);
+    const folderIds = new Set(collectFolderIds(next));
+    const nextCollapsed = previous.collapsed.filter((id) => folderIds.has(id));
+    if (JSON.stringify(stripTree(previous.items)) !== JSON.stringify(next)
+        || JSON.stringify(previous.collapsed) !== JSON.stringify(nextCollapsed)) {
+        writeIndexFile(next, nextCollapsed);
+    }
+    return {
+        shows,
+        tree: hydrateTree(next, showById),
+        collapsed: nextCollapsed,
+        libraryDir: getLibraryDir()
+    };
+};
+
 function setupLibraryHandlers(mainWindow, recordingHandler) {
     const inspectCache = new Map();
     let watcher = null;
@@ -134,10 +202,7 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
     };
 
     const emitList = () => {
-        sendSafe(mainWindow, 'library-updated', {
-            shows: listShows(),
-            libraryDir: getLibraryDir()
-        });
+        sendSafe(mainWindow, 'library-updated', listLibrary());
     };
 
     const scheduleRefresh = () => {
@@ -227,14 +292,19 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
         'library-export',
         'library-rename',
         'library-delete',
-        'library-choose-dir'
+        'library-choose-dir',
+        'library-create-folder',
+        'library-rename-folder',
+        'library-delete-folder',
+        'library-move',
+        'library-set-collapsed'
     ];
 
     ipcMain.handle('library-list', async () => {
         try {
-            return { success: true, shows: listShows(), libraryDir: getLibraryDir() };
+            return { success: true, ...listLibrary() };
         } catch (error) {
-            return { success: false, error: error.message, shows: [] };
+            return { success: false, error: error.message, shows: [], tree: [], collapsed: [] };
         }
     });
 
@@ -388,7 +458,7 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
             inspectCache.clear();
             startWatch();
             emitList();
-            return { success: true, libraryDir, shows: listShows() };
+            return { success: true, ...listLibrary() };
         } catch (error) {
             console.error('Error choosing library folder:', error);
             return { success: false, error: error.message };
@@ -417,6 +487,75 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
             }
 
             return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('library-create-folder', async (event, { name, parentId } = {}) => {
+        try {
+            const items = cloneTree(readIndexItems());
+            const folder = {
+                type: 'folder',
+                id: `fold_${crypto.randomBytes(6).toString('hex')}`,
+                name: sanitizeFolderName(name),
+                children: []
+            };
+            insertNode(items, folder, parentId || 'root', 0);
+            writeIndexItems(items);
+            emitList();
+            return { success: true, id: folder.id, name: folder.name };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('library-rename-folder', async (event, { id, name } = {}) => {
+        try {
+            const items = cloneTree(readIndexItems());
+            renameFolder(items, id, sanitizeFolderName(name));
+            writeIndexItems(items);
+            emitList();
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('library-delete-folder', async (event, { id } = {}) => {
+        try {
+            const items = cloneTree(readIndexItems());
+            dissolveFolder(items, id);
+            writeIndexItems(items);
+            emitList();
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('library-move', async (event, { id, ids, parentId, index } = {}) => {
+        try {
+            const list = Array.isArray(ids) && ids.length ? ids : (id ? [id] : []);
+            const items = cloneTree(readIndexItems());
+            moveNodes(items, list, parentId || 'root', index);
+            writeIndexItems(items);
+            emitList();
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('library-set-collapsed', async (event, { ids } = {}) => {
+        try {
+            const items = readIndexItems();
+            const folderIds = new Set(collectFolderIds(items));
+            const collapsed = (Array.isArray(ids) ? ids : [])
+                .filter((entry) => typeof entry === 'string' && folderIds.has(entry));
+            writeIndexFile(items, collapsed);
+            emitList();
+            return { success: true, collapsed };
         } catch (error) {
             return { success: false, error: error.message };
         }
