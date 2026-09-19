@@ -1,6 +1,7 @@
 const { app } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { normalizePixels } = require('../services/shared/pixelMap');
 
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 
@@ -47,7 +48,8 @@ const normalize = (raw = {}) => ({
         : 'Whip',
     flashNameMode: raw.flashNameMode === 'seq' ? 'seq' : 'mac',
     flashNameStart: clampInt(raw.flashNameStart, 0, 999999, 1),
-    flashNameDigits: clampInt(raw.flashNameDigits, 1, 6, 1)
+    flashNameDigits: clampInt(raw.flashNameDigits, 1, 6, 1),
+    flashPixels: normalizePixels(raw.flashPixels)
 });
 
 const loadSettings = () => {

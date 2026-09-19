@@ -11,6 +11,7 @@ const PAGE_ACTIVE = 0xFFFFFFFE;
 const VERSION2 = 0xFE;
 const CHUNK_ANY = 0xFF;
 const TYPE_U8 = 0x01;
+const TYPE_U16 = 0x02;
 const TYPE_SZ = 0x21;
 
 const nvsCrc = (buf) => {
@@ -88,6 +89,18 @@ const writePrimitiveU8 = (state, nsIndex, key, value) => {
     writeEntries(state, entry);
 };
 
+const writePrimitiveU16 = (state, nsIndex, key, value) => {
+    const entry = Buffer.alloc(ENTRY_SIZE, 0xff);
+    entry[0] = nsIndex;
+    entry[1] = TYPE_U16;
+    entry[2] = 1;
+    entry[3] = CHUNK_ANY;
+    putKey(entry, key);
+    entry.writeUInt16LE(value & 0xffff, 24);
+    setEntryCrc(entry);
+    writeEntries(state, entry);
+};
+
 const writeString = (state, nsIndex, key, value) => {
     const payload = Buffer.concat([Buffer.from(String(value), 'utf8'), Buffer.from([0])]);
     const dataSlots = Math.ceil(payload.length / ENTRY_SIZE);
@@ -138,12 +151,31 @@ const buildNvsImage = (opts = {}, size = 20480) => {
         writePrimitiveU8(state, board, 'sd_miso', pins.miso);
     }
 
+    if (opts.pmap) {
+        const pmap = addNs('pmap');
+        writePrimitiveU8(state, pmap, 'chip', opts.pmap.chip);
+        writeString(state, pmap, 'ords', opts.pmap.ords || 'grb');
+        writePrimitiveU8(state, pmap, 'data', opts.pmap.data);
+        writePrimitiveU8(state, pmap, 'clk', opts.pmap.clk);
+        writePrimitiveU16(state, pmap, 'count', opts.pmap.count);
+        writePrimitiveU16(state, pmap, 'uni', opts.pmap.uni);
+        writePrimitiveU16(state, pmap, 'ch', opts.pmap.ch);
+    }
+
+    if (opts.led && opts.led.bri != null) {
+        const led = addNs('led');
+        writePrimitiveU8(state, led, 'bri', opts.led.bri);
+    }
+
     const out = Buffer.alloc(size, 0xff);
     state.page.copy(out, 0);
     return Uint8Array.from(out);
 };
 
-const shouldWriteNvs = ({ ssid, clearWifi }) => {
+const shouldWriteNvs = ({ ssid, clearWifi, pixels }) => {
+    if (pixels) {
+        return true;
+    }
     if (clearWifi) {
         return true;
     }

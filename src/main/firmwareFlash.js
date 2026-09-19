@@ -11,6 +11,11 @@ const NodeSerialDevice = require('./nodeSerialDevice');
 const { buildNvsImage, shouldWriteNvs } = require('./nvsImage');
 const { readWlan } = require('./wlanInfo');
 const { clipName, resolveNodeName, normalizeNameOpts } = require('../services/shared/flashName');
+const {
+    addressAt,
+    chipByName,
+    validatePixels
+} = require('../services/shared/pixelMap');
 
 const DOWNLOAD_HINT = 'Hold BOOT, tap RESET, release BOOT, then try again. Close any serial monitor first.';
 const FLASH_CONCURRENCY = 4;
@@ -417,7 +422,8 @@ function setupFirmwareFlashHandlers(mainWindow) {
         nameIndex,
         longName,
         shortName,
-        clearWifi
+        clearWifi,
+        pixels
     } = {}) => {
         const portPath = String(port || '').trim();
         if (!portPath) {
@@ -448,10 +454,18 @@ function setupFirmwareFlashHandlers(mainWindow) {
                 });
                 const seqIndex = Number.isFinite(Number(nameIndex)) ? Math.max(0, Math.round(Number(nameIndex))) : 0;
                 const givenLong = clipName(longName, 63);
+                const pixelCheck = validatePixels(pixels, sdPins, seqIndex + 1);
+                if (!pixelCheck.ok) {
+                    throw new Error(pixelCheck.error);
+                }
+                const pixelMap = pixelCheck.pixels;
+                const pixelChip = pixelCheck.chip || chipByName(pixelMap.chip);
+                const addr = addressAt(pixelMap, seqIndex);
                 saveSettings({
                     flashPort: portPath,
                     flashBoardId: board.id,
                     flashSdPins: sdPins,
+                    flashPixels: pixelMap,
                     flashNamePattern: pattern || 'Whip',
                     flashNameMode: nameOpts.mode,
                     flashNameStart: nameOpts.start,
@@ -463,7 +477,8 @@ function setupFirmwareFlashHandlers(mainWindow) {
 
                 const writeNvs = shouldWriteNvs({
                     ssid: ssidTrim,
-                    clearWifi
+                    clearWifi,
+                    pixels: pixelMap
                 });
                 let nvsWritten = false;
 
@@ -494,7 +509,17 @@ function setupFirmwareFlashHandlers(mainWindow) {
                             const nvsSize = Number(flash.nvsSize) || 20480;
                             const nvsAddr = Number(flash.nvs) || 0x9000;
                             const nvsOpts = {
-                                board: { pins: sdPins }
+                                board: { pins: sdPins },
+                                pmap: {
+                                    chip: pixelChip.id,
+                                    ords: pixelMap.order,
+                                    data: pixelMap.data,
+                                    clk: pixelChip.needsClock ? pixelMap.clk : 0,
+                                    count: pixelMap.count,
+                                    uni: addr.uni,
+                                    ch: addr.ch
+                                },
+                                led: { bri: pixelMap.bri }
                             };
                             if (ssidTrim && !clearWifi) {
                                 nvsOpts.wifi = { ssid: ssidTrim, pass: passTrim };
@@ -506,6 +531,10 @@ function setupFirmwareFlashHandlers(mainWindow) {
                                 nvsOpts.node = names;
                                 logPort(portPath, `Provisioning name=${names.long}`);
                             }
+                            logPort(
+                                portPath,
+                                `Provisioning map chip=${pixelChip.name} count=${pixelMap.count} uni=${addr.uni} ch=${addr.ch}`
+                            );
                             fileArray.push({
                                 data: buildNvsImage(nvsOpts, nvsSize),
                                 address: nvsAddr

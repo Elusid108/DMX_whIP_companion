@@ -14,8 +14,10 @@
       "defaults": {
         "led": {
           "data": 14,
+          "clk": 0,
           "count": 64,
-          "order": "GRB"
+          "order": "GRB",
+          "chip": "ws2812b"
         },
         "sd": {
           "cs": 7,

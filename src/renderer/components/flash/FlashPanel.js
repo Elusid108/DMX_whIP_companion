@@ -2,6 +2,18 @@ const React = require('react');
 const { useEffect, useMemo, useRef, useState } = React;
 const ipcRenderer = require('../../ipc');
 const { resolveNodeName, normalizeNameOpts, normMac } = require('../../../services/shared/flashName');
+const {
+    CHIPS,
+    RGB_ORDERS,
+    BRIGHTNESS_WARN,
+    DEFAULT_PIXELS,
+    addressAt,
+    chipByName,
+    formatAddr,
+    normalizePixels,
+    pixelsSummary,
+    validatePixels
+} = require('../../../services/shared/pixelMap');
 
 const FLASH_CONCURRENCY = 4;
 const ARTPOLL_WAIT_MS = 30000;
@@ -109,8 +121,8 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
     const [rows, setRows] = useState([]);
     const [boards, setBoards] = useState([]);
     const [boardId, setBoardId] = useState('waveshare-s3-matrix');
-    const [ledPin, setLedPin] = useState(14);
     const [sdPins, setSdPins] = useState({ cs: 7, mosi: 6, clk: 5, miso: 4 });
+    const [pixels, setPixels] = useState(DEFAULT_PIXELS);
     const [namePattern, setNamePattern] = useState('Whip');
     const [nameMode, setNameMode] = useState('mac');
     const [nameStart, setNameStart] = useState(1);
@@ -196,8 +208,15 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
             setBoardId(nextBoardId);
             const nextBoard = nextBoards.find((item) => item.id === nextBoardId) || nextBoards[0];
             if (nextBoard && nextBoard.defaults) {
-                setLedPin(nextBoard.defaults.led.data);
                 setSdPins(settings.flashSdPins || nextBoard.defaults.sd);
+                const led = nextBoard.defaults.led || {};
+                setPixels(normalizePixels(settings.flashPixels || {
+                    data: led.data,
+                    count: led.count,
+                    order: led.order
+                }));
+            } else if (settings.flashPixels) {
+                setPixels(normalizePixels(settings.flashPixels));
             }
             setNamePattern(settings.flashNamePattern || 'Whip');
             const nameOpts = normalizeNameOpts({
@@ -306,9 +325,16 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
         setBoardId(nextId);
         const next = boards.find((item) => item.id === nextId);
         if (next && next.defaults) {
-            setLedPin(next.defaults.led.data);
             setSdPins(next.defaults.sd);
-            persist({ flashBoardId: nextId, flashSdPins: next.defaults.sd });
+            const led = next.defaults.led || {};
+            const nextPixels = normalizePixels({
+                ...pixels,
+                data: led.data,
+                count: led.count || pixels.count,
+                order: led.order || pixels.order
+            });
+            setPixels(nextPixels);
+            persist({ flashBoardId: nextId, flashSdPins: next.defaults.sd, flashPixels: nextPixels });
         }
     };
 
@@ -316,6 +342,12 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
         const next = { ...sdPins, [key]: pinValue(raw) };
         setSdPins(next);
         persist({ flashSdPins: next });
+    };
+
+    const patchPixels = (patch) => {
+        const next = normalizePixels({ ...pixels, ...patch });
+        setPixels(next);
+        persist({ flashPixels: next });
     };
 
     const persistNames = (patch) => {
@@ -482,6 +514,11 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
             setError('Select at least one COM port');
             return;
         }
+        const pixelCheck = validatePixels(pixels, sdPins, targets.length);
+        if (!pixelCheck.ok) {
+            setError(pixelCheck.error);
+            return;
+        }
         persist({
             flashSsid: ssid,
             flashPassword: password,
@@ -490,6 +527,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
             flashNameStart: nameOpts.start,
             flashNameDigits: nameOpts.digits,
             flashSdPins: sdPins,
+            flashPixels: pixelCheck.pixels,
             flashBoardId: boardId
         });
         setLog([]);
@@ -518,7 +556,8 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                 nameIndex: index,
                 longName: names.long,
                 shortName: names.short,
-                clearWifi
+                clearWifi,
+                pixels: pixelCheck.pixels
             });
             if (!result || !result.success) {
                 patchRow(row.path, {
@@ -558,6 +597,9 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
             }
         });
     });
+
+    const selectedChip = chipByName(pixels.chip);
+    const needsClock = Boolean(selectedChip && selectedChip.needsClock);
 
     const pinField = (key, label) => React.createElement(Field, { label },
         React.createElement('input', {
@@ -623,6 +665,9 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                 }, 'No serial ports. Plug in a board and Refresh.'),
                 rows.map((row, index) => {
                     const preview = row.name || previewName(row, index);
+                    const addr = row.selected
+                        ? formatAddr(addressAt(pixels, nameIndexFor(row.path, index)))
+                        : '';
                     return React.createElement('div', {
                         key: row.path,
                         className: `kv-row items-start ${row.selected ? 'is-active' : ''}`
@@ -648,7 +693,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                             }, [row.chip, row.mac].filter(Boolean).join(' · ') || '—'),
                             React.createElement('div', {
                                 className: 'readout truncate'
-                            }, preview || '—'),
+                            }, preview ? (addr ? `${preview} · ${addr}` : preview) : '—'),
                             React.createElement('div', {
                                 className: 'h-1.5 mt-1 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden'
                             },
@@ -834,29 +879,17 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
             password && password.length > 0 && password.length < 8 && React.createElement('p', {
                 className: 'text-sm text-amber-600 dark:text-amber-400'
             }, 'WPA passwords are usually 8+ characters. Empty means an open network.'),
-            React.createElement('div', {
-                className: 'grid grid-cols-2 gap-2'
-            },
-                React.createElement(Field, { label: 'LED data (read-only)' },
+            React.createElement(Field, { label: 'NVS' },
+                React.createElement('label', {
+                    className: 'flex items-center gap-2 text-sm pt-1.5'
+                },
                     React.createElement('input', {
-                        className: 'field',
-                        value: ledPin,
-                        disabled: true,
-                        readOnly: true
-                    })
-                ),
-                React.createElement(Field, { label: 'NVS' },
-                    React.createElement('label', {
-                        className: 'flex items-center gap-2 text-sm pt-1.5'
-                    },
-                        React.createElement('input', {
-                            type: 'checkbox',
-                            checked: clearWifi,
-                            disabled: busy,
-                            onChange: (event) => setClearWifi(event.target.checked)
-                        }),
-                        'Clear saved Wi-Fi (omit STA keys)'
-                    )
+                        type: 'checkbox',
+                        checked: clearWifi,
+                        disabled: busy,
+                        onChange: (event) => setClearWifi(event.target.checked)
+                    }),
+                    'Clear saved Wi-Fi (omit STA keys)'
                 )
             ),
             React.createElement('div', {
@@ -867,6 +900,132 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                 pinField('clk', 'SD CLK'),
                 pinField('miso', 'SD MISO')
             ),
+            React.createElement('div', {
+                className: 'grid grid-cols-2 gap-2'
+            },
+                React.createElement(Field, { label: 'IC' },
+                    React.createElement('select', {
+                        className: 'field',
+                        value: pixels.chip,
+                        disabled: busy,
+                        onChange: (event) => patchPixels({ chip: event.target.value })
+                    },
+                        CHIPS.map((item) => React.createElement('option', {
+                            key: item.name,
+                            value: item.name
+                        }, item.label))
+                    )
+                ),
+                React.createElement(Field, { label: 'Color order' },
+                    React.createElement('select', {
+                        className: 'field',
+                        value: pixels.order,
+                        disabled: busy,
+                        onChange: (event) => patchPixels({ order: event.target.value })
+                    },
+                        RGB_ORDERS.map((order) => React.createElement('option', {
+                            key: order,
+                            value: order
+                        }, order.toUpperCase()))
+                    )
+                ),
+                React.createElement(Field, { label: 'Pixel count' },
+                    React.createElement('input', {
+                        type: 'number',
+                        min: 1,
+                        max: 1024,
+                        className: 'field',
+                        value: pixels.count,
+                        disabled: busy,
+                        onChange: (event) => patchPixels({ count: event.target.value })
+                    })
+                ),
+                React.createElement(Field, { label: 'Brightness' },
+                    React.createElement('input', {
+                        type: 'number',
+                        min: 0,
+                        max: 255,
+                        className: 'field',
+                        value: pixels.bri,
+                        disabled: busy,
+                        onChange: (event) => patchPixels({ bri: event.target.value })
+                    })
+                ),
+                React.createElement(Field, { label: 'LED data' },
+                    React.createElement('input', {
+                        type: 'number',
+                        min: 0,
+                        max: 48,
+                        className: 'field',
+                        value: pixels.data,
+                        disabled: busy,
+                        onChange: (event) => patchPixels({ data: event.target.value })
+                    })
+                ),
+                needsClock
+                    ? React.createElement(Field, { label: 'Clock GPIO' },
+                        React.createElement('input', {
+                            type: 'number',
+                            min: 0,
+                            max: 48,
+                            className: 'field',
+                            value: pixels.clk,
+                            disabled: busy,
+                            onChange: (event) => patchPixels({ clk: event.target.value })
+                        })
+                    )
+                    : React.createElement('div', null),
+                React.createElement(Field, { label: 'Start universe' },
+                    React.createElement('input', {
+                        type: 'number',
+                        min: 0,
+                        max: 32767,
+                        className: 'field',
+                        value: pixels.startUni,
+                        disabled: busy,
+                        onChange: (event) => patchPixels({ startUni: event.target.value })
+                    })
+                ),
+                React.createElement(Field, { label: 'Start channel' },
+                    React.createElement('input', {
+                        type: 'number',
+                        min: 1,
+                        max: 512,
+                        className: 'field',
+                        value: pixels.startCh,
+                        disabled: busy,
+                        onChange: (event) => patchPixels({ startCh: event.target.value })
+                    })
+                ),
+                React.createElement(Field, { label: 'Universe offset' },
+                    React.createElement('input', {
+                        type: 'number',
+                        min: 0,
+                        max: 32767,
+                        className: 'field',
+                        value: pixels.uniStep,
+                        disabled: busy,
+                        onChange: (event) => patchPixels({ uniStep: event.target.value })
+                    })
+                ),
+                React.createElement(Field, { label: 'Channel offset' },
+                    React.createElement('input', {
+                        type: 'number',
+                        min: 0,
+                        max: 32767,
+                        className: 'field',
+                        value: pixels.chStep,
+                        disabled: busy,
+                        onChange: (event) => patchPixels({ chStep: event.target.value })
+                    })
+                )
+            ),
+            React.createElement('p', {
+                className: 'readout'
+            }, pixelsSummary(pixels)),
+            pixels.bri > BRIGHTNESS_WARN && React.createElement('p', {
+                className: 'text-sm text-amber-600 dark:text-amber-400'
+            }, `Brightness ${pixels.bri} is above ${BRIGHTNESS_WARN}. This panel can overheat.`),
             artifactNote && React.createElement('p', {
                 className: 'readout'
             }, `Image: ${artifactNote}`),
