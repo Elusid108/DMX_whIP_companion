@@ -10,10 +10,29 @@ const macSuffix = (mac) => {
 
 const normMac = (mac) => String(mac || '').toLowerCase().replace(/[^0-9a-f]/g, '');
 
-const resolveNodeName = (pattern, mac, index = 0) => {
+const clampInt = (value, min, max, fallback) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+        return fallback;
+    }
+    return Math.max(min, Math.min(max, Math.round(n)));
+};
+
+const normalizeNameOpts = (raw = {}) => ({
+    mode: raw.mode === 'seq' ? 'seq' : 'mac',
+    start: clampInt(raw.start, 0, 999999, 1),
+    digits: clampInt(raw.digits, 1, 6, 1)
+});
+
+const formatSeq = (start, index, digits) => String(Math.max(0, start + index)).padStart(digits, '0');
+
+const resolveNodeName = (pattern, mac, index = 0, opts = {}) => {
     const base = clipName(pattern || 'Whip', 40) || 'Whip';
-    const suffix = macSuffix(mac);
-    const long = clipName(suffix ? `${base}-${suffix}` : `${base}-${index + 1}`, LONG_MAX);
+    const { mode, start, digits } = normalizeNameOpts(opts);
+    const suffix = mode === 'seq'
+        ? formatSeq(start, index, digits)
+        : (macSuffix(mac) || formatSeq(1, index, 1));
+    const long = clipName(`${base}-${suffix}`, LONG_MAX);
     return {
         long,
         short: clipName(long, SHORT_MAX)
@@ -26,5 +45,6 @@ module.exports = {
     clipName,
     macSuffix,
     normMac,
+    normalizeNameOpts,
     resolveNodeName
 };

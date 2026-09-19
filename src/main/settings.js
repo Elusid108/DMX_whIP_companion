@@ -13,6 +13,14 @@ const pinOrDefault = (value, fallback) => {
     return Number.isInteger(n) && n >= 0 && n <= 48 ? n : fallback;
 };
 
+const clampInt = (value, min, max, fallback) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+        return fallback;
+    }
+    return Math.max(min, Math.min(max, Math.round(n)));
+};
+
 const normalizeSdPins = (raw = {}) => ({
     cs: pinOrDefault(raw.cs, defaultSdPins.cs),
     mosi: pinOrDefault(raw.mosi, defaultSdPins.mosi),
@@ -36,7 +44,10 @@ const normalize = (raw = {}) => ({
     flashPassword: typeof raw.flashPassword === 'string' ? raw.flashPassword : '',
     flashNamePattern: typeof raw.flashNamePattern === 'string' && raw.flashNamePattern.trim()
         ? raw.flashNamePattern.trim()
-        : 'Whip'
+        : 'Whip',
+    flashNameMode: raw.flashNameMode === 'seq' ? 'seq' : 'mac',
+    flashNameStart: clampInt(raw.flashNameStart, 0, 999999, 1),
+    flashNameDigits: clampInt(raw.flashNameDigits, 1, 6, 1)
 });
 
 const loadSettings = () => {

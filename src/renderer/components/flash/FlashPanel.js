@@ -1,7 +1,7 @@
 const React = require('react');
 const { useEffect, useMemo, useRef, useState } = React;
 const ipcRenderer = require('../../ipc');
-const { resolveNodeName, normMac } = require('../../../services/shared/flashName');
+const { resolveNodeName, normalizeNameOpts, normMac } = require('../../../services/shared/flashName');
 
 const FLASH_CONCURRENCY = 4;
 const ARTPOLL_WAIT_MS = 30000;
@@ -13,6 +13,24 @@ const Field = ({ label, children }) => React.createElement('div', {
         className: 'label-micro'
     }, label),
     children
+);
+
+const EyeIcon = ({ off }) => React.createElement('svg', {
+    xmlns: 'http://www.w3.org/2000/svg',
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    className: 'w-3.5 h-3.5',
+    'aria-hidden': true
+},
+    React.createElement('path', {
+        d: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z'
+    }),
+    React.createElement('circle', { cx: 12, cy: 12, r: 3 }),
+    off && React.createElement('path', { d: 'M3 3l18 18' })
 );
 
 const pinValue = (value) => {
@@ -94,8 +112,12 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
     const [ledPin, setLedPin] = useState(14);
     const [sdPins, setSdPins] = useState({ cs: 7, mosi: 6, clk: 5, miso: 4 });
     const [namePattern, setNamePattern] = useState('Whip');
+    const [nameMode, setNameMode] = useState('mac');
+    const [nameStart, setNameStart] = useState(1);
+    const [nameDigits, setNameDigits] = useState(1);
     const [ssid, setSsid] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [clearWifi, setClearWifi] = useState(false);
     const [wlan, setWlan] = useState({ current: null, networks: [] });
     const [artifactNote, setArtifactNote] = useState('');
@@ -178,6 +200,14 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                 setSdPins(settings.flashSdPins || nextBoard.defaults.sd);
             }
             setNamePattern(settings.flashNamePattern || 'Whip');
+            const nameOpts = normalizeNameOpts({
+                mode: settings.flashNameMode,
+                start: settings.flashNameStart,
+                digits: settings.flashNameDigits
+            });
+            setNameMode(nameOpts.mode);
+            setNameStart(nameOpts.start);
+            setNameDigits(nameOpts.digits);
             const savedSsid = settings.flashSsid || '';
             setPassword(typeof settings.flashPassword === 'string' ? settings.flashPassword : '');
             if (savedSsid) {
@@ -244,25 +274,33 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
     }, [log]);
 
     const selectedRows = rows.filter((row) => row.selected);
-    const selectedNetwork = useMemo(() => {
-        if (!ssid) {
-            return null;
-        }
-        return (wlan.networks || []).find((item) => item.ssid.toLowerCase() === ssid.toLowerCase()) || null;
-    }, [ssid, wlan.networks]);
+    const nameOpts = useMemo(() => normalizeNameOpts({
+        mode: nameMode,
+        start: nameStart,
+        digits: nameDigits
+    }), [nameMode, nameStart, nameDigits]);
+
+    const nameIndexFor = (path, fallbackIndex = 0) => {
+        const amongSelected = selectedRows.findIndex((row) => row.path === path);
+        return amongSelected >= 0 ? amongSelected : fallbackIndex;
+    };
+
+    const previewName = (row, fallbackIndex = 0) => resolveNodeName(
+        namePattern,
+        row.mac,
+        nameIndexFor(row.path, fallbackIndex),
+        nameOpts
+    ).long;
 
     const bandWarning = useMemo(() => {
         if (!ssid) {
             return '';
         }
-        if (selectedNetwork && selectedNetwork.is24ghz === false) {
-            return `"${ssid}" looks 5 GHz-only in the PC scan. ESP32-S3 can join 2.4 GHz only.`;
-        }
         if (wlan.current && wlan.current.ssid === ssid && wlan.current.is24ghz === false) {
             return 'This PC is on 5 GHz. The S3 can only join 2.4 GHz — it will fail if this SSID has no 2.4 GHz radio.';
         }
         return '';
-    }, [ssid, selectedNetwork, wlan.current]);
+    }, [ssid, wlan.current]);
 
     const handleBoardChange = (nextId) => {
         setBoardId(nextId);
@@ -280,13 +318,53 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
         persist({ flashSdPins: next });
     };
 
+    const persistNames = (patch) => {
+        const nextPattern = patch.flashNamePattern != null ? patch.flashNamePattern : namePattern;
+        const nextOpts = normalizeNameOpts({
+            mode: patch.flashNameMode != null ? patch.flashNameMode : nameMode,
+            start: patch.flashNameStart != null ? patch.flashNameStart : nameStart,
+            digits: patch.flashNameDigits != null ? patch.flashNameDigits : nameDigits
+        });
+        persist({
+            flashNamePattern: nextPattern || 'Whip',
+            flashNameMode: nextOpts.mode,
+            flashNameStart: nextOpts.start,
+            flashNameDigits: nextOpts.digits
+        });
+        setRows((prev) => {
+            const selected = prev.filter((row) => row.selected);
+            return prev.map((row, index) => {
+                const amongSelected = selected.findIndex((item) => item.path === row.path);
+                const nameIndex = amongSelected >= 0 ? amongSelected : index;
+                return {
+                    ...row,
+                    name: resolveNodeName(nextPattern, row.mac, nameIndex, nextOpts).long
+                };
+            });
+        });
+    };
+
     const handleNamePattern = (next) => {
         setNamePattern(next);
-        persist({ flashNamePattern: next || 'Whip' });
-        setRows((prev) => prev.map((row, index) => ({
-            ...row,
-            name: row.mac || next ? resolveNodeName(next, row.mac, index).long : ''
-        })));
+        persistNames({ flashNamePattern: next || 'Whip' });
+    };
+
+    const handleNameMode = (next) => {
+        const mode = next === 'seq' ? 'seq' : 'mac';
+        setNameMode(mode);
+        persistNames({ flashNameMode: mode });
+    };
+
+    const handleNameStart = (raw) => {
+        const start = normalizeNameOpts({ start: raw }).start;
+        setNameStart(start);
+        persistNames({ flashNameStart: start });
+    };
+
+    const handleNameDigits = (raw) => {
+        const digits = normalizeNameOpts({ digits: raw }).digits;
+        setNameDigits(digits);
+        persistNames({ flashNameDigits: digits });
     };
 
     const handleSsid = (next) => {
@@ -297,12 +375,6 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
     const handlePassword = (next) => {
         setPassword(next);
         persist({ flashPassword: next });
-    };
-
-    const useCurrentSsid = () => {
-        if (wlan.current && wlan.current.ssid) {
-            handleSsid(wlan.current.ssid);
-        }
     };
 
     const toggleAll = (checked) => {
@@ -394,7 +466,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                 });
                 return;
             }
-            const names = resolveNodeName(namePattern, result.mac, index);
+            const names = resolveNodeName(namePattern, result.mac, index, nameOpts);
             patchRow(row.path, {
                 chip: result.chip || '',
                 mac: result.mac || '',
@@ -414,12 +486,15 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
             flashSsid: ssid,
             flashPassword: password,
             flashNamePattern: namePattern || 'Whip',
+            flashNameMode: nameOpts.mode,
+            flashNameStart: nameOpts.start,
+            flashNameDigits: nameOpts.digits,
             flashSdPins: sdPins,
             flashBoardId: boardId
         });
         setLog([]);
         await runPool(targets, async (row, index) => {
-            const names = resolveNodeName(namePattern, row.mac, index);
+            const names = resolveNodeName(namePattern, row.mac, index, nameOpts);
             patchRow(row.path, {
                 name: names.long,
                 error: '',
@@ -437,6 +512,10 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                 ssid: clearWifi ? '' : ssid,
                 password: clearWifi ? '' : password,
                 namePattern,
+                nameMode: nameOpts.mode,
+                nameStart: nameOpts.start,
+                nameDigits: nameOpts.digits,
+                nameIndex: index,
                 longName: names.long,
                 shortName: names.short,
                 clearWifi
@@ -543,7 +622,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                     className: 'text-zinc-500 text-xs italic p-2'
                 }, 'No serial ports. Plug in a board and Refresh.'),
                 rows.map((row, index) => {
-                    const preview = row.name || resolveNodeName(namePattern, row.mac, index).long;
+                    const preview = row.name || previewName(row, index);
                     return React.createElement('div', {
                         key: row.path,
                         className: `kv-row items-start ${row.selected ? 'is-active' : ''}`
@@ -620,7 +699,10 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
             }, log.join('\n') || 'Log output appears here. Passwords are not printed.')
         ),
         React.createElement('div', {
-            className: 'flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3'
+            className: 'flex-1 min-h-0 overflow-y-auto p-3'
+        },
+        React.createElement('div', {
+            className: 'max-w-xl mx-auto w-full flex flex-col gap-3'
         },
             React.createElement('div', {
                 className: 'status-strip'
@@ -645,72 +727,102 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                         onChange: (event) => handleNamePattern(event.target.value)
                     })
                 ),
-                React.createElement(Field, { label: 'Board' },
+                React.createElement(Field, { label: 'Suffix' },
                     React.createElement('select', {
                         className: 'field',
-                        value: boardId,
-                        disabled: busy || boards.length < 2,
-                        onChange: (event) => handleBoardChange(event.target.value)
+                        value: nameMode,
+                        disabled: busy,
+                        onChange: (event) => handleNameMode(event.target.value)
                     },
-                        boards.map((item) => React.createElement('option', {
-                            key: item.id,
-                            value: item.id
-                        }, item.name))
+                        React.createElement('option', { value: 'mac' }, 'Last 4 of MAC'),
+                        React.createElement('option', { value: 'seq' }, 'Numeric sequential')
                     )
+                )
+            ),
+            nameMode === 'seq' && React.createElement('div', {
+                className: 'grid grid-cols-2 gap-2'
+            },
+                React.createElement(Field, { label: 'Start' },
+                    React.createElement('input', {
+                        className: 'field',
+                        type: 'number',
+                        min: 0,
+                        max: 999999,
+                        value: nameStart,
+                        disabled: busy,
+                        onChange: (event) => handleNameStart(event.target.value)
+                    })
+                ),
+                React.createElement(Field, { label: 'Digits' },
+                    React.createElement('input', {
+                        className: 'field',
+                        type: 'number',
+                        min: 1,
+                        max: 6,
+                        value: nameDigits,
+                        disabled: busy,
+                        onChange: (event) => handleNameDigits(event.target.value)
+                    })
+                )
+            ),
+            React.createElement(Field, { label: 'Board' },
+                React.createElement('select', {
+                    className: 'field',
+                    value: boardId,
+                    disabled: busy || boards.length < 2,
+                    onChange: (event) => handleBoardChange(event.target.value)
+                },
+                    boards.map((item) => React.createElement('option', {
+                        key: item.id,
+                        value: item.id
+                    }, item.name))
                 )
             ),
             React.createElement('p', {
                 className: 'readout -mt-1'
-            }, 'Long name is pattern plus last 4 hex of the MAC (Whip-A4F2), written with Wi-Fi. Leave SSID empty to keep existing NVS (firmware-only).'),
+            }, nameMode === 'seq'
+                ? `Selected ports are ${namePattern || 'Whip'}-${String(nameStart).padStart(nameDigits, '0')}, then +1. Digits 1 → 1, digits 4 → 0001. Leave SSID empty to keep existing NVS (firmware-only).`
+                : 'Long name is pattern plus last 4 hex of the MAC (Whip-A4F2), written with Wi-Fi. Leave SSID empty to keep existing NVS (firmware-only).'),
             React.createElement('div', {
                 className: 'grid grid-cols-2 gap-2'
             },
                 React.createElement(Field, { label: 'SSID' },
+                    React.createElement('input', {
+                        className: 'field',
+                        value: ssid,
+                        maxLength: 32,
+                        disabled: busy || clearWifi,
+                        placeholder: wlan.current && wlan.current.ssid
+                            ? wlan.current.ssid
+                            : 'Network name or hidden SSID',
+                        onChange: (event) => handleSsid(event.target.value)
+                    })
+                ),
+                React.createElement(Field, { label: 'Password' },
                     React.createElement('div', {
                         className: 'flex gap-1'
                     },
                         React.createElement('input', {
+                            type: showPassword ? 'text' : 'password',
                             className: 'field',
-                            list: 'flash-ssid-list',
-                            value: ssid,
-                            maxLength: 32,
+                            value: password,
+                            maxLength: 63,
                             disabled: busy || clearWifi,
-                            placeholder: wlan.current && wlan.current.ssid
-                                ? wlan.current.ssid
-                                : 'Network name or hidden SSID',
-                            onChange: (event) => handleSsid(event.target.value)
+                            autoComplete: 'off',
+                            placeholder: 'Empty = open network',
+                            onChange: (event) => handlePassword(event.target.value)
                         }),
-                        React.createElement('datalist', { id: 'flash-ssid-list' },
-                            (wlan.networks || []).map((item) => React.createElement('option', {
-                                key: item.ssid,
-                                value: item.ssid
-                            }, `${item.band || 'band ?'}${item.is24ghz === false ? ' · 5 GHz' : ''}`))
-                        ),
                         React.createElement('button', {
                             type: 'button',
-                            className: 'btn-quiet flex-none',
-                            disabled: busy,
-                            onClick: () => refreshWlan()
-                        }, 'Scan'),
-                        React.createElement('button', {
-                            type: 'button',
-                            className: 'btn-quiet flex-none',
-                            disabled: busy || !(wlan.current && wlan.current.ssid),
-                            onClick: useCurrentSsid
-                        }, 'PC Wi-Fi')
+                            className: 'btn-quiet flex-none p-1.5',
+                            disabled: busy || clearWifi,
+                            title: showPassword ? 'Hide password' : 'Show password',
+                            'aria-label': showPassword ? 'Hide password' : 'Show password',
+                            onClick: () => setShowPassword((prev) => !prev)
+                        },
+                            React.createElement(EyeIcon, { off: showPassword })
+                        )
                     )
-                ),
-                React.createElement(Field, { label: 'Password' },
-                    React.createElement('input', {
-                        type: 'password',
-                        className: 'field',
-                        value: password,
-                        maxLength: 63,
-                        disabled: busy || clearWifi,
-                        autoComplete: 'off',
-                        placeholder: 'Empty = open network',
-                        onChange: (event) => handlePassword(event.target.value)
-                    })
                 )
             ),
             wlan.current && wlan.current.ssid && React.createElement('p', {
@@ -764,6 +876,7 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
             error && React.createElement('p', {
                 className: 'text-sm text-red-500'
             }, error)
+        )
         )
     );
 };

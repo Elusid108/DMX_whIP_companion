@@ -10,7 +10,7 @@ const { loadSettings, saveSettings } = require('./settings');
 const NodeSerialDevice = require('./nodeSerialDevice');
 const { buildNvsImage, shouldWriteNvs } = require('./nvsImage');
 const { readWlan } = require('./wlanInfo');
-const { clipName, resolveNodeName } = require('../services/shared/flashName');
+const { clipName, resolveNodeName, normalizeNameOpts } = require('../services/shared/flashName');
 
 const DOWNLOAD_HINT = 'Hold BOOT, tap RESET, release BOOT, then try again. Close any serial monitor first.';
 const FLASH_CONCURRENCY = 4;
@@ -411,6 +411,10 @@ function setupFirmwareFlashHandlers(mainWindow) {
         ssid,
         password,
         namePattern,
+        nameMode,
+        nameStart,
+        nameDigits,
+        nameIndex,
         longName,
         shortName,
         clearWifi
@@ -437,11 +441,21 @@ function setupFirmwareFlashHandlers(mainWindow) {
                 const ssidTrim = clipName(ssid, 32);
                 const passTrim = password == null ? '' : String(password);
                 const pattern = clipName(namePattern, 40);
+                const nameOpts = normalizeNameOpts({
+                    mode: nameMode,
+                    start: nameStart,
+                    digits: nameDigits
+                });
+                const seqIndex = Number.isFinite(Number(nameIndex)) ? Math.max(0, Math.round(Number(nameIndex))) : 0;
                 const givenLong = clipName(longName, 63);
                 saveSettings({
                     flashPort: portPath,
                     flashBoardId: board.id,
                     flashSdPins: sdPins,
+                    flashNamePattern: pattern || 'Whip',
+                    flashNameMode: nameOpts.mode,
+                    flashNameStart: nameOpts.start,
+                    flashNameDigits: nameOpts.digits,
                     ...(ssidTrim ? { flashSsid: ssidTrim, flashPassword: passTrim } : {})
                 });
                 logPort(portPath, `Using image from ${artifacts.source}`);
@@ -468,7 +482,7 @@ function setupFirmwareFlashHandlers(mainWindow) {
                             mac = '';
                         }
                         const names = pattern
-                            ? resolveNodeName(pattern, mac)
+                            ? resolveNodeName(pattern, mac, seqIndex, nameOpts)
                             : (givenLong
                                 ? { long: givenLong, short: clipName(shortName || givenLong, 17) }
                                 : { long: '', short: '' });
