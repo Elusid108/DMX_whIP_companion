@@ -1,4 +1,5 @@
 const React = require('react');
+const UniverseActivityGrid = require('./UniverseActivityGrid');
 
 const UniverseCell = ({
     universe,
@@ -19,21 +20,36 @@ const UniverseCell = ({
         className: `kv-row ${isSelected ? 'is-active' : ''}`
     },
         React.createElement('div', {
-            className: 'flex items-center gap-2 w-full min-w-0'
+            className: 'flex items-start gap-2 w-full min-w-0'
         },
             React.createElement('input', {
                 type: 'checkbox',
                 checked: isChecked,
                 onChange: onSelect,
-                className: 'h-3.5 w-3.5 flex-none accent-cyan-400'
+                className: 'h-3.5 w-3.5 flex-none mt-0.5 accent-cyan-400'
             }),
             React.createElement('div', {
-                className: 'flex-grow cursor-pointer min-w-0',
+                className: 'flex flex-col min-w-0 flex-1 cursor-pointer',
                 onClick: onClick
             },
                 React.createElement('div', {
-                    className: 'font-medium text-sm'
-                }, `Universe ${universeId}${isStale ? ' (Inactive)' : ''}`),
+                    className: 'flex items-start gap-2 min-w-0'
+                },
+                    React.createElement('div', {
+                        className: 'min-w-0 flex-1'
+                    },
+                        React.createElement('div', {
+                            className: 'font-medium text-sm'
+                        }, `Universe ${universeId}${isStale ? ' (Inactive)' : ''}`),
+                        typeof fps === 'number' && React.createElement('div', {
+                            className: 'text-xs text-zinc-500'
+                        }, `FPS: ${fps}`)
+                    ),
+                    React.createElement(UniverseActivityGrid, {
+                        protocol,
+                        universeId
+                    })
+                ),
                 React.createElement('div', {
                     className: 'text-xs text-zinc-500'
                 }, `Channels: ${channels}`),
@@ -42,10 +58,7 @@ const UniverseCell = ({
                 }, `Source: ${sourceIp}`),
                 sourceName && React.createElement('div', {
                     className: 'text-xs text-zinc-500 truncate'
-                }, `Name: ${sourceName}`),
-                typeof fps === 'number' && React.createElement('div', {
-                    className: 'text-xs text-zinc-500'
-                }, `FPS: ${fps}`)
+                }, `Name: ${sourceName}`)
             )
         )
     );

@@ -13,6 +13,8 @@ const CHUNK_ANY = 0xFF;
 const TYPE_U8 = 0x01;
 const TYPE_U16 = 0x02;
 const TYPE_SZ = 0x21;
+const TYPE_BLOB_DATA = 0x42;
+const TYPE_BLOB_IDX = 0x48;
 
 const nvsCrc = (buf) => {
     if (typeof zlib.crc32 === 'function') {
@@ -117,6 +119,34 @@ const writeString = (state, nsIndex, key, value) => {
     writeEntries(state, payload);
 };
 
+const writeBlob = (state, nsIndex, key, value) => {
+    const payload = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    const dataSlots = Math.ceil(payload.length / ENTRY_SIZE) || 1;
+    const entry = Buffer.alloc(ENTRY_SIZE, 0xff);
+    entry[0] = nsIndex;
+    entry[1] = TYPE_BLOB_DATA;
+    entry[2] = dataSlots + 1;
+    entry[3] = 0;
+    putKey(entry, key);
+    entry.writeUInt16LE(payload.length, 24);
+    entry.writeUInt32LE(nvsCrc(payload), 28);
+    setEntryCrc(entry);
+    writeEntries(state, entry);
+    writeEntries(state, payload);
+
+    const idx = Buffer.alloc(ENTRY_SIZE, 0xff);
+    idx[0] = nsIndex;
+    idx[1] = TYPE_BLOB_IDX;
+    idx[2] = 1;
+    idx[3] = CHUNK_ANY;
+    putKey(idx, key);
+    idx.writeUInt32LE(payload.length, 24);
+    idx[28] = 1;
+    idx[29] = 0;
+    setEntryCrc(idx);
+    writeEntries(state, idx);
+};
+
 const buildNvsImage = (opts = {}, size = 20480) => {
     if (size < PAGE_SIZE * 2 || size % PAGE_SIZE !== 0) {
         throw new Error('NVS size must be a multiple of 4096 and at least two pages');
@@ -160,6 +190,24 @@ const buildNvsImage = (opts = {}, size = 20480) => {
         writePrimitiveU16(state, pmap, 'count', opts.pmap.count);
         writePrimitiveU16(state, pmap, 'uni', opts.pmap.uni);
         writePrimitiveU16(state, pmap, 'ch', opts.pmap.ch);
+        if (opts.pmap.white != null) {
+            writePrimitiveU8(state, pmap, 'white', opts.pmap.white ? 1 : 0);
+        }
+        if (opts.pmap.cct != null) {
+            writePrimitiveU8(state, pmap, 'cct', opts.pmap.cct ? 1 : 0);
+        }
+        if (opts.pmap.proto != null) {
+            writePrimitiveU8(state, pmap, 'proto', opts.pmap.proto);
+        }
+        if (opts.pmap.bri != null) {
+            writePrimitiveU8(state, pmap, 'bri', opts.pmap.bri);
+        }
+        if (opts.pmap.n != null) {
+            writePrimitiveU8(state, pmap, 'n', opts.pmap.n);
+        }
+        if (opts.pmap.blob) {
+            writeBlob(state, pmap, 'blob', opts.pmap.blob);
+        }
     }
 
     if (opts.led && opts.led.bri != null) {

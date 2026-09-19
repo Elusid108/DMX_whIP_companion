@@ -3,6 +3,9 @@ const UNIVERSE_SIZE = 512;
 const MAX_UNIVERSES = 6;
 const MAX_ARTNET_UNI = 32767;
 const MAX_COUNT = 1024;
+const MAX_OUTPUTS = 8;
+const MAX_SEGMENTS = 24;
+const LIVE_SLOTS = 16;
 const S3_GPIO_MAX = 48;
 const BRIGHTNESS_WARN = 64;
 
@@ -52,8 +55,13 @@ const DEFAULT_PIXELS = {
     startUni: 0,
     startCh: 1,
     uniStep: 1,
-    chStep: 0
+    chStep: 0,
+    white: false,
+    cct: false,
+    proto: 'auto'
 };
+
+const PROTO_IDS = { auto: 0, artnet: 1, sacn: 2 };
 
 const clampInt = (value, min, max, fallback) => {
     const n = Number(value);
@@ -77,11 +85,17 @@ const resolveChip = (raw) => {
     return chipByName(raw);
 };
 
-const channelCount = (count) => Math.max(0, Number(count) || 0) * RGB_CHANNELS;
+const channelsPerPixel = (raw = {}) => (
+    RGB_CHANNELS + (raw.white ? 1 : 0) + (raw.cct ? 1 : 0)
+);
 
-const nodeSpanUniverses = (startCh, count) => {
+const channelCount = (count, raw) => (
+    Math.max(0, Number(count) || 0) * channelsPerPixel(raw)
+);
+
+const nodeSpanUniverses = (startCh, count, raw) => {
     const first = clampInt(startCh, 1, UNIVERSE_SIZE, 1) - 1;
-    const last = first + channelCount(count) - 1;
+    const last = first + channelCount(count, raw) - 1;
     if (last < first) {
         return 1;
     }
@@ -126,18 +140,26 @@ const validDataGpio = (pin, sdPins) => {
 
 const normalizePixels = (raw = {}) => {
     const chip = resolveChip(raw.chip) || chipByName(DEFAULT_PIXELS.chip);
+    const white = Boolean(raw.white);
+    const cct = Boolean(raw.cct);
     const orderRaw = String(raw.order || DEFAULT_PIXELS.order).trim().toLowerCase();
+    const protoRaw = String(raw.proto || DEFAULT_PIXELS.proto).trim().toLowerCase();
+    const want = channelsPerPixel({ white, cct });
+    const order = orderRaw.length === want ? orderRaw : (white && cct ? 'grbwc' : white ? 'grbw' : cct ? 'grbc' : DEFAULT_PIXELS.order);
     return {
         chip: chip.name,
-        order: RGB_ORDERS.includes(orderRaw) ? orderRaw : DEFAULT_PIXELS.order,
+        order: RGB_ORDERS.includes(order) || order.length === want ? order : DEFAULT_PIXELS.order,
         count: clampInt(raw.count, 1, MAX_COUNT, DEFAULT_PIXELS.count),
         data: clampInt(raw.data, 0, S3_GPIO_MAX, DEFAULT_PIXELS.data),
         clk: clampInt(raw.clk, 0, S3_GPIO_MAX, DEFAULT_PIXELS.clk),
         bri: clampInt(raw.bri, 0, 255, DEFAULT_PIXELS.bri),
-        startUni: clampInt(raw.startUni, 0, MAX_ARTNET_UNI, DEFAULT_PIXELS.startUni),
-        startCh: clampInt(raw.startCh, 1, UNIVERSE_SIZE, DEFAULT_PIXELS.startCh),
+        startUni: clampInt(raw.startUni != null ? raw.startUni : raw.artnet, 0, MAX_ARTNET_UNI, DEFAULT_PIXELS.startUni),
+        startCh: clampInt(raw.startCh != null ? raw.startCh : raw.ch, 1, UNIVERSE_SIZE, DEFAULT_PIXELS.startCh),
         uniStep: clampInt(raw.uniStep, 0, MAX_ARTNET_UNI, DEFAULT_PIXELS.uniStep),
-        chStep: clampInt(raw.chStep, 0, 32767, DEFAULT_PIXELS.chStep)
+        chStep: clampInt(raw.chStep, 0, 32767, DEFAULT_PIXELS.chStep),
+        white,
+        cct,
+        proto: PROTO_IDS[protoRaw] != null ? protoRaw : DEFAULT_PIXELS.proto
     };
 };
 
@@ -164,7 +186,7 @@ const validatePixels = (raw, sdPins, nodeCount = 1) => {
         if (addr.uni < 0 || addr.uni > MAX_ARTNET_UNI) {
             return { ok: false, error: `Start universe for node ${i + 1} is out of range`, pixels };
         }
-        if (nodeSpanUniverses(addr.ch, pixels.count) > MAX_UNIVERSES) {
+        if (nodeSpanUniverses(addr.ch, pixels.count, pixels) > MAX_UNIVERSES) {
             return {
                 ok: false,
                 error: `Node ${i + 1} needs more than ${MAX_UNIVERSES} universes at U${addr.uni} ch ${addr.ch}`,
@@ -178,7 +200,98 @@ const validatePixels = (raw, sdPins, nodeCount = 1) => {
 const pixelsSummary = (raw) => {
     const pixels = normalizePixels(raw);
     const next = addressAt(pixels, 1);
-    return `${pixels.count} px · ${channelCount(pixels.count)} ch · next node ${formatAddr(next)}`;
+    return `${pixels.count} px · ${channelCount(pixels.count, pixels)} ch · next node ${formatAddr(next)}`;
+};
+
+const normalizeOutputs = (status = {}) => {
+    if (Array.isArray(status.outputs) && status.outputs.length) {
+        return status.outputs.map((out) => ({
+            data: clampInt(out.data, 0, S3_GPIO_MAX, DEFAULT_PIXELS.data),
+            clk: clampInt(out.clk, 0, S3_GPIO_MAX, DEFAULT_PIXELS.clk),
+            chip: (resolveChip(out.chip) || chipByName(DEFAULT_PIXELS.chip)).name,
+            segs: (out.segs || []).map((seg) => normalizePixels({
+                ...seg,
+                chip: out.chip,
+                data: out.data,
+                clk: out.clk,
+                startUni: seg.artnet,
+                startCh: seg.ch,
+                bri: seg.bri
+            }))
+        })).filter((out) => out.segs.length);
+    }
+    const map = status.map || {};
+    const pixels = normalizePixels({
+        ...map,
+        startUni: map.artnet,
+        startCh: map.ch,
+        proto: map.proto || status.proto
+    });
+    return [{
+        data: pixels.data,
+        clk: pixels.clk,
+        chip: pixels.chip,
+        segs: [pixels]
+    }];
+};
+
+const validateOutputs = (raw, sdPins, caps = {}) => {
+    const maxOut = clampInt(caps.maxOutputs, 1, 64, MAX_OUTPUTS);
+    const maxSeg = clampInt(caps.maxSegments, 1, 64, MAX_SEGMENTS);
+    const maxPx = clampInt(caps.maxPixels, 1, 4096, MAX_COUNT);
+    const outputs = Array.isArray(raw) ? raw : normalizeOutputs(raw);
+    const flat = [];
+    outputs.forEach((out) => {
+        (out.segs || []).forEach((seg) => {
+            flat.push(normalizePixels({ ...seg, chip: out.chip, data: out.data, clk: out.clk }));
+        });
+    });
+    if (!flat.length) {
+        return { ok: false, error: 'Patch is empty', outputs: [] };
+    }
+    if (flat.length > maxSeg) {
+        return { ok: false, error: `More than ${maxSeg} segments`, outputs };
+    }
+    const pins = new Set(flat.map((row) => row.data));
+    if (pins.size > maxOut) {
+        return { ok: false, error: `More than ${maxOut} data pins`, outputs };
+    }
+    const total = flat.reduce((sum, row) => sum + row.count, 0);
+    if (total > maxPx) {
+        return { ok: false, error: `More than ${maxPx} pixels`, outputs };
+    }
+    for (let i = 0; i < flat.length; i += 1) {
+        const check = validatePixels(flat[i], sdPins, 1);
+        if (!check.ok) {
+            return { ok: false, error: check.error, outputs };
+        }
+    }
+    return { ok: true, error: '', outputs, pixels: flat[0] };
+};
+
+const buildPmapBlob = (rows) => {
+    const segs = (rows || []).map((row) => normalizePixels(row));
+    const n = Math.max(1, Math.min(MAX_SEGMENTS, segs.length));
+    const buf = Buffer.alloc(2 + (19 * n));
+    buf.writeUInt8(1, 0);
+    buf.writeUInt8(n, 1);
+    for (let i = 0; i < n; i += 1) {
+        const row = segs[i];
+        const chip = chipByName(row.chip) || chipByName(DEFAULT_PIXELS.chip);
+        const off = 2 + (i * 19);
+        buf.writeUInt8(PROTO_IDS[row.proto] || 0, off);
+        buf.writeUInt8(chip.id, off + 1);
+        buf.writeUInt8(row.data, off + 2);
+        buf.writeUInt8(chip.needsClock ? row.clk : 0, off + 3);
+        buf.writeUInt8(row.white ? 1 : 0, off + 4);
+        buf.writeUInt8(row.cct ? 1 : 0, off + 5);
+        buf.writeUInt8(row.bri, off + 6);
+        Buffer.from(String(row.order || 'grb').slice(0, 5)).copy(buf, off + 7);
+        buf.writeUInt16LE(row.count, off + 13);
+        buf.writeUInt16LE(row.startUni, off + 15);
+        buf.writeUInt16LE(row.startCh, off + 17);
+    }
+    return buf;
 };
 
 module.exports = {
@@ -187,15 +300,20 @@ module.exports = {
     MAX_UNIVERSES,
     MAX_ARTNET_UNI,
     MAX_COUNT,
+    MAX_OUTPUTS,
+    MAX_SEGMENTS,
+    LIVE_SLOTS,
     S3_GPIO_MAX,
     BRIGHTNESS_WARN,
     RGB_ORDERS,
     CHIPS,
     DEFAULT_PIXELS,
+    PROTO_IDS,
     clampInt,
     chipByName,
     chipById,
     resolveChip,
+    channelsPerPixel,
     channelCount,
     nodeSpanUniverses,
     addressAt,
@@ -203,5 +321,8 @@ module.exports = {
     validDataGpio,
     normalizePixels,
     validatePixels,
-    pixelsSummary
+    pixelsSummary,
+    normalizeOutputs,
+    validateOutputs,
+    buildPmapBlob
 };

@@ -17,7 +17,10 @@
           "clk": 0,
           "count": 64,
           "order": "GRB",
-          "chip": "ws2812b"
+          "chip": "ws2812b",
+          "maxOutputs": 8,
+          "maxSegments": 24,
+          "maxPixels": 1024
         },
         "sd": {
           "cs": 7,

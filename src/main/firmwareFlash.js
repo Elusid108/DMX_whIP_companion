@@ -14,7 +14,8 @@ const { clipName, resolveNodeName, normalizeNameOpts } = require('../services/sh
 const {
     addressAt,
     chipByName,
-    validatePixels
+    validatePixels,
+    buildPmapBlob
 } = require('../services/shared/pixelMap');
 
 const DOWNLOAD_HINT = 'Hold BOOT, tap RESET, release BOOT, then try again. Close any serial monitor first.';
@@ -517,7 +518,17 @@ function setupFirmwareFlashHandlers(mainWindow) {
                                     clk: pixelChip.needsClock ? pixelMap.clk : 0,
                                     count: pixelMap.count,
                                     uni: addr.uni,
-                                    ch: addr.ch
+                                    ch: addr.ch,
+                                    white: pixelMap.white ? 1 : 0,
+                                    cct: pixelMap.cct ? 1 : 0,
+                                    proto: 0,
+                                    bri: pixelMap.bri,
+                                    n: 1,
+                                    blob: buildPmapBlob([{
+                                        ...pixelMap,
+                                        startUni: addr.uni,
+                                        startCh: addr.ch
+                                    }])
                                 },
                                 led: { bri: pixelMap.bri }
                             };

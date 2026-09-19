@@ -5,6 +5,15 @@ const FPS_WINDOW_MS = 1000;
 
 const emptyGrid = () => new Array(512).fill(null);
 
+const packLevels = (values) => {
+    const out = new Uint8Array(512);
+    for (let i = 0; i < 512; i++) {
+        const value = values[i];
+        out[i] = value == null ? 0 : value;
+    }
+    return out;
+};
+
 const keyFor = (protocol, universe) => `${protocol}-${universe}`;
 
 class UniverseMonitor {
@@ -140,17 +149,21 @@ class UniverseMonitor {
 
         const artnet = [];
         const sacn = [];
+        const levels = { artnet: {}, sacn: {} };
         for (const entry of this.universes.values()) {
             const row = this.toRow(entry);
+            const packed = packLevels(entry.values);
             if (entry.protocol === 'artnet') {
                 artnet.push(row);
+                levels.artnet[String(entry.universe)] = packed;
             } else if (entry.protocol === 'sacn') {
                 sacn.push(row);
+                levels.sacn[String(entry.universe)] = packed;
             }
         }
         artnet.sort((a, b) => a.id - b.id);
         sacn.sort((a, b) => a.id - b.id);
-        this.onSnapshot({ artnet, sacn });
+        this.onSnapshot({ artnet, sacn, levels });
     }
 
     sendGrid() {
