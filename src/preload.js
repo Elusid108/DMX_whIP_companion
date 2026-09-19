@@ -24,6 +24,7 @@ const INVOKE = new Set([
     'timeline-overview',
     'device-status',
     'device-identify',
+    'device-reboot',
     'device-list',
     'device-push-show',
     'device-play',

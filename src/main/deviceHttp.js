@@ -146,6 +146,8 @@ const postIdentify = async (ip, ms = 3000) => {
     });
 };
 
+const postReboot = async (ip) => postForm(ip, '/reboot', {});
+
 const destUploadPath = (filePath) => {
     const trimmed = String(path.parse(filePath).name || '').trim().replace(/\.dmx$/i, '');
     const base = trimmed.replace(INVALID_NAME, '').replace(/[. ]+$/g, '') || 'show';
@@ -544,6 +546,7 @@ module.exports = {
     getJson,
     postForm,
     postIdentify,
+    postReboot,
     postUpload,
     scanWifi
 };

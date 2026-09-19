@@ -10,6 +10,7 @@ const {
     isIpv4,
     postForm,
     postIdentify,
+    postReboot,
     postUpload,
     scanWifi
 } = require('../deviceHttp');
@@ -264,6 +265,10 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         return postIdentify(ip, ms);
     });
 
+    ipcMain.handle('device-reboot', async (event, { ip } = {}) => {
+        return postReboot(ip);
+    });
+
     ipcMain.handle('device-list', () => snapshotDevices());
 
     ipcMain.handle('device-push-show', async (event, { ip, filePath } = {}) => {
@@ -425,6 +430,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('get-network-interfaces');
         ipcMain.removeHandler('device-status');
         ipcMain.removeHandler('device-identify');
+        ipcMain.removeHandler('device-reboot');
         ipcMain.removeHandler('device-list');
         ipcMain.removeHandler('device-push-show');
         ipcMain.removeHandler('device-play');

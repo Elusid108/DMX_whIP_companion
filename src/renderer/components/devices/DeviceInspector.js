@@ -18,7 +18,8 @@ const DeviceInspector = ({
     pullPath,
     busy,
     onPullPathChange,
-    onPullShow
+    onPullShow,
+    onReboot
 }) => {
     if (!device) {
         return React.createElement('div', {
@@ -28,6 +29,7 @@ const DeviceInspector = ({
 
     const portalUrl = via ? `http://${via}/` : '';
     const httpUp = Boolean(status) && !statusError && !device.stale && !liveLocked;
+    const canReboot = Boolean(device.ip) && !device.stale && !busy && Boolean(status || liveLocked);
     const showPortal = Boolean(portalUrl) && !device.stale;
     const coverPortal = showPortal && !httpUp;
     const fileList = Array.isArray(files) ? files : [];
@@ -48,7 +50,7 @@ const DeviceInspector = ({
             status && apiTooOld(status) && React.createElement('p', {
                 className: 'text-xs text-amber-500'
             }, `Firmware API ${statusApi(status)} is below companion minimum ${MIN_FIRMWARE_API}. Update the node from the Flash tab.`),
-            !liveLocked && statusError && React.createElement('div', {
+            statusError && React.createElement('div', {
                 className: 'text-sm text-red-500'
             }, statusError)
         ),
@@ -100,7 +102,13 @@ const DeviceInspector = ({
                     className: 'btn-quiet flex-none',
                     disabled: pullDisabled,
                     onClick: onPullShow
-                }, busy ? 'Pulling…' : 'Pull')
+                }, busy ? 'Pulling…' : 'Pull'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet flex-none',
+                    disabled: !canReboot,
+                    onClick: onReboot
+                }, 'Reboot')
             )
         )
     );

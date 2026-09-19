@@ -177,6 +177,28 @@ const DevicesPanel = ({
         }
     };
 
+    const handleReboot = async () => {
+        if (!selected || !selected.ip || selected.stale || busy) {
+            return;
+        }
+        if (!window.confirm('Reboot this node?')) {
+            return;
+        }
+        setBusy(true);
+        try {
+            const result = await ipcRenderer.invoke('device-reboot', { ip: selected.ip });
+            if (!result || !result.success) {
+                setStatusError((result && result.error) || 'Reboot failed');
+                return;
+            }
+            setStatusError('');
+        } catch (err) {
+            setStatusError(err.message);
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const handleScan = () => {
         ipcRenderer.send('devices-scan');
     };
@@ -237,7 +259,8 @@ const DevicesPanel = ({
                     pullPath,
                     busy,
                     onPullPathChange: setPullPath,
-                    onPullShow: handlePullShow
+                    onPullShow: handlePullShow,
+                    onReboot: handleReboot
                 })
             )
         )
