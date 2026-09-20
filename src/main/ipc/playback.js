@@ -43,8 +43,11 @@ const {
     uniqueCompPath,
     writeSidecar,
     sanitizeBaseName,
-    listLibrary
+    listLibrary,
+    assertInLibrary
 } = require('./library');
+
+const ZERO_DMX = new Array(512).fill(0);
 
 const IMMEDIATE_MS = 4;
 const AUDIO_FILTERS = [
@@ -53,6 +56,8 @@ const AUDIO_FILTERS = [
 
 function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     let playbackData = null;
+    let playerData = null;
+    let activeSource = 'studio';
     let isPlaying = false;
     let isPaused = false;
     let currentPlaybackFrame = 0;
@@ -151,19 +156,32 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         timelineDurationMs(editSession.clips, editSession.audioClips)
     );
 
+    const activeFrames = () => (activeSource === 'player' ? playerData : playbackData);
+
+    const activeEndMs = () => {
+        if (activeSource === 'player') {
+            if (!playerData || playerData.length === 0) {
+                return 0;
+            }
+            return playerData[playerData.length - 1].timestamp;
+        }
+        return timelineEndMs();
+    };
+
     const elapsedMs = () => Number((process.hrtime.bigint() - playbackOriginNs) / 1000000n);
 
     const playheadClockMs = () => (isPlaying ? elapsedMs() : pausedElapsed);
 
     const firstFrameAfter = (timeMs) => {
-        if (!playbackData) {
+        const frames = activeFrames();
+        if (!frames) {
             return 0;
         }
         let lo = 0;
-        let hi = playbackData.length;
+        let hi = frames.length;
         while (lo < hi) {
             const mid = (lo + hi) >> 1;
-            if (playbackData[mid].timestamp <= timeMs) {
+            if (frames[mid].timestamp <= timeMs) {
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -174,10 +192,11 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
 
     const lookAt = (timeMs) => {
         const latest = new Map();
-        if (!playbackData) {
+        const frames = activeFrames();
+        if (!frames) {
             return [];
         }
-        for (const frame of playbackData) {
+        for (const frame of frames) {
             if (frame.timestamp > timeMs) {
                 break;
             }
@@ -188,10 +207,11 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
 
     const sacnUniversesInClip = () => {
         const universes = new Set();
-        if (!playbackData) {
+        const frames = activeFrames();
+        if (!frames) {
             return [];
         }
-        for (const frame of playbackData) {
+        for (const frame of frames) {
             if (frame.protocol === 'sacn') {
                 universes.add(frame.universe);
             }
@@ -233,7 +253,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         const lastTimestamp = lastSentFrame ? lastSentFrame.timestamp : 0;
         sendSafe('playback-stats', {
             currentFrame: currentPlaybackFrame,
-            totalFrames: playbackData ? playbackData.length : 0,
+            totalFrames: (activeFrames() || []).length,
             clipTime: lastTimestamp,
             totalPlayTime: isPlaying ? elapsedMs() : pausedElapsed,
             playheadMs: playheadClockMs(),
@@ -241,6 +261,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             isPlaying,
             isPaused,
             loop: loopEnabled,
+            source: activeSource,
             ...extra
         });
     };
@@ -344,18 +365,89 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     };
 
+    const frameKey = (frame) => `${frame.protocol}:${frame.universe}:${frame.destIp || ''}`;
+
+    const blackout = () => {
+        if (!artnetSender && !sacnOutput) {
+            return;
+        }
+        const latest = new Map();
+        const frames = activeFrames();
+        if (frames) {
+            for (const frame of frames) {
+                latest.set(frameKey(frame), frame);
+            }
+        }
+        if (lastSentFrame) {
+            latest.set(frameKey(lastSentFrame), lastSentFrame);
+        }
+        for (const frame of holdFrames) {
+            latest.set(frameKey(frame), frame);
+        }
+        for (const frame of latest.values()) {
+            outputFrame({
+                protocol: frame.protocol,
+                universe: frame.universe,
+                destIp: frame.destIp,
+                timestamp: frame.timestamp || 0,
+                data: ZERO_DMX
+            }, false);
+        }
+    };
+
+    const haltTransport = ({ cleanup = false } = {}) => {
+        isPlaying = false;
+        isPaused = false;
+        clearPlayTimeout();
+        stopHoldOutput();
+        currentPlaybackFrame = 0;
+        lastSentFrame = null;
+        holdFrames = [];
+        framesSentWindow = [];
+        pausedElapsed = 0;
+        if (cleanup) {
+            cleanupSenders();
+        }
+    };
+
+    const beginPlayback = async (playbackNetwork, startMs = 0) => {
+        const frames = activeFrames();
+        if (!frames || frames.length === 0) {
+            return false;
+        }
+        const duration = activeEndMs();
+        let from = Math.max(0, Number(startMs) || 0);
+        if (from >= duration) {
+            from = 0;
+        }
+        currentPlaybackFrame = from > 0 ? firstFrameAfter(from) : 0;
+        lastSentFrame = null;
+        framesSentWindow = [];
+        await initializeSenders(playbackNetwork);
+        isPlaying = true;
+        isPaused = false;
+        playbackOriginNs = process.hrtime.bigint() - BigInt(from) * 1000000n;
+        if (from > 0) {
+            sendLookAt(from);
+        }
+        scheduleTick();
+        emitStats();
+        return true;
+    };
+
     const scheduleTick = () => {
         clearPlayTimeout();
-        if (!isPlaying || !playbackData) {
+        const frames = activeFrames();
+        if (!isPlaying || !frames) {
             return;
         }
 
         const elapsed = elapsedMs();
         while (
-            currentPlaybackFrame < playbackData.length &&
-            playbackData[currentPlaybackFrame].timestamp <= elapsed
+            currentPlaybackFrame < frames.length &&
+            frames[currentPlaybackFrame].timestamp <= elapsed
         ) {
-            sendFrame(playbackData[currentPlaybackFrame]);
+            sendFrame(frames[currentPlaybackFrame]);
             currentPlaybackFrame += 1;
         }
 
@@ -365,7 +457,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             emitStats();
         }
 
-        if (elapsed >= timelineEndMs()) {
+        if (elapsed >= activeEndMs()) {
             if (loopEnabled) {
                 currentPlaybackFrame = 0;
                 lastSentFrame = null;
@@ -379,13 +471,13 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             return;
         }
 
-        if (currentPlaybackFrame >= playbackData.length) {
-            const remaining = timelineEndMs() - elapsed;
+        if (currentPlaybackFrame >= frames.length) {
+            const remaining = activeEndMs() - elapsed;
             armTick(Math.min(100, Math.max(16, remaining)));
             return;
         }
 
-        const wait = playbackData[currentPlaybackFrame].timestamp - elapsed;
+        const wait = frames[currentPlaybackFrame].timestamp - elapsed;
         armTick(wait);
     };
 
@@ -412,7 +504,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     };
 
     const applySeek = (timeMs) => {
-        const duration = timelineEndMs();
+        const duration = activeEndMs();
         const t = Math.max(0, Math.min(Math.round(Number(timeMs) || 0), duration));
         currentPlaybackFrame = firstFrameAfter(t);
         pausedElapsed = t;
@@ -426,6 +518,11 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
 
     const stopPlaybackInternal = (naturalEnd = false) => {
         const endedAt = isPlaying ? elapsedMs() : pausedElapsed;
+        const source = activeSource;
+        const frames = activeFrames();
+        if (!naturalEnd || source === 'player') {
+            blackout();
+        }
         isPlaying = false;
         isPaused = false;
         clearPlayTimeout();
@@ -438,17 +535,20 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         if (naturalEnd) {
             pausedElapsed = endedAt;
             emitStats({
+                source,
                 isPlaying: false,
                 isPaused: false,
                 fps: 0,
-                currentFrame: playbackData ? playbackData.length : 0,
+                currentFrame: frames ? frames.length : 0,
                 totalPlayTime: endedAt,
-                playheadMs: endedAt
+                playheadMs: endedAt,
+                playerEnded: source === 'player'
             });
             return;
         }
         pausedElapsed = 0;
         emitStats({
+            source,
             isPlaying: false,
             isPaused: false,
             isReset: true,
@@ -479,7 +579,9 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
 
     const applyFlattenedPlayback = () => {
         playbackData = flattenToFrames(editSession.media, editSession.clips);
-        stopPlaybackInternal(false);
+        if (activeSource === 'studio') {
+            stopPlaybackInternal(false);
+        }
         undoStack = [];
         redoStack = [];
     };
@@ -1456,12 +1558,33 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.on('toggle-playback', async (event, { loop, playbackNetwork } = {}) => {
-        if (!playbackData || playbackData.length === 0) {
+    ipcMain.on('set-playback-loop', (event, payload = {}) => {
+        loopEnabled = Boolean(payload.loop);
+    });
+
+    ipcMain.on('toggle-playback', async (event, { loop, playbackNetwork, source } = {}) => {
+        const wanted = source === 'player' ? 'player' : 'studio';
+        if (wanted === 'player' && (!playerData || playerData.length === 0)) {
+            return;
+        }
+        if (wanted === 'studio' && (!playbackData || playbackData.length === 0)) {
             return;
         }
 
         loopEnabled = Boolean(loop);
+
+        if (activeSource !== wanted) {
+            if (isPlaying || isPaused) {
+                emitStats({
+                    source: activeSource,
+                    isPlaying: false,
+                    isPaused: false,
+                    isReset: activeSource === 'player'
+                });
+            }
+            haltTransport({ cleanup: true });
+            activeSource = wanted;
+        }
 
         if (isPaused) {
             stopHoldOutput();
@@ -1485,23 +1608,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
 
         try {
-            let startMs = pausedElapsed;
-            const duration = timelineEndMs();
-            if (startMs >= duration) {
-                startMs = 0;
-            }
-            currentPlaybackFrame = startMs > 0 ? firstFrameAfter(startMs) : 0;
-            lastSentFrame = null;
-            framesSentWindow = [];
-            await initializeSenders(playbackNetwork);
-            isPlaying = true;
-            isPaused = false;
-            playbackOriginNs = process.hrtime.bigint() - BigInt(startMs) * 1000000n;
-            if (startMs > 0) {
-                sendLookAt(startMs);
-            }
-            scheduleTick();
-            emitStats();
+            await beginPlayback(playbackNetwork, pausedElapsed);
         } catch (error) {
             console.error('Error starting playback:', error);
             stopPlaybackInternal(false);
@@ -1509,7 +1616,11 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     });
 
     ipcMain.on('seek-playback', async (event, payload = {}) => {
-        if (!playbackData || playbackData.length === 0) {
+        const wanted = payload.source === 'player' ? 'player' : 'studio';
+        if (wanted !== activeSource) {
+            return;
+        }
+        if (!activeFrames() || activeFrames().length === 0) {
             return;
         }
 
@@ -1533,8 +1644,48 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.on('stop-playback', () => {
+    ipcMain.on('stop-playback', (event, payload = {}) => {
+        if (payload && payload.source && payload.source !== activeSource) {
+            return;
+        }
         stopPlaybackInternal(false);
+    });
+
+    ipcMain.removeHandler('player-play');
+    ipcMain.handle('player-play', async (event, { filePath, playbackNetwork, loop } = {}) => {
+        try {
+            if (recordingHandler && recordingHandler.isRecording()) {
+                return { success: false, error: 'Recording in progress' };
+            }
+            assertInLibrary(filePath);
+            const fileData = await fs.promises.readFile(filePath);
+            const frames = parseRecording(fileData);
+            if (!frames.length) {
+                return { success: false, error: 'Recording is empty' };
+            }
+            if (activeSource === 'studio' && (isPlaying || isPaused)) {
+                emitStats({
+                    source: 'studio',
+                    isPlaying: false,
+                    isPaused: false,
+                    playheadMs: playheadClockMs()
+                });
+            }
+            haltTransport({ cleanup: true });
+            playerData = frames;
+            activeSource = 'player';
+            loopEnabled = Boolean(loop);
+            pausedElapsed = 0;
+            await beginPlayback(playbackNetwork || activeNetwork, 0);
+            return {
+                success: true,
+                filePath,
+                durationMs: frames[frames.length - 1].timestamp,
+                displayName: path.parse(filePath).name
+            };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
     });
 
     ipcMain.on('unload-recording', () => {
@@ -1544,6 +1695,8 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         clearPunchIn({ deleteTemp: true });
         stopPlaybackInternal(false);
         playbackData = null;
+        playerData = null;
+        activeSource = 'studio';
         editSession = emptyEditSession();
         sendSafe('file-loaded', { success: true, filePath: null, cleared: true });
         undoStack = [];

@@ -1,69 +1,165 @@
 const React = require('react');
 const TransportButtons = require('./TransportButtons');
 
+const RepeatIcon = ({ on }) => React.createElement('svg', {
+    xmlns: 'http://www.w3.org/2000/svg',
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    className: `w-3.5 h-3.5 ${on ? 'text-cyan-500' : ''}`,
+    'aria-hidden': true
+},
+    React.createElement('path', { d: 'M17 2l4 4-4 4' }),
+    React.createElement('path', { d: 'M3 11V9a4 4 0 0 1 4-4h14' }),
+    React.createElement('path', { d: 'M7 22l-4-4 4-4' }),
+    React.createElement('path', { d: 'M21 13v2a4 4 0 0 1-4 4H3' })
+);
+
+const Chevron = ({ open }) => React.createElement('svg', {
+    xmlns: 'http://www.w3.org/2000/svg',
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    className: `w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`,
+    'aria-hidden': true
+}, React.createElement('path', { d: 'M9 6l6 6-6 6' }));
+
 const PlaybackControls = ({
-    networkInterfaces,
+    queue,
+    currentIndex,
+    current,
+    collapsed,
+    onToggleCollapsed,
     isFileLoaded,
     isPlaying,
     isRecording,
-    canRecord,
     isLoopEnabled,
-    playbackNetwork,
-    displayFileName,
-    onLoopChange,
-    onPlaybackNetworkChange,
+    playheadMs,
+    durationMs,
+    formatClock,
+    onToggleLoop,
     onPlay,
     onPause,
     onStopPlayback,
     onBack,
     onNext,
-    onRecord
-}) => React.createElement(React.Fragment, null,
-    React.createElement(TransportButtons, {
-        isPlaying,
-        isRecording,
-        disabled: !isFileLoaded || isRecording,
-        recordDisabled: isRecording ? false : !canRecord,
-        onPlay,
-        onPause,
-        onStop: onStopPlayback,
-        onBack,
-        onNext,
-        onRecord
-    }),
+    onSeek,
+    onSelect
+}) => {
+    const disabled = !isFileLoaded || isRecording;
+    const duration = Math.max(0, Number(durationMs) || 0);
+    const currentMs = Math.max(0, Math.min(duration, Number(playheadMs) || 0));
+    const percent = duration > 0 ? (currentMs / duration) * 100 : 0;
 
-    React.createElement('label', {
-        className: 'flex items-center gap-1.5 text-xs text-zinc-500'
-    },
-        React.createElement('input', {
-            type: 'checkbox',
-            checked: isLoopEnabled,
-            disabled: !isFileLoaded || isRecording,
-            onChange: (event) => onLoopChange(event.target.checked),
-            className: 'h-3.5 w-3.5 accent-cyan-400'
-        }),
-        'Loop'
-    ),
+    const seekFromEvent = (event) => {
+        if (disabled || duration <= 0) {
+            return;
+        }
+        const rect = event.currentTarget.getBoundingClientRect();
+        const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+        onSeek((x / rect.width) * duration);
+    };
 
-    React.createElement('select', {
-        value: playbackNetwork,
-        disabled: !isFileLoaded || isRecording,
-        onChange: (event) => onPlaybackNetworkChange(event.target.value),
-        className: 'field w-auto min-w-[8rem] py-1',
-        title: 'Playback Network'
+    return React.createElement('div', {
+        className: 'flex-none flex flex-col gap-1.5 p-2 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
     },
-        (networkInterfaces || []).map((nic) =>
-            React.createElement('option', {
-                key: nic.ip,
-                value: nic.ip
-            }, `${nic.name} (${nic.ip})`)
+        React.createElement('button', {
+            type: 'button',
+            className: 'flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200',
+            onClick: onToggleCollapsed
+        },
+            React.createElement(Chevron, { open: !collapsed }),
+            React.createElement('span', {
+                className: 'truncate'
+            }, `Queue · ${queue.length}`)
+        ),
+        !collapsed && React.createElement('div', {
+            className: 'max-h-28 overflow-y-auto flex flex-col gap-0.5'
+        },
+            queue.length === 0
+                ? React.createElement('p', {
+                    className: 'text-xs text-zinc-500 italic px-0.5'
+                }, 'Hover Play in Library to add looks.')
+                : queue.map((item, index) => React.createElement('button', {
+                    key: item.id,
+                    type: 'button',
+                    className: `w-full text-left truncate text-xs px-1.5 py-0.5 rounded ${
+                        index === currentIndex
+                            ? 'bg-cyan-50 text-cyan-700 dark:bg-zinc-800 dark:text-cyan-400'
+                            : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+                    }`,
+                    title: item.name,
+                    disabled: isRecording,
+                    onClick: () => onSelect(index)
+                }, item.name))
+        ),
+        React.createElement('div', {
+            className: 'flex items-center gap-1 min-w-0'
+        },
+            React.createElement(TransportButtons, {
+                isPlaying,
+                disabled,
+                onPlay,
+                onPause,
+                onStop: onStopPlayback,
+                onBack,
+                onNext
+            }),
+            React.createElement('button', {
+                type: 'button',
+                className: `btn-quiet flex-none p-1.5 ${isLoopEnabled ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400' : ''}`,
+                title: isLoopEnabled ? 'Repeat on' : 'Repeat off',
+                'aria-label': isLoopEnabled ? 'Repeat on' : 'Repeat off',
+                'aria-pressed': isLoopEnabled,
+                disabled,
+                onClick: onToggleLoop
+            }, React.createElement(RepeatIcon, { on: isLoopEnabled }))
+        ),
+        React.createElement('div', {
+            className: 'flex items-center gap-1.5 min-w-0'
+        },
+            React.createElement('span', {
+                className: 'readout flex-none w-3 text-right'
+            }, '0'),
+            React.createElement('button', {
+                type: 'button',
+                className: 'relative flex-1 h-3 rounded-full bg-zinc-200 dark:bg-zinc-800 disabled:opacity-50',
+                disabled,
+                title: 'Seek',
+                'aria-label': 'Seek',
+                onClick: seekFromEvent
+            },
+                React.createElement('span', {
+                    className: 'absolute left-0 top-1/2 -translate-y-1/2 h-0.5 rounded-full bg-cyan-500',
+                    style: { width: `${percent}%` }
+                }),
+                React.createElement('span', {
+                    className: 'absolute top-1/2 -translate-y-1/2 -translate-x-1/2 h-2 w-2 rounded-full bg-cyan-500',
+                    style: { left: `${percent}%` }
+                })
+            ),
+            React.createElement('span', {
+                className: 'readout flex-none min-w-[2.25rem] text-right'
+            }, formatClock(duration))
+        ),
+        React.createElement('div', {
+            className: 'flex items-center justify-between gap-2 min-w-0'
+        },
+            React.createElement('span', {
+                className: 'text-xs text-zinc-500 truncate',
+                title: current && current.name ? current.name : ''
+            }, current && current.name ? current.name : 'No file'),
+            React.createElement('span', {
+                className: 'readout flex-none'
+            }, formatClock(currentMs))
         )
-    ),
-
-    React.createElement('span', {
-        className: 'text-xs text-zinc-500 truncate max-w-[12rem]',
-        title: displayFileName || ''
-    }, displayFileName || 'No file')
-);
+    );
+};
 
 module.exports = PlaybackControls;

@@ -4,6 +4,7 @@ const { useState, useEffect, useRef } = React;
 const ipcRenderer = require('../../ipc');
 const ShowList = require('./ShowList');
 const ShowInspector = require('./ShowInspector');
+const PushToSdDialog = require('./PushToSdDialog');
 const {
     collectLooks,
     findNode,
@@ -15,7 +16,8 @@ const {
 const LibraryPanel = React.forwardRef(({
     studioTrackId = 0,
     studioHasClips = false,
-    railHost
+    railHost,
+    onQueuePlay
 }, ref) => {
     const [shows, setShows] = useState([]);
     const [tree, setTree] = useState([]);
@@ -28,7 +30,7 @@ const LibraryPanel = React.forwardRef(({
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
     const [devices, setDevices] = useState([]);
-    const [targetId, setTargetId] = useState(null);
+    const [pushOpen, setPushOpen] = useState(false);
     const [pushing, setPushing] = useState(false);
     const [pushError, setPushError] = useState('');
     const [pushProgress, setPushProgress] = useState(null);
@@ -72,7 +74,7 @@ const LibraryPanel = React.forwardRef(({
 
     useEffect(() => {
         const handleProgress = (event, progress = {}) => {
-            setPushProgress(progress);
+            setPushProgress((current) => ({ ...(current || {}), ...progress }));
         };
         ipcRenderer.on('device-push-progress', handleProgress);
         return () => {
@@ -132,15 +134,7 @@ const LibraryPanel = React.forwardRef(({
         };
 
         const applyDevices = (payload = {}) => {
-            const next = payload.devices || [];
-            setDevices(next);
-            setTargetId((current) => {
-                const idle = next.filter((device) => device && !device.stale);
-                if (current && idle.some((device) => device.id === current)) {
-                    return current;
-                }
-                return idle[0] ? idle[0].id : null;
-            });
+            setDevices(payload.devices || []);
         };
 
         const handleDevices = (event, payload = {}) => {
@@ -431,34 +425,63 @@ const LibraryPanel = React.forwardRef(({
         });
     };
 
-    const handlePush = () => {
-        if (!selectedShowPath || !targetId || pushing) {
+    const playable = Boolean(inspect && inspect.playable);
+    const folderPlayable = Boolean(selectedFolder && collectLooks(selectedFolder).length > 0);
+    const compilationPlayable = Boolean(selectedCompilation && selectedCompilation.compilation);
+    const targets = devices.filter((device) => device && device.ip && !device.stale);
+    const canPush = Boolean(selectedShowPath && inspect && inspect.playable && targets.length);
+
+    const handleOpenPush = () => {
+        if (!canPush || pushing) {
             return;
         }
-        const target = devices.find((device) => device.id === targetId);
-        if (!target || target.stale || !target.ip) {
-            setPushError('Select an idle node');
+        setPushError('');
+        setPushProgress(null);
+        setPushOpen(true);
+    };
+
+    const handlePush = async (ids) => {
+        const list = (Array.isArray(ids) ? ids : []).filter(Boolean);
+        const chosen = devices.filter((device) => (
+            list.includes(device.id) && device.ip && !device.stale
+        ));
+        if (!selectedShowPath || !chosen.length || pushing) {
             return;
         }
         setPushing(true);
         setPushError('');
-        setPushProgress({ phase: 'connecting', sent: 0, total: 0 });
-        ipcRenderer.invoke('device-push-show', {
-            ip: target.ip,
-            filePath: selectedShowPath
-        }).then((result) => {
-            if (!result || !result.success) {
-                setPushError((result && result.error) || 'Push failed');
-                return;
+        const results = [];
+        for (const target of chosen) {
+            const label = target.longName || target.shortName || target.ip;
+            setPushProgress({ phase: 'connecting', sent: 0, total: 0, label });
+            try {
+                const result = await ipcRenderer.invoke('device-push-show', {
+                    ip: target.ip,
+                    filePath: selectedShowPath
+                });
+                if (!result || !result.success) {
+                    results.push({ label, error: (result && result.error) || 'Push failed' });
+                } else {
+                    const dest = result.result && result.result.path;
+                    results.push({ label, dest });
+                }
+            } catch (err) {
+                results.push({ label, error: err.message });
             }
-            const dest = result.result && result.result.path;
-            setPushError(dest ? `Pushed ${dest}` : '');
-        }).catch((err) => {
-            setPushError(err.message);
-        }).finally(() => {
-            setPushing(false);
-            setPushProgress(null);
-        });
+        }
+        const failed = results.filter((item) => item.error);
+        const ok = results.filter((item) => !item.error);
+        if (failed.length && !ok.length) {
+            setPushError(failed[0].error);
+        } else if (failed.length) {
+            setPushError(`Pushed ${ok.length}; ${failed.length} failed`);
+        } else if (ok.length === 1) {
+            setPushError(ok[0].dest ? `Pushed ${ok[0].dest}` : `Pushed ${ok[0].label}`);
+        } else {
+            setPushError(`Pushed to ${ok.length} nodes`);
+        }
+        setPushing(false);
+        setPushProgress(null);
     };
 
     const handleDelete = () => runAction(async () => {
@@ -515,13 +538,6 @@ const LibraryPanel = React.forwardRef(({
         }
     });
 
-    const playable = Boolean(inspect && inspect.playable);
-    const folderPlayable = Boolean(selectedFolder && collectLooks(selectedFolder).length > 0);
-    const compilationPlayable = Boolean(selectedCompilation && selectedCompilation.compilation);
-    const targets = devices.filter((device) => device && device.ip && !device.stale);
-    const canPush = Boolean(selectedShowPath && inspect && inspect.playable && targetId
-        && targets.some((device) => device.id === targetId));
-
     const list = React.createElement(ShowList, {
         tree,
         collapsed,
@@ -537,17 +553,26 @@ const LibraryPanel = React.forwardRef(({
         onToggleCollapsed: handleToggleCollapsed,
         onMove: handleMove,
         onPlay: handlePlay,
-        devices,
-        targetId,
-        pushing,
-        pushProgress,
-        pushError,
-        onTargetChange: setTargetId,
-        onPush: handlePush,
+        onQueuePlay,
+        onOpenPush: handleOpenPush,
         canPush,
         onSelectedIdsChange: (ids) => {
             selectedIdsRef.current = ids || [];
         }
+    });
+    const pushDialog = React.createElement(PushToSdDialog, {
+        open: pushOpen,
+        lookName: (inspect && (inspect.displayName || inspect.name)) || '',
+        devices,
+        pushing,
+        pushProgress,
+        pushError,
+        onClose: () => {
+            if (!pushing) {
+                setPushOpen(false);
+            }
+        },
+        onPush: handlePush
     });
     const inspector = React.createElement(ShowInspector, {
         selection,
@@ -577,13 +602,14 @@ const LibraryPanel = React.forwardRef(({
         }, inspector)
     );
     if (!railHost) {
-        return main;
+        return React.createElement(React.Fragment, null, main, pushDialog);
     }
     return React.createElement(React.Fragment, null,
         createPortal(React.createElement('div', {
             className: 'h-full min-h-0 flex flex-col p-2'
         }, list), railHost),
-        main
+        main,
+        pushDialog
     );
 });
 

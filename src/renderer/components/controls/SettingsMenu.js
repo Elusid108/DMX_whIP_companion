@@ -2,6 +2,7 @@ const React = require('react');
 const { useEffect, useRef, useState } = React;
 const { version } = require('../../../../package.json');
 const ipcRenderer = require('../../ipc');
+const NetworkSelect = require('./NetworkSelect');
 
 const CogIcon = () => React.createElement('svg', {
     xmlns: 'http://www.w3.org/2000/svg',
@@ -20,7 +21,15 @@ const CogIcon = () => React.createElement('svg', {
     })
 );
 
-const SettingsMenu = ({ theme, onToggleTheme }) => {
+const SettingsMenu = ({
+    theme,
+    onToggleTheme,
+    networkInterfaces,
+    selectedNic,
+    onInputNicChange,
+    playbackNetwork,
+    onOutputNicChange
+}) => {
     const [open, setOpen] = useState(false);
     const [libraryDir, setLibraryDir] = useState('');
     const [busy, setBusy] = useState(false);
@@ -32,6 +41,10 @@ const SettingsMenu = ({ theme, onToggleTheme }) => {
             return undefined;
         }
         const onPointerDown = (event) => {
+            const tag = event.target && event.target.tagName;
+            if (tag === 'OPTION' || tag === 'SELECT') {
+                return;
+            }
             if (rootRef.current && !rootRef.current.contains(event.target)) {
                 setOpen(false);
             }
@@ -111,13 +124,33 @@ const SettingsMenu = ({ theme, onToggleTheme }) => {
             React.createElement(CogIcon)
         ),
         open && React.createElement('div', {
-            className: 'absolute right-0 top-full mt-1 z-20 w-72 rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-800 dark:bg-zinc-900'
+            className: 'absolute right-0 top-full mt-1 z-30 w-80 rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-800 dark:bg-zinc-900'
         },
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-quiet w-full justify-center',
-                onClick: onToggleTheme
-            }, theme === 'dark' ? 'Light mode' : 'Dark mode'),
+            React.createElement('div', {
+                className: 'flex flex-col gap-2'
+            },
+                React.createElement(NetworkSelect, {
+                    label: 'Input NIC',
+                    selectedNic,
+                    networkInterfaces: networkInterfaces || [],
+                    onChange: onInputNicChange
+                }),
+                React.createElement(NetworkSelect, {
+                    label: 'Output NIC',
+                    selectedNic: playbackNetwork,
+                    networkInterfaces: networkInterfaces || [],
+                    onChange: onOutputNicChange
+                })
+            ),
+            React.createElement('div', {
+                className: 'mt-2 pt-2 border-t border-zinc-200 dark:border-zinc-800'
+            },
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet w-full justify-center',
+                    onClick: onToggleTheme
+                }, theme === 'dark' ? 'Light mode' : 'Dark mode')
+            ),
             React.createElement('div', {
                 className: 'mt-2 pt-2 border-t border-zinc-200 dark:border-zinc-800'
             },

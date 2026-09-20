@@ -10,6 +10,7 @@ const PlaybackControls = require('./components/controls/PlaybackControls');
 const useUniverseData = require('./hooks/useUniverseData');
 const useDmxMonitor = require('./hooks/useDmxMonitor');
 const useStudioSession = require('./hooks/useStudioSession');
+const usePlayerQueue = require('./hooks/usePlayerQueue');
 const ipcRenderer = require('./ipc');
 
 const applyThemeClass = (theme) => {
@@ -50,6 +51,10 @@ const App = () => {
     const [theme, setTheme] = React.useState('dark');
     const [focusDeviceId, setFocusDeviceId] = React.useState(null);
     const session = useStudioSession(selectedUniverses, selectedNic);
+    const player = usePlayerQueue({
+        playbackNetwork: session.playbackNetwork,
+        isRecording: session.isRecording
+    });
     const libraryRef = React.useRef(null);
     const [libraryRail, setLibraryRail] = React.useState(null);
     const [devicesRail, setDevicesRail] = React.useState(null);
@@ -157,9 +162,6 @@ const App = () => {
         selectedUniverse,
         selectedProtocol,
         selectedUniverses,
-        selectedNic,
-        networkInterfaces,
-        onNetworkChange: handleNetworkChange,
         onUniverseSelect: handleUniverseSelect,
         onSelectAll: handleSelectAll,
         onUniverseClick: handleUniverseClick
@@ -169,7 +171,7 @@ const App = () => {
         className: 'h-screen flex flex-col font-sans bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-200'
     },
         React.createElement('div', {
-            className: 'flex-none flex items-center gap-1 px-3 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
+            className: 'flex-none relative z-10 flex items-center gap-1 px-3 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
         },
             React.createElement('button', {
                 type: 'button',
@@ -198,7 +200,12 @@ const App = () => {
             }, 'Flash'),
             React.createElement(SettingsMenu, {
                 theme,
-                onToggleTheme: handleToggleTheme
+                onToggleTheme: handleToggleTheme,
+                networkInterfaces,
+                selectedNic,
+                onInputNicChange: handleNetworkChange,
+                playbackNetwork: session.playbackNetwork,
+                onOutputNicChange: session.setPlaybackNetwork
             })
         ),
         React.createElement('div', {
@@ -208,50 +215,48 @@ const App = () => {
                 className: 'app-sidebar overflow-hidden'
             },
                 (mainView === 'monitor' || mainView === 'studio') && React.createElement('div', {
-                    className: 'h-full min-h-0 overflow-y-auto'
+                    className: 'flex-1 min-h-0 overflow-y-auto'
                 },
                     React.createElement(UniverseSidebar, universeSidebar)
                 ),
                 mainView === 'library' && React.createElement('div', {
                     ref: setLibraryRail,
-                    className: 'h-full min-h-0 flex flex-col'
+                    className: 'flex-1 min-h-0 flex flex-col'
                 }),
                 mainView === 'devices' && React.createElement('div', {
                     ref: setDevicesRail,
-                    className: 'h-full min-h-0 flex flex-col'
+                    className: 'flex-1 min-h-0 flex flex-col'
                 }),
                 mainView === 'flash' && React.createElement('div', {
                     ref: setFlashRail,
-                    className: 'h-full min-h-0 flex flex-col'
+                    className: 'flex-1 min-h-0 flex flex-col'
+                }),
+                React.createElement(PlaybackControls, {
+                    queue: player.queue,
+                    currentIndex: player.currentIndex,
+                    current: player.current,
+                    collapsed: player.collapsed,
+                    onToggleCollapsed: () => player.setCollapsed((value) => !value),
+                    isFileLoaded: player.isFileLoaded,
+                    isPlaying: player.isPlaying,
+                    isRecording: session.isRecording,
+                    isLoopEnabled: player.loop,
+                    playheadMs: player.playheadMs,
+                    durationMs: player.durationMs,
+                    formatClock: player.formatClock,
+                    onToggleLoop: player.handleToggleLoop,
+                    onPlay: player.handlePlay,
+                    onPause: player.handlePause,
+                    onStopPlayback: player.handleStop,
+                    onBack: player.handleBack,
+                    onNext: player.handleNext,
+                    onSeek: player.handleSeek,
+                    onSelect: player.handleSelect
                 })
             ),
             React.createElement('div', {
                 className: 'flex flex-1 min-w-0 min-h-0 flex-col'
             },
-                React.createElement('div', {
-                    className: 'app-toolbar flex-none bg-zinc-50 dark:bg-zinc-900'
-                },
-                    React.createElement(PlaybackControls, {
-                        networkInterfaces,
-                        isFileLoaded: session.isFileLoaded,
-                        isPlaying: session.isPlaying,
-                        isRecording: session.isRecording,
-                        canRecord: session.canRecord,
-                        isLoopEnabled: session.isLoopEnabled,
-                        playbackNetwork: session.playbackNetwork,
-                        displayFileName: session.displayFileName,
-                        onLoopChange: session.setIsLoopEnabled,
-                        onPlaybackNetworkChange: session.setPlaybackNetwork,
-                        onPlay: session.handlePlay,
-                        onPause: session.handlePause,
-                        onStopPlayback: session.handleStopPlayback,
-                        onBack: session.handleBack,
-                        onNext: session.handleNext,
-                        onRecord: session.isRecording
-                            ? session.handleStopRecording
-                            : session.handleStartRecording
-                    })
-                ),
                 mainView === 'monitor' && React.createElement('div', {
                     className: 'flex flex-1 min-h-0 flex-col'
                 },
@@ -317,7 +322,8 @@ const App = () => {
                     ref: libraryRef,
                     railHost: libraryRail,
                     studioTrackId: session.selectedTrackId,
-                    studioHasClips: Boolean(session.clips && session.clips.length)
+                    studioHasClips: Boolean(session.clips && session.clips.length),
+                    onQueuePlay: player.enqueueAndPlay
                 }),
                 mainView === 'devices' && React.createElement(DevicesPanel, {
                     focusDeviceId,

@@ -2,17 +2,6 @@ const React = require('react');
 const { useEffect, useMemo, useRef, useState } = React;
 const { findNode, flattenRows, folderContains } = require('../../../services/shared/libraryTree');
 
-const formatBytes = (bytes) => {
-    const value = Number(bytes) || 0;
-    if (value < 1024) {
-        return `${value} B`;
-    }
-    if (value < 1024 * 1024) {
-        return `${(value / 1024).toFixed(1)} KB`;
-    }
-    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-};
-
 const FolderIcon = () => React.createElement('svg', {
     xmlns: 'http://www.w3.org/2000/svg',
     viewBox: '0 0 24 24',
@@ -47,6 +36,39 @@ const Chevron = ({ open, onClick }) => React.createElement('button', {
     className: `w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`,
     'aria-hidden': true
 }, React.createElement('path', { d: 'M9 6l6 6-6 6' })));
+
+const FolderPlusIcon = () => React.createElement('svg', {
+    xmlns: 'http://www.w3.org/2000/svg',
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    className: 'w-4 h-4',
+    'aria-hidden': true
+},
+    React.createElement('path', { d: 'M3 7h6l2 2h10v10H3z' }),
+    React.createElement('path', { d: 'M3 7V5h6l2 2' }),
+    React.createElement('path', { d: 'M12 12v6M9 15h6' })
+);
+
+const PushSdIcon = () => React.createElement('svg', {
+    xmlns: 'http://www.w3.org/2000/svg',
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    className: 'w-4 h-4',
+    'aria-hidden': true
+},
+    React.createElement('path', { d: 'M3 12h8' }),
+    React.createElement('path', { d: 'M8 8l4 4-4 4' }),
+    React.createElement('path', { d: 'M13 6.5h3.2L20 10v8.5a1.5 1.5 0 0 1-1.5 1.5h-5.5A1.5 1.5 0 0 1 11.5 17V8A1.5 1.5 0 0 1 13 6.5z' }),
+    React.createElement('path', { d: 'M15 9.5v3M17.2 9.5v3' })
+);
 
 const parseMoveIds = (raw, fallback) => {
     if (Array.isArray(fallback) && fallback.length) {
@@ -95,13 +117,8 @@ const ShowList = ({
     onToggleCollapsed,
     onMove,
     onPlay,
-    devices,
-    targetId,
-    pushing,
-    pushProgress,
-    pushError,
-    onTargetChange,
-    onPush,
+    onQueuePlay,
+    onOpenPush,
     canPush,
     onSelectedIdsChange
 }) => {
@@ -128,32 +145,6 @@ const ShowList = ({
         () => dragIds.map((id) => findNode(tree || [], id)).filter(Boolean).map((found) => found.node),
         [dragIds, tree]
     );
-    const targets = (devices || []).filter((device) => device && device.ip && !device.stale);
-    const sent = Number(pushProgress && pushProgress.sent) || 0;
-    const total = Number(pushProgress && pushProgress.total) || 0;
-    const percent = total > 0 ? Math.min(100, Math.round((sent / total) * 100)) : 0;
-    const phase = pushProgress && pushProgress.phase;
-    const phaseLabel = phase === 'connecting'
-        ? 'Connecting…'
-        : phase === 'waiting'
-            ? 'Waiting for the node…'
-            : phase === 'sending'
-                ? 'Sending…'
-                : '';
-    const elapsed = pushProgress && pushProgress.startedAt
-        ? Date.now() - pushProgress.startedAt
-        : 0;
-    let etaLabel = '';
-    if (phase === 'sending' && sent > 256 * 1024 && elapsed > 1000 && sent < total) {
-        const remainMs = ((total - sent) / sent) * elapsed;
-        const remainSec = Math.max(1, Math.round(remainMs / 1000));
-        const minutes = Math.floor(remainSec / 60);
-        const seconds = remainSec % 60;
-        etaLabel = minutes > 0
-            ? `~${minutes} min ${seconds}s left`
-            : `~${seconds}s left`;
-    }
-
     const activeId = useMemo(() => {
         if (!selected) {
             return '';
@@ -310,14 +301,30 @@ const ShowList = ({
         className: 'flex-1 min-h-0 flex flex-col'
     },
         React.createElement('div', {
-            className: 'flex-none flex flex-col gap-1.5 pb-2 border-b border-zinc-200 dark:border-zinc-800'
+            className: 'flex-none flex items-center gap-1 pb-2 border-b border-zinc-200 dark:border-zinc-800'
         },
             React.createElement('button', {
                 type: 'button',
-                className: 'btn-quiet w-full justify-center',
+                className: 'btn-primary flex-1 justify-center min-w-0',
+                disabled: busy || playDisabled,
+                onClick: onPlay
+            }, 'Import to Studio'),
+            React.createElement('button', {
+                type: 'button',
+                className: 'btn-quiet flex-none p-1.5',
+                title: 'Push to SD',
+                'aria-label': 'Push to SD',
+                disabled: busy || !canPush,
+                onClick: onOpenPush
+            }, React.createElement(PushSdIcon)),
+            React.createElement('button', {
+                type: 'button',
+                className: 'btn-quiet flex-none p-1.5',
+                title: 'New folder',
+                'aria-label': 'New folder',
                 disabled: busy,
                 onClick: onCreateFolder
-            }, 'New folder')
+            }, React.createElement(FolderPlusIcon))
         ),
         React.createElement('div', {
             className: 'flex-1 min-h-0 overflow-y-auto py-2 flex flex-col gap-0.5'
@@ -357,7 +364,7 @@ const ShowList = ({
                             'aria-hidden': true
                         }),
                         React.createElement('div', {
-                            className: `kv-row ${selectedRow ? 'is-active' : ''} ${intoHere ? 'ring-1 ring-cyan-500' : ''}`,
+                            className: `kv-row group ${selectedRow ? 'is-active' : ''} ${intoHere ? 'ring-1 ring-cyan-500' : ''}`,
                             draggable: !editingId,
                             onDragStart: (event) => {
                                 const ids = selectedIds.has(node.id)
@@ -442,8 +449,31 @@ const ShowList = ({
                                     }
                                 })
                                 : React.createElement('span', {
-                                    className: `truncate text-sm ${loaded ? 'text-cyan-600 dark:text-cyan-400' : ''}`
-                                }, loaded ? `${label} · loaded` : label)
+                                    className: `truncate text-sm flex-1 min-w-0 ${loaded ? 'text-cyan-600 dark:text-cyan-400' : ''}`
+                                }, loaded ? `${label} · loaded` : label),
+                            node.type === 'show' && node.show && node.show.filePath
+                                && React.createElement('button', {
+                                    type: 'button',
+                                    className: 'flex-none p-0.5 rounded text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-cyan-500',
+                                    title: 'Play',
+                                    'aria-label': 'Play',
+                                    disabled: busy,
+                                    onClick: (event) => {
+                                        event.stopPropagation();
+                                        if (onQueuePlay) {
+                                            onQueuePlay({
+                                                filePath: node.show.filePath,
+                                                name: (node.show && node.show.displayName) || label
+                                            });
+                                        }
+                                    }
+                                }, React.createElement('svg', {
+                                    xmlns: 'http://www.w3.org/2000/svg',
+                                    viewBox: '0 0 24 24',
+                                    className: 'w-3.5 h-3.5',
+                                    fill: 'currentColor',
+                                    'aria-hidden': true
+                                }, React.createElement('path', { d: 'M8 5.2v13.6L19.4 12z' })))
                         )
                     )
                 );
@@ -453,66 +483,6 @@ const ShowList = ({
                 && React.createElement('div', {
                     className: 'h-0.5 mx-1 rounded-full bg-cyan-500'
                 })
-        ),
-        React.createElement('div', {
-            className: 'flex-none flex flex-col gap-1.5 pt-2'
-        },
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-primary w-full justify-center',
-                disabled: busy || playDisabled,
-                onClick: onPlay
-            }, 'Import to Studio')
-        ),
-        React.createElement('div', {
-            className: 'flex-none flex flex-col gap-1.5 pt-2 border-t border-zinc-200 dark:border-zinc-800'
-        },
-            React.createElement('select', {
-                className: 'field',
-                value: targetId || '',
-                disabled: busy || pushing || targets.length === 0,
-                onChange: (event) => onTargetChange(event.target.value || null)
-            },
-                targets.length === 0
-                    ? React.createElement('option', { value: '' }, 'No idle nodes')
-                    : [
-                        React.createElement('option', { key: '', value: '' }, 'Select a node'),
-                        ...targets.map((device) => React.createElement('option', {
-                            key: device.id,
-                            value: device.id
-                        }, `${device.longName || device.shortName || 'dmxwhip'} (${device.ip})`))
-                    ]
-            ),
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-primary w-full justify-center',
-                disabled: busy || pushing || !canPush,
-                onClick: onPush
-            }, pushing ? 'Pushing…' : 'Push to SD'),
-            pushing && React.createElement('div', {
-                className: 'flex flex-col gap-1'
-            },
-                React.createElement('div', {
-                    className: 'h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden'
-                },
-                    React.createElement('div', {
-                        className: 'h-full bg-cyan-500',
-                        style: { width: `${percent}%` }
-                    })
-                ),
-                React.createElement('p', {
-                    className: 'readout'
-                }, [
-                    total > 0 ? `${percent}% · ${formatBytes(sent)} / ${formatBytes(total)}` : phaseLabel || 'Connecting…',
-                    total > 0 ? phaseLabel : null,
-                    etaLabel
-                ].filter(Boolean).join(' · '))
-            ),
-            pushError && React.createElement('div', {
-                className: pushError.startsWith('Pushed ')
-                    ? 'text-sm text-cyan-600 dark:text-cyan-400'
-                    : 'text-sm text-red-500'
-            }, pushError)
         )
     );
 };

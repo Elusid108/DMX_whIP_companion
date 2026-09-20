@@ -1,6 +1,5 @@
 const React = require('react');
 const UniverseList = require('./UniverseList');
-const NetworkSelect = require('../controls/NetworkSelect');
 
 const UniverseSidebar = ({
     artnetUniverses,
@@ -8,22 +7,10 @@ const UniverseSidebar = ({
     selectedUniverse,
     selectedProtocol,
     selectedUniverses,
-    selectedNic,
-    networkInterfaces,
-    onNetworkChange,
     onUniverseSelect,
     onSelectAll,
     onUniverseClick
 }) => React.createElement(React.Fragment, null,
-    React.createElement('div', {
-        className: 'flex-none p-2 border-b border-zinc-200 dark:border-zinc-800'
-    },
-        React.createElement(NetworkSelect, {
-            selectedNic,
-            networkInterfaces: networkInterfaces || [],
-            onChange: onNetworkChange
-        })
-    ),
     React.createElement(UniverseList, {
         protocol: 'artnet',
         universes: Array.from(artnetUniverses.values()),

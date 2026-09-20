@@ -219,6 +219,9 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         };
 
         const handlePlaybackStats = (event, stats = {}) => {
+            if (stats.source === 'player') {
+                return;
+            }
             setPlaybackStats(stats);
             setIsPlaying(Boolean(stats.isPlaying));
             setIsPaused(Boolean(stats.isPaused));
@@ -620,6 +623,7 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
             return;
         }
         ipcRenderer.send('toggle-playback', {
+            source: 'studio',
             loop: isLoopEnabled,
             playbackNetwork
         });
@@ -630,6 +634,7 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
             return;
         }
         ipcRenderer.send('toggle-playback', {
+            source: 'studio',
             loop: isLoopEnabled,
             playbackNetwork
         });
@@ -875,13 +880,14 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
             return;
         }
         ipcRenderer.send('toggle-playback', {
+            source: 'studio',
             loop: isLoopEnabled,
             playbackNetwork
         });
     };
 
     const handleStopPlayback = () => {
-        ipcRenderer.send('stop-playback');
+        ipcRenderer.send('stop-playback', { source: 'studio' });
         setPlayheadMs(0);
     };
 
@@ -892,6 +898,7 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         const next = Math.max(0, Number(timeMs) || 0);
         setPlayheadMs(next);
         ipcRenderer.send('seek-playback', {
+            source: 'studio',
             timeMs: next,
             playbackNetwork,
             loop: isLoopEnabled

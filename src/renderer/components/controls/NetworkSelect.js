@@ -1,6 +1,12 @@
 const React = require('react');
 
-const NetworkSelect = ({ selectedNic, networkInterfaces, onChange }) => {
+const NetworkSelect = ({
+    selectedNic,
+    networkInterfaces,
+    onChange,
+    label = 'NIC',
+    disabled = false
+}) => {
     const handleChange = (e) => {
         const newNic = e.target.value;
         onChange(newNic);
@@ -11,13 +17,14 @@ const NetworkSelect = ({ selectedNic, networkInterfaces, onChange }) => {
     },
         React.createElement('label', {
             className: 'text-xs font-medium text-zinc-500 mb-0.5'
-        }, 'NIC'),
+        }, label),
         React.createElement('select', {
             value: selectedNic,
+            disabled,
             onChange: handleChange,
             className: 'field w-full py-1'
         },
-            networkInterfaces.map(nic =>
+            (networkInterfaces || []).map(nic =>
                 React.createElement('option', {
                     key: nic.ip,
                     value: nic.ip
