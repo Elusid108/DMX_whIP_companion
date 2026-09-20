@@ -1,4 +1,4 @@
-const { ipcMain, dialog } = require('electron');
+const { ipcMain, dialog, BrowserWindow } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -37,6 +37,7 @@ const {
 } = require('../../services/shared/compilationEdl');
 const { describeWav } = require('../../services/shared/audioWav');
 const { convertToStudioWav, tempWavPath } = require('../audioConvert');
+const { studioVisible } = require('../uiView');
 const {
     ensureLibrary,
     uniqueDmxPath,
@@ -82,6 +83,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     let clipClipboard = { light: [], audio: [] };
     let punchIn = null;
     let punchTimer = null;
+    let lastPunchProgressAt = 0;
     const HISTORY_CAP = 100;
 
     const resolvedTrackNames = () => normalizeTrackNames(
@@ -1244,6 +1246,29 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
+    ipcMain.removeHandler('confirm-unsaved-compilation');
+    ipcMain.handle('confirm-unsaved-compilation', async (event) => {
+        const win = event && event.sender
+            ? BrowserWindow.fromWebContents(event.sender)
+            : null;
+        const options = {
+            type: 'question',
+            buttons: ['Save', "Don't Save", 'Cancel'],
+            defaultId: 0,
+            cancelId: 2,
+            title: 'Unsaved compilation',
+            message: 'The compilation has unsaved changes.',
+            detail: 'Save it before clearing Studio?'
+        };
+        const result = win
+            ? await dialog.showMessageBox(win, options)
+            : await dialog.showMessageBox(options);
+        const choice = result.response === 0
+            ? 'save'
+            : (result.response === 1 ? 'discard' : 'cancel');
+        return { choice };
+    });
+
     ipcMain.removeHandler('save-compilation');
     ipcMain.handle('save-compilation', async (event, payload = {}) => {
         try {
@@ -1381,6 +1406,14 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         for (const frame of blended) {
             outputFrame(frame, false);
         }
+        if (!studioVisible()) {
+            return;
+        }
+        const now = Date.now();
+        if (now - lastPunchProgressAt < 100) {
+            return;
+        }
+        lastPunchProgressAt = now;
         sendSafe('punch-in-progress', {
             startMs: punchIn.startMs,
             trackId: punchIn.trackId,
@@ -1398,16 +1431,17 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             protocol: frame.protocol === 'sacn' ? 'sacn' : 'artnet',
             universe: Number(frame.universe) || 0,
             destIp: '',
-            data: Array.isArray(frame.data)
-                ? frame.data.slice()
-                : Array.from(frame.data || []),
+            data: frame.data || ZERO_DMX,
             timestamp
         });
-        tickPunchIn();
     };
 
     const clearPunchIn = ({ deleteTemp = false } = {}) => {
         stopPunchTimer();
+        lastPunchProgressAt = 0;
+        if (recordingHandler && recordingHandler.isRecording && recordingHandler.isRecording()) {
+            recordingHandler.stop({ emitSaved: false });
+        }
         if (deleteTemp && punchIn && punchIn.tempPath && fs.existsSync(punchIn.tempPath)) {
             try {
                 fs.unlinkSync(punchIn.tempPath);
@@ -1460,6 +1494,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             punchIn.tempPath = started.filePath || tempPath;
             recordingHandler.setOnLiveFrame(handleLivePunchFrame);
             await initializeSenders(payload.playbackNetwork || activeNetwork, { forceSacn: true });
+            lastPunchProgressAt = 0;
             stopPunchTimer();
             punchTimer = setInterval(tickPunchIn, 40);
             tickPunchIn();

@@ -26,6 +26,17 @@ class UniverseMonitor {
         this.onGrid = null;
         this.interval = null;
         this.lastSnapshotAt = 0;
+        this.emitSnapshot = true;
+        this.emitGrid = true;
+    }
+
+    setEmit({ snapshot, grid } = {}) {
+        if (snapshot != null) {
+            this.emitSnapshot = Boolean(snapshot);
+        }
+        if (grid != null) {
+            this.emitGrid = Boolean(grid);
+        }
     }
 
     start(onSnapshot, onGrid) {
@@ -127,11 +138,13 @@ class UniverseMonitor {
             this.refreshFps(entry, now);
             entry.stale = age > STALE_MS;
         }
-        if (now - this.lastSnapshotAt >= SNAPSHOT_MS) {
+        if (this.emitSnapshot && now - this.lastSnapshotAt >= SNAPSHOT_MS) {
             this.lastSnapshotAt = now;
             this.sendSnapshot();
         }
-        this.sendGrid();
+        if (this.emitGrid) {
+            this.sendGrid();
+        }
     }
 
     toRow(entry) {
@@ -173,7 +186,7 @@ class UniverseMonitor {
     }
 
     sendGrid() {
-        if (!this.onGrid) {
+        if (!this.onGrid || !this.emitGrid) {
             return;
         }
 

@@ -93,7 +93,7 @@ const UniverseActivityCanvas = ({ protocol, universeId }) => {
     });
 };
 
-const UniverseActivityGrid = ({ protocol, universeId }) => {
+const UniverseActivityGrid = ({ protocol, universeId, recording }) => {
     const wrapRef = useRef(null);
     const [active, setActive] = useState(false);
 
@@ -128,7 +128,7 @@ const UniverseActivityGrid = ({ protocol, universeId }) => {
         ref: wrapRef,
         className: 'flex-none',
         style: slotStyle
-    }, active && React.createElement(UniverseActivityCanvas, {
+    }, !recording && active && React.createElement(UniverseActivityCanvas, {
         protocol,
         universeId
     }));

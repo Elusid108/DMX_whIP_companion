@@ -7,6 +7,7 @@ const {
     createHeader,
     encodeFrame
 } = require('../../services/shared/dmxRecording');
+const { setUiView, studioVisible } = require('../uiView');
 
 const sendSafe = (mainWindow, channel, payload) => {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
@@ -76,6 +77,9 @@ function setupRecordingHandlers(mainWindow) {
         if (!force && now - lastStatsSent < 100) {
             return;
         }
+        if (!force && !studioVisible()) {
+            return;
+        }
         lastStatsSent = now;
         const cutoff = now - 1000;
         fpsTimes = fpsTimes.filter((time) => time > cutoff);
@@ -101,6 +105,7 @@ function setupRecordingHandlers(mainWindow) {
         recordingPath = dest;
         isRecording = true;
         recordingOriginNs = process.hrtime.bigint();
+        setUiView({ recording: true });
         sendStats(true);
         return { success: true, filePath: dest };
     };
@@ -110,6 +115,7 @@ function setupRecordingHandlers(mainWindow) {
             return { success: false, error: 'Not recording', filePath: recordingPath, totalFrames: frameCount };
         }
         isRecording = false;
+        setUiView({ recording: false });
         try {
             flushChunk();
             writeFrameCount();
@@ -154,6 +160,7 @@ function setupRecordingHandlers(mainWindow) {
         }
         const filePath = recordingPath;
         isRecording = false;
+        setUiView({ recording: false });
         pending = [];
         pendingBytes = 0;
         closeFd();
@@ -228,6 +235,7 @@ function setupRecordingHandlers(mainWindow) {
         close: () => {
             if (isRecording) {
                 isRecording = false;
+                setUiView({ recording: false });
                 try {
                     flushChunk();
                     writeFrameCount();

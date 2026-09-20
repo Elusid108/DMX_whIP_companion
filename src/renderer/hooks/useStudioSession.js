@@ -52,7 +52,7 @@ const clearPlaybackUi = (setIsFileLoaded, setLoadedFileName, setTimelineOverview
     }
 };
 
-const useStudioSession = (selectedUniverses, selectedNic) => {
+const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}) => {
     const [isRecording, setIsRecording] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [isPaused, setIsPaused] = useState(false);
@@ -65,8 +65,6 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
     const [frameCount, setFrameCount] = useState(0);
     const [recordingFps, setRecordingFps] = useState(0);
     const [droppedFrames, setDroppedFrames] = useState(0);
-    const [naming, setNaming] = useState(false);
-    const [nameDraft, setNameDraft] = useState('');
     const [isLoopEnabled, setIsLoopEnabled] = useState(false);
     const [playbackNetwork, setPlaybackNetwork] = useState(selectedNic || '0.0.0.0');
     const [playbackStats, setPlaybackStats] = useState({
@@ -103,6 +101,9 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
     const audioRef = useRef(null);
     const punchStartRef = useRef(0);
     const lastSelectedTrackRef = useRef(0);
+    const studioVisibleRef = useRef(true);
+    const clearAfterSaveRef = useRef(false);
+    studioVisibleRef.current = studioVisible !== false;
 
     useEffect(() => {
         setPlaybackNetwork((current) => current || selectedNic || '0.0.0.0');
@@ -222,21 +223,29 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
             if (stats.source === 'player') {
                 return;
             }
-            setPlaybackStats(stats);
             setIsPlaying(Boolean(stats.isPlaying));
             setIsPaused(Boolean(stats.isPaused));
             if (stats.isReset) {
                 setIsPlaying(false);
                 setIsPaused(false);
-                setPlayheadMs(0);
+                if (studioVisibleRef.current) {
+                    setPlayheadMs(0);
+                }
                 return;
             }
+            if (!studioVisibleRef.current) {
+                return;
+            }
+            setPlaybackStats(stats);
             if (typeof stats.playheadMs === 'number') {
                 setPlayheadMs(stats.playheadMs);
             }
         };
 
         const handleFrameRecorded = (event, stats = {}) => {
+            if (!studioVisibleRef.current) {
+                return;
+            }
             setFrameCount(stats.totalFrames || 0);
             setRecordingFps(stats.currentFps || 0);
             setDroppedFrames(stats.droppedFrames || 0);
@@ -249,6 +258,9 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         };
 
         const handlePunchInProgress = (event, payload = {}) => {
+            if (!studioVisibleRef.current) {
+                return;
+            }
             if (typeof payload.trackId === 'number') {
                 setPunchTrackId(payload.trackId);
                 setSelectedTrackId(payload.trackId);
@@ -650,6 +662,19 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         handleSeek(next);
     };
 
+    const clearStudio = () => {
+        unloadPlayback();
+        setRecordingPath(null);
+        setRecordingDuration(0);
+        setFrameCount(0);
+        setRecordingFps(0);
+        setDroppedFrames(0);
+        setSaveNaming(false);
+        setExportNaming(false);
+        setLoadError('');
+        clearAfterSaveRef.current = false;
+    };
+
     const handleSaveCompilation = () => {
         setSaveDraft(compilationName || loadedFileName || 'Stack');
         setSaveNaming(true);
@@ -667,6 +692,9 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
             setCompilationDirty(false);
             setCompilationName(name);
             setLoadedFileName(name);
+            if (clearAfterSaveRef.current) {
+                clearStudio();
+            }
         } else if (result && result.error) {
             setLoadError(result.error);
         }
@@ -691,47 +719,36 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         }
     };
 
-    const handleNewFile = () => {
+    const handleNewFile = async () => {
         if (isRecording) {
             return;
         }
-        if (compilationDirty || isFileLoaded) {
-            if (!window.confirm('Unsaved edits will be discarded. Continue?')) {
+        if (compilationDirty) {
+            const result = await ipcRenderer.invoke('confirm-unsaved-compilation');
+            const choice = result && result.choice;
+            if (choice === 'cancel' || !choice) {
+                return;
+            }
+            if (choice === 'save') {
+                const existing = String(compilationName || '').trim();
+                if (existing && existing !== 'Untitled') {
+                    const saved = await ipcRenderer.invoke('save-compilation', { name: existing });
+                    if (!saved || !saved.success) {
+                        setLoadError((saved && saved.error) || 'Could not save');
+                        return;
+                    }
+                    setCompilationDirty(false);
+                    clearStudio();
+                    return;
+                }
+                clearAfterSaveRef.current = true;
+                setSaveDraft(compilationName || loadedFileName || 'Stack');
+                setSaveNaming(true);
+                setExportNaming(false);
                 return;
             }
         }
-        setNameDraft('');
-        setNaming(true);
-        setLoadError('');
-    };
-
-    const handleNewFileCancel = () => {
-        setNaming(false);
-        setNameDraft('');
-    };
-
-    const handleNewFileConfirm = async () => {
-        if (isRecording) {
-            return;
-        }
-        const name = String(nameDraft || '').trim();
-        if (!name) {
-            return;
-        }
-        try {
-            const result = await ipcRenderer.invoke('library-new-file', { name });
-            if (result && result.success) {
-                unloadPlayback();
-                setRecordingPath(result.filePath);
-                setNaming(false);
-                setNameDraft('');
-                setLoadError('');
-            } else if (result && result.error && result.error !== 'No file selected') {
-                setLoadError(result.error);
-            }
-        } catch (error) {
-            setLoadError(error.message);
-        }
+        clearStudio();
     };
 
     const handleStartRecording = async () => {
@@ -757,11 +774,6 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         setFrameCount(0);
         setDroppedFrames(0);
         setLoadError('');
-        durationTimer.current = setInterval(() => {
-            const elapsed = Date.now() - recordingStartTime.current;
-            setRecordingDuration(elapsed);
-            setPlayheadMs(punchStartRef.current + elapsed);
-        }, 10);
         try {
             const result = await ipcRenderer.invoke('start-punch-in', {
                 trackId,
@@ -969,9 +981,6 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         frameCount,
         recordingFps,
         droppedFrames,
-        naming,
-        nameDraft,
-        setNameDraft,
         isLoopEnabled,
         setIsLoopEnabled,
         playbackNetwork,
@@ -986,8 +995,6 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         isIdle,
         formatDuration,
         handleNewFile,
-        handleNewFileCancel,
-        handleNewFileConfirm,
         handleStartRecording,
         handleStopRecording,
         handleCancelRecording,
@@ -1044,7 +1051,10 @@ const useStudioSession = (selectedUniverses, selectedNic) => {
         handleImportAudio,
         handleSaveCompilation,
         handleSaveCompilationConfirm,
-        handleSaveCompilationCancel: () => setSaveNaming(false),
+        handleSaveCompilationCancel: () => {
+            clearAfterSaveRef.current = false;
+            setSaveNaming(false);
+        },
         handleExportFlattened,
         handleExportFlattenedConfirm,
         handleExportFlattenedCancel: () => setExportNaming(false)

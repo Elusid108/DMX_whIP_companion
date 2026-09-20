@@ -7,7 +7,8 @@ const UniverseCell = ({
     isSelected,
     isChecked,
     onSelect,
-    onClick
+    onClick,
+    recording
 }) => {
     const universeId = universe?.id ?? universe?.universe ?? 'undefined';
     const channels = universe?.activeChannels ?? 0;
@@ -47,7 +48,8 @@ const UniverseCell = ({
                     ),
                     React.createElement(UniverseActivityGrid, {
                         protocol,
-                        universeId
+                        universeId,
+                        recording
                     })
                 ),
                 React.createElement('div', {

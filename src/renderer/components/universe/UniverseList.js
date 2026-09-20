@@ -9,7 +9,8 @@ const UniverseList = ({
     selectedUniverses,
     onUniverseSelect,
     onUniverseClick,
-    onSelectAll
+    onSelectAll,
+    recording
 }) => {
     const protocolName = protocol === 'artnet' ? 'Art-Net' : 'sACN';
     const allSelected = universes.length > 0 && universes.every(universe =>
@@ -48,7 +49,8 @@ const UniverseList = ({
                         isSelected: selectedUniverse === universeId && selectedProtocol === protocol,
                         isChecked: selectedUniverses.has(`${protocol}-${universeId}`),
                         onSelect: () => onUniverseSelect(universeId, protocol),
-                        onClick: () => onUniverseClick(universeId, protocol)
+                        onClick: () => onUniverseClick(universeId, protocol),
+                        recording
                     });
                 })
             ) :

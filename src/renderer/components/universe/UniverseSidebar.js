@@ -9,7 +9,8 @@ const UniverseSidebar = ({
     selectedUniverses,
     onUniverseSelect,
     onSelectAll,
-    onUniverseClick
+    onUniverseClick,
+    recording
 }) => React.createElement(React.Fragment, null,
     React.createElement(UniverseList, {
         protocol: 'artnet',
@@ -19,7 +20,8 @@ const UniverseSidebar = ({
         selectedUniverses,
         onUniverseSelect,
         onUniverseClick: (id) => onUniverseClick(id, 'artnet'),
-        onSelectAll
+        onSelectAll,
+        recording
     }),
     React.createElement(UniverseList, {
         protocol: 'sacn',
@@ -29,7 +31,8 @@ const UniverseSidebar = ({
         selectedUniverses,
         onUniverseSelect,
         onUniverseClick: (id) => onUniverseClick(id, 'sacn'),
-        onSelectAll
+        onSelectAll,
+        recording
     })
 );
 

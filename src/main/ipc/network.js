@@ -2,6 +2,7 @@ const { ipcMain, shell } = require('electron');
 const ArtNetReceiver = require('../../services/artnet/receiver');
 const SacnReceiver = require('../../services/sacn/receiver');
 const { getNetworkInterfaces } = require('../../services/shared/networkUtils');
+const { getUiView, setUiView, onUiViewChange, devicesUiWanted } = require('../uiView');
 const UniverseMonitor = require('../monitor/universeMonitor');
 const { assertInLibrary, sanitizeBaseName, uniqueDmxPath, writeSidecar, ensureLibrary } = require('./library');
 const {
@@ -112,7 +113,29 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     };
 
     const emitDevices = () => {
+        if (!devicesUiWanted()) {
+            return;
+        }
         sendToRenderer('devices-update', snapshotDevices());
+    };
+
+    const quietRecord = () => Boolean(
+        getUiView().recording || (recordingHandler && recordingHandler.isRecording())
+    );
+
+    const syncUiEmit = () => {
+        const ui = getUiView();
+        const quiet = quietRecord();
+        const rail = !quiet && (ui.view === 'monitor' || ui.view === 'studio');
+        monitor.setEmit({
+            snapshot: rail,
+            grid: !quiet && ui.view === 'monitor'
+        });
+        if (devicesUiWanted()) {
+            startPoll();
+        } else {
+            stopPoll();
+        }
     };
 
     const clearDevices = () => {
@@ -154,7 +177,9 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     };
 
     const startPoll = () => {
-        stopPoll();
+        if (pollTimer) {
+            return;
+        }
         const tick = () => {
             if (artnetReceiver && artnetReceiver.sendPoll) {
                 artnetReceiver.sendPoll();
@@ -223,18 +248,25 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
             };
 
             artnetReceiver.onDmxData('main', (data) => {
+                if (recordingHandler && recordingHandler.isRecording()) {
+                    maybeRecord('artnet', data.universe, data.dmxData);
+                    return;
+                }
                 monitor.ingest({
                     protocol: 'artnet',
                     universe: data.universe,
                     sourceIp: data.sourceIp,
                     dmxData: data.dmxData
                 });
-                maybeRecord('artnet', data.universe, data.dmxData);
             });
 
             artnetReceiver.onPollReply('main', ingestPollReply);
 
             sacnReceiver.onDmxData('main', (data) => {
+                if (recordingHandler && recordingHandler.isRecording()) {
+                    maybeRecord('sacn', data.universe, data.dmxData);
+                    return;
+                }
                 monitor.ingest({
                     protocol: 'sacn',
                     universe: data.universe,
@@ -242,10 +274,9 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
                     sourceName: data.sourceName,
                     dmxData: data.dmxData
                 });
-                maybeRecord('sacn', data.universe, data.dmxData);
             });
 
-            startPoll();
+            syncUiEmit();
         } catch (error) {
             nextArtnet.stop();
             nextSacn.stop();
@@ -404,13 +435,28 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     });
 
     const handleScan = () => {
+        if (quietRecord()) {
+            return;
+        }
         if (artnetReceiver && artnetReceiver.sendPoll) {
             artnetReceiver.sendPoll();
         }
         emitDevices();
     };
 
+    const handleUiView = (event, payload = {}) => {
+        setUiView({
+            view: payload.view,
+            recording: payload.recording
+        });
+        syncUiEmit();
+    };
+
     ipcMain.on('devices-scan', handleScan);
+    ipcMain.on('set-ui-view', handleUiView);
+    const stopUiView = onUiViewChange(() => {
+        syncUiEmit();
+    });
 
     ipcMain.on('select-monitor-universe', (event, { protocol, universe } = {}) => {
         monitor.setSelected(protocol, universe);
@@ -445,6 +491,10 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('device-open-portal');
         ipcMain.removeHandler('device-pull-show');
         ipcMain.removeListener('devices-scan', handleScan);
+        ipcMain.removeListener('set-ui-view', handleUiView);
+        if (stopUiView) {
+            stopUiView();
+        }
     };
 }
 

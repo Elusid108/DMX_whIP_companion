@@ -29,6 +29,7 @@ const INVOKE = new Set([
     'inspect-clip',
     'import-audio',
     'library-duplicate',
+    'confirm-unsaved-compilation',
     'save-compilation',
     'start-punch-in',
     'stop-punch-in',
@@ -62,6 +63,7 @@ const INVOKE = new Set([
 ]);
 
 const SEND = new Set([
+    'set-ui-view',
     'set-protocol',
     'select-monitor-universe',
     'update-selected-universes',

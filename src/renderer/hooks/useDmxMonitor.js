@@ -1,15 +1,17 @@
-const { useState, useEffect } = require('react');
+const { useState, useEffect, useRef } = require('react');
 const ipcRenderer = require('../ipc');
 
 const emptyGrid = () => new Array(512).fill(null);
 
-const useDmxMonitor = (selectedUniverse, selectedProtocol) => {
+const useDmxMonitor = (selectedUniverse, selectedProtocol, { monitorVisible } = {}) => {
     const [dmxData, setDmxData] = useState(emptyGrid());
     const [networkInterfaces, setNetworkInterfaces] = useState([]);
     const [selectedNic, setSelectedNic] = useState('0.0.0.0');
     const [displayFormat, setDisplayFormat] = useState('decimal');
     const [gridDimensions, setGridDimensions] = useState('32x16');
     const [showAnimations, setShowAnimations] = useState(true);
+    const visibleRef = useRef(true);
+    visibleRef.current = monitorVisible !== false;
 
     useEffect(() => {
         const loadNetworkInterfaces = async () => {
@@ -26,6 +28,9 @@ const useDmxMonitor = (selectedUniverse, selectedProtocol) => {
 
     useEffect(() => {
         const handleDmxUpdate = (event, data) => {
+            if (!visibleRef.current) {
+                return;
+            }
             if (data.protocol !== selectedProtocol || data.universe !== selectedUniverse) {
                 return;
             }

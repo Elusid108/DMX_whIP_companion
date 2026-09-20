@@ -34,6 +34,7 @@ const App = () => {
         handleSelectAll
     } = useUniverseData();
 
+    const [mainView, setMainView] = React.useState('monitor');
     const {
         dmxData,
         networkInterfaces,
@@ -45,12 +46,15 @@ const App = () => {
         handleDisplayFormatChange,
         handleGridDimensionsChange,
         toggleAnimations
-    } = useDmxMonitor(selectedUniverse, selectedProtocol);
+    } = useDmxMonitor(selectedUniverse, selectedProtocol, {
+        monitorVisible: mainView === 'monitor'
+    });
 
-    const [mainView, setMainView] = React.useState('monitor');
     const [theme, setTheme] = React.useState('dark');
     const [focusDeviceId, setFocusDeviceId] = React.useState(null);
-    const session = useStudioSession(selectedUniverses, selectedNic);
+    const session = useStudioSession(selectedUniverses, selectedNic, {
+        studioVisible: mainView === 'studio'
+    });
     const player = usePlayerQueue({
         playbackNetwork: session.playbackNetwork,
         isRecording: session.isRecording
@@ -131,6 +135,13 @@ const App = () => {
     };
 
     React.useEffect(() => {
+        ipcRenderer.send('set-ui-view', {
+            view: mainView,
+            recording: session.isRecording
+        });
+    }, [mainView, session.isRecording]);
+
+    React.useEffect(() => {
         let cancelled = false;
         ipcRenderer.invoke('get-settings').then((result) => {
             if (cancelled || !result || !result.settings) {
@@ -164,7 +175,8 @@ const App = () => {
         selectedUniverses,
         onUniverseSelect: handleUniverseSelect,
         onSelectAll: handleSelectAll,
-        onUniverseClick: handleUniverseClick
+        onUniverseClick: handleUniverseClick,
+        recording: session.isRecording
     };
 
     return React.createElement('div', {

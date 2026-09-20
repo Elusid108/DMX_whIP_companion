@@ -33,18 +33,9 @@ const StudioPanel = ({
                 className: 'app-toolbar bg-zinc-50 dark:bg-zinc-900'
             },
                 React.createElement(RecordingControls, {
-                    selectedUniverses,
                     isRecording: session.isRecording,
                     isPlaying: session.isPlaying,
-                    recordingPath: session.recordingPath,
-                    naming: session.naming,
-                    nameDraft: session.nameDraft,
-                    onNameDraftChange: session.setNameDraft,
                     onNewFile: session.handleNewFile,
-                    onNewFileCancel: session.handleNewFileCancel,
-                    onNewFileConfirm: session.handleNewFileConfirm,
-                    onStartRecording: session.handleStartRecording,
-                    onStopRecording: session.handleStopRecording,
                     onCancelRecording: session.handleCancelRecording
                 }),
                 session.isFileLoaded && !session.isRecording && React.createElement(React.Fragment, null,
