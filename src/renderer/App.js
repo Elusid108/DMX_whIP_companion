@@ -134,6 +134,19 @@ const App = () => {
         setSelectedProtocol(protocol);
     };
 
+    const requestView = async (next) => {
+        if (next === mainView) {
+            return;
+        }
+        if (mainView === 'studio' && next !== 'studio') {
+            const ok = await session.requestLeaveStudio();
+            if (!ok) {
+                return;
+            }
+        }
+        setMainView(next);
+    };
+
     React.useEffect(() => {
         ipcRenderer.send('set-ui-view', {
             view: mainView,
@@ -188,27 +201,27 @@ const App = () => {
             React.createElement('button', {
                 type: 'button',
                 className: `tab-btn ${mainView === 'monitor' ? 'is-active' : ''}`,
-                onClick: () => setMainView('monitor')
+                onClick: () => requestView('monitor')
             }, 'Monitor'),
             React.createElement('button', {
                 type: 'button',
                 className: `tab-btn ${mainView === 'studio' ? 'is-active' : ''}`,
-                onClick: () => setMainView('studio')
+                onClick: () => requestView('studio')
             }, 'Studio'),
             React.createElement('button', {
                 type: 'button',
                 className: `tab-btn ${mainView === 'library' ? 'is-active' : ''}`,
-                onClick: () => setMainView('library')
+                onClick: () => requestView('library')
             }, 'Library'),
             React.createElement('button', {
                 type: 'button',
                 className: `tab-btn ${mainView === 'devices' ? 'is-active' : ''}`,
-                onClick: () => setMainView('devices')
+                onClick: () => requestView('devices')
             }, 'Devices'),
             React.createElement('button', {
                 type: 'button',
                 className: `tab-btn ${mainView === 'flash' ? 'is-active' : ''}`,
-                onClick: () => setMainView('flash')
+                onClick: () => requestView('flash')
             }, 'Flash'),
             React.createElement(SettingsMenu, {
                 theme,

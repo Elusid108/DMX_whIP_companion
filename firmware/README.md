@@ -5,7 +5,7 @@ The companion does not compile firmware in-process. The Flash tab **Build firmwa
 Lookup order:
 
 1. `firmware/artifacts/esp32s3-4mb-qspi/` — `bootloader.bin`, `partitions.bin`, `firmware.bin`
-2. Sibling `../DMX_whIP_embedded/.pio/build/matrix/` (same three files after `pio run -e matrix`)
+2. Sibling `../DMX_whIP_embedded/.pio/build/<pioEnv>/` (same three files after `pio run -e <pioEnv>`; Matrix is `matrix`, C5 is `c5`)
 
 Do not commit the `.bin` files. After a firmware change, use **Build firmware** (or rebuild `[env:matrix]` in `DMX_whIP_embedded`, or copy those three files into the artifacts folder) before flashing from this app. Copies in `firmware/artifacts/` still win over a fresh PIO build.
 

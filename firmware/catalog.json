@@ -39,6 +39,45 @@
         "nvs": 36864,
         "nvsSize": 20480
       }
+    },
+    {
+      "id": "espressif-c5-devkitc1-n8r4",
+      "name": "ESP32-C5-DevKitC-1-N8R4",
+      "chip": "esp32c5",
+      "flashClass": "8mb-psram",
+      "artifact": "esp32c5-8mb-psram",
+      "pioEnv": "c5",
+      "usb": {
+        "cdc": false
+      },
+      "defaults": {
+        "led": {
+          "data": 24,
+          "clk": 0,
+          "count": 25,
+          "order": "GRB",
+          "chip": "ws2812b",
+          "maxOutputs": 2,
+          "maxSegments": 24,
+          "maxPixels": 1024
+        },
+        "sd": {
+          "cs": 10,
+          "mosi": 7,
+          "clk": 6,
+          "miso": 2
+        }
+      },
+      "flash": {
+        "mode": "qio",
+        "freq": "80m",
+        "size": "8MB",
+        "bootloader": 8192,
+        "partitions": 32768,
+        "app": 65536,
+        "nvs": 36864,
+        "nvsSize": 20480
+      }
     }
   ]
 }

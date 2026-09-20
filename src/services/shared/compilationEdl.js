@@ -41,7 +41,8 @@ const normalizeClip = (clip = {}) => {
         destIp: typeof clip.destIp === 'string' ? clip.destIp.trim() : '',
         fadeInMs: clampFade(clip.fadeInMs, half),
         fadeOutMs: clampFade(clip.fadeOutMs, half),
-        fadeCurve: clip.fadeCurve === 'smooth' ? 'smooth' : 'linear'
+        fadeCurve: clip.fadeCurve === 'smooth' ? 'smooth' : 'linear',
+        libraryPath: typeof clip.libraryPath === 'string' ? clip.libraryPath : ''
     };
 };
 
@@ -399,7 +400,8 @@ const serializeClips = (clips = []) => layoutClips(clips).map((clip) => ({
     destIp: clip.destIp,
     fadeInMs: clip.fadeInMs,
     fadeOutMs: clip.fadeOutMs,
-    fadeCurve: clip.fadeCurve
+    fadeCurve: clip.fadeCurve,
+    libraryPath: clip.libraryPath || ''
 }));
 
 const SNAP_GAP_MS = 80;

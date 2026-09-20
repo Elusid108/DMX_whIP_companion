@@ -127,6 +127,8 @@ const PushToSdDialog = ({
     const [analyzing, setAnalyzing] = useState(false);
     const openedRef = useRef(false);
     const requestRef = useRef(0);
+    const analysisRef = useRef(null);
+    analysisRef.current = analysis;
 
     useEffect(() => {
         if (!open) {
@@ -158,6 +160,11 @@ const PushToSdDialog = ({
     }, [open, pushing, onClose]);
 
     const jobsKey = (jobs || []).map((job) => `${job.filePath}:${job.dest || ''}`).join('|');
+    const chosen = useMemo(
+        () => targets.filter((device) => selectedIds.includes(device.id)),
+        [targets, selectedIds]
+    );
+    const analyzeKey = chosen.map((device) => `${device.id}|${device.ip}`).sort().join(',');
 
     useEffect(() => {
         if (!open || !jobs || !jobs.length || !selectedIds.length) {
@@ -165,18 +172,20 @@ const PushToSdDialog = ({
             setAnalyzing(false);
             return undefined;
         }
-        const chosen = targets.filter((device) => selectedIds.includes(device.id));
-        if (!chosen.length) {
+        const selected = targets.filter((device) => selectedIds.includes(device.id));
+        if (!selected.length) {
             setAnalysis(null);
             return undefined;
         }
         let cancelled = false;
         const request = requestRef.current + 1;
         requestRef.current = request;
-        setAnalyzing(true);
+        if (!analysisRef.current) {
+            setAnalyzing(true);
+        }
         ipcRenderer.invoke('device-push-analyze', {
             jobs,
-            devices: chosen.map((device) => ({
+            devices: selected.map((device) => ({
                 id: device.id,
                 ip: device.ip,
                 mac: device.mac,
@@ -189,20 +198,22 @@ const PushToSdDialog = ({
             }
             if (result && result.success) {
                 setAnalysis(result.analysis);
-            } else {
+            } else if (!analysisRef.current) {
                 setAnalysis(null);
             }
             setAnalyzing(false);
         }).catch(() => {
             if (!cancelled && request === requestRef.current) {
-                setAnalysis(null);
+                if (!analysisRef.current) {
+                    setAnalysis(null);
+                }
                 setAnalyzing(false);
             }
         });
         return () => {
             cancelled = true;
         };
-    }, [open, jobsKey, selectedIds, targets]);
+    }, [open, jobsKey, analyzeKey]);
 
     if (!open) {
         return null;
@@ -237,7 +248,7 @@ const PushToSdDialog = ({
 
     const lookRows = (analysis && analysis.looks) || [];
     const overall = analysis && analysis.overall;
-    const canConfirm = Boolean(overall && overall.canPush) && selectedIds.length > 0 && !analyzing;
+    const canConfirm = selectedIds.length > 0 && !pushing;
     const pushLabel = pushing
         ? 'Pushing…'
         : (overall && overall.pushLabel) || 'Push';

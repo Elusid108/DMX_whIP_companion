@@ -103,6 +103,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
     const lastSelectedTrackRef = useRef(0);
     const studioVisibleRef = useRef(true);
     const clearAfterSaveRef = useRef(false);
+    const leaveResolveRef = useRef(null);
     studioVisibleRef.current = studioVisible !== false;
 
     useEffect(() => {
@@ -397,18 +398,6 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         });
         if (updated && !updated.success && updated.error) {
             setLoadError(updated.error);
-            return;
-        }
-        const saveName = (compilationName && compilationName !== 'Untitled')
-            ? compilationName
-            : trimmed;
-        const saved = await ipcRenderer.invoke('save-compilation', { name: saveName });
-        if (saved && saved.success) {
-            setCompilationDirty(false);
-            setCompilationName(saveName);
-            setLoadedFileName(saveName);
-        } else if (saved && saved.error) {
-            setLoadError(saved.error);
         }
     };
 
@@ -695,6 +684,11 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
             if (clearAfterSaveRef.current) {
                 clearStudio();
             }
+            if (leaveResolveRef.current) {
+                const resolve = leaveResolveRef.current;
+                leaveResolveRef.current = null;
+                resolve(true);
+            }
         } else if (result && result.error) {
             setLoadError(result.error);
         }
@@ -724,7 +718,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
             return;
         }
         if (compilationDirty) {
-            const result = await ipcRenderer.invoke('confirm-unsaved-compilation');
+            const result = await ipcRenderer.invoke('confirm-unsaved-compilation', { reason: 'new' });
             const choice = result && result.choice;
             if (choice === 'cancel' || !choice) {
                 return;
@@ -749,6 +743,44 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
             }
         }
         clearStudio();
+    };
+
+    const namedCompilation = () => {
+        const existing = String(compilationName || '').trim();
+        return existing && existing !== 'Untitled' ? existing : '';
+    };
+
+    const requestLeaveStudio = async () => {
+        if (isRecording) {
+            return false;
+        }
+        if (!compilationDirty) {
+            return true;
+        }
+        const result = await ipcRenderer.invoke('confirm-unsaved-compilation', { reason: 'leave' });
+        const choice = result && result.choice;
+        if (choice === 'cancel' || !choice) {
+            return false;
+        }
+        if (choice === 'discard') {
+            return true;
+        }
+        const existing = namedCompilation();
+        if (existing) {
+            const saved = await ipcRenderer.invoke('save-compilation', { name: existing });
+            if (!saved || !saved.success) {
+                setLoadError((saved && saved.error) || 'Could not save');
+                return false;
+            }
+            setCompilationDirty(false);
+            return true;
+        }
+        return new Promise((resolve) => {
+            leaveResolveRef.current = resolve;
+            setSaveDraft(compilationName || loadedFileName || 'Stack');
+            setSaveNaming(true);
+            setExportNaming(false);
+        });
     };
 
     const handleStartRecording = async () => {
@@ -995,6 +1027,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         isIdle,
         formatDuration,
         handleNewFile,
+        requestLeaveStudio,
         handleStartRecording,
         handleStopRecording,
         handleCancelRecording,
@@ -1054,6 +1087,11 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         handleSaveCompilationCancel: () => {
             clearAfterSaveRef.current = false;
             setSaveNaming(false);
+            if (leaveResolveRef.current) {
+                const resolve = leaveResolveRef.current;
+                leaveResolveRef.current = null;
+                resolve(false);
+            }
         },
         handleExportFlattened,
         handleExportFlattenedConfirm,

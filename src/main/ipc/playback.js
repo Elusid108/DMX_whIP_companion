@@ -603,7 +603,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         });
     };
 
-    const addMediaFromBuffer = (fileData, name, startMs, trackId) => {
+    const addMediaFromBuffer = (fileData, name, startMs, trackId, extra = {}) => {
         const frames = parseRecording(fileData);
         const mediaId = newId();
         editSession.media[mediaId] = frames;
@@ -621,7 +621,8 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             sourceOutMs: duration,
             universeOffset: 0,
             channelOffset: 0,
-            destIp: ''
+            destIp: '',
+            libraryPath: extra.libraryPath || ''
         });
         return { mediaId, clipId };
     };
@@ -783,7 +784,8 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
                 destIp: typeof clip.destIp === 'string' ? clip.destIp : '',
                 fadeInMs: Number(clip.fadeInMs) || 0,
                 fadeOutMs: Number(clip.fadeOutMs) || 0,
-                fadeCurve: clip.fadeCurve === 'smooth' ? 'smooth' : 'linear'
+                fadeCurve: clip.fadeCurve === 'smooth' ? 'smooth' : 'linear',
+                libraryPath: typeof clip.libraryPath === 'string' ? clip.libraryPath : ''
             });
             cursor += duration;
         }
@@ -844,7 +846,8 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
                 destIp: typeof clip.destIp === 'string' ? clip.destIp : '',
                 fadeInMs: Number(clip.fadeInMs) || 0,
                 fadeOutMs: Number(clip.fadeOutMs) || 0,
-                fadeCurve: clip.fadeCurve === 'smooth' ? 'smooth' : 'linear'
+                fadeCurve: clip.fadeCurve === 'smooth' ? 'smooth' : 'linear',
+                libraryPath: typeof clip.libraryPath === 'string' ? clip.libraryPath : ''
             });
             cursor = startMs + duration;
         }
@@ -1104,6 +1107,21 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
                 }
             } else if (op === 'update') {
                 editSession.clips = updateClip(editSession.clips, payload.clipId, payload.patch || {});
+                const renamed = editSession.clips.find((clip) => clip.id === payload.clipId);
+                if (
+                    renamed
+                    && renamed.libraryPath
+                    && payload.patch
+                    && typeof payload.patch.name === 'string'
+                ) {
+                    try {
+                        assertInLibrary(renamed.libraryPath);
+                        writeSidecar(renamed.libraryPath, { name: payload.patch.name });
+                        sendSafe('library-updated', listLibrary());
+                    } catch (error) {
+                        console.error('Error updating look sidecar:', error);
+                    }
+                }
             } else if (op === 'add-track') {
                 editSession.trackCount += 1;
                 editSession.trackNames = normalizeTrackNames(editSession.trackCount, editSession.trackNames);
@@ -1247,10 +1265,11 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     });
 
     ipcMain.removeHandler('confirm-unsaved-compilation');
-    ipcMain.handle('confirm-unsaved-compilation', async (event) => {
+    ipcMain.handle('confirm-unsaved-compilation', async (event, payload = {}) => {
         const win = event && event.sender
             ? BrowserWindow.fromWebContents(event.sender)
             : null;
+        const reason = payload && payload.reason === 'leave' ? 'leave' : 'new';
         const options = {
             type: 'question',
             buttons: ['Save', "Don't Save", 'Cancel'],
@@ -1258,7 +1277,9 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             cancelId: 2,
             title: 'Unsaved compilation',
             message: 'The compilation has unsaved changes.',
-            detail: 'Save it before clearing Studio?'
+            detail: reason === 'leave'
+                ? 'Save it before leaving Studio?'
+                : 'Save it before clearing Studio?'
         };
         const result = win
             ? await dialog.showMessageBox(win, options)
@@ -1546,13 +1567,19 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
                 throw new Error('Nothing was recorded');
             }
             const fileData = await fs.promises.readFile(filePath);
+            const libraryPath = uniqueDmxPath(ensureLibrary(), 'Clip');
+            fs.writeFileSync(libraryPath, fileData);
+            writeSidecar(libraryPath, { name: 'Clip', notes: '' });
             pushHistory();
-            const added = addMediaFromBuffer(fileData, 'Clip', take.startMs, take.trackId);
+            const added = addMediaFromBuffer(fileData, 'Clip', take.startMs, take.trackId, {
+                libraryPath
+            });
             try {
                 fs.unlinkSync(filePath);
             } catch (error) {
                 console.error('Error removing punch-in temp:', error);
             }
+            sendSafe('library-updated', listLibrary());
             syncTracks();
             editSession.dirty = true;
             playbackData = flattenToFrames(editSession.media, editSession.clips);

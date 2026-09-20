@@ -522,10 +522,8 @@ const LibraryPanel = React.forwardRef(({
                 setPushError(failed[0].error);
             } else if (failed.length) {
                 setPushError(`Pushed ${ok.length}; ${failed.length} failed`);
-            } else if (ok.length === 1) {
-                setPushError(ok[0].dest ? `Pushed ${ok[0].dest}` : `Pushed ${ok[0].label}`);
             } else {
-                setPushError(`Pushed ${ok.length} files to ${chosen.length} node${chosen.length === 1 ? '' : 's'}`);
+                setPushOpen(false);
             }
         } catch (err) {
             setPushError(err.message);
