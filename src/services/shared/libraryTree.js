@@ -273,6 +273,38 @@ const stripTree = (items) => (items || []).map((node) => {
     };
 });
 
+const SD_PATH_MAX = 63;
+const INVALID_SEG = /[<>:"/\\|?*\x00-\x1f]/g;
+
+const sanitizeSdSegment = (name) => {
+    const trimmed = String(name || '').trim().replace(/\.dmx$/i, '');
+    return trimmed.replace(INVALID_SEG, '').replace(/[. ]+$/g, '') || 'item';
+};
+
+const destFromSegments = (segments, fileName) => {
+    const fileBase = sanitizeSdSegment(fileName);
+    const dirs = (segments || []).map(sanitizeSdSegment).filter(Boolean);
+    const joinDest = (parts, base) => `/${[...parts, `${base}.dmx`].join('/')}`;
+    let dest = joinDest(dirs, fileBase);
+    if (dest.length <= SD_PATH_MAX) {
+        return dest;
+    }
+    const kept = dirs.slice();
+    while (kept.length) {
+        const prefix = `/${kept.join('/')}/`;
+        const avail = SD_PATH_MAX - prefix.length - 4;
+        if (avail >= 1) {
+            return `${prefix}${fileBase.slice(0, avail)}.dmx`;
+        }
+        kept.shift();
+        dest = joinDest(kept, fileBase);
+        if (dest.length <= SD_PATH_MAX) {
+            return dest;
+        }
+    }
+    return `/${fileBase.slice(0, SD_PATH_MAX - 5)}.dmx`;
+};
+
 const collectLooks = (folder) => {
     const looks = [];
     walk(folder && folder.children, (node) => {
@@ -283,6 +315,28 @@ const collectLooks = (folder) => {
             });
         }
     });
+    return looks;
+};
+
+const collectLooksWithPath = (folder, prefix = []) => {
+    const looks = [];
+    const rootName = folder && folder.name ? folder.name : 'Folder';
+    const visit = (nodes, segs) => {
+        (nodes || []).forEach((node) => {
+            if (isFolder(node)) {
+                visit(node.children, [...segs, node.name || 'Folder']);
+                return;
+            }
+            if (isShow(node) && node.show && node.show.filePath) {
+                looks.push({
+                    filePath: node.show.filePath,
+                    name: node.show.displayName || node.show.filename || node.id,
+                    dest: destFromSegments(segs, node.show.displayName || node.show.filename || node.id)
+                });
+            }
+        });
+    };
+    visit(folder && folder.children, [...prefix, rootName]);
     return looks;
 };
 
@@ -317,6 +371,9 @@ module.exports = {
     flattenRows,
     collectFolderIds,
     collectLooks,
+    collectLooksWithPath,
+    destFromSegments,
+    sanitizeSdSegment,
     folderContains,
     folderExists,
     hydrateTree,

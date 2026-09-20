@@ -30,6 +30,20 @@ const Chevron = ({ open }) => React.createElement('svg', {
     'aria-hidden': true
 }, React.createElement('path', { d: 'M9 6l6 6-6 6' }));
 
+const IconBtn = ({ title, disabled, onClick, children }) => React.createElement('button', {
+    type: 'button',
+    className: 'flex-none p-0.5 rounded text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 disabled:opacity-30',
+    title,
+    'aria-label': title,
+    disabled,
+    onClick: (event) => {
+        event.stopPropagation();
+        if (onClick) {
+            onClick();
+        }
+    }
+}, children);
+
 const PlaybackControls = ({
     queue,
     currentIndex,
@@ -50,7 +64,10 @@ const PlaybackControls = ({
     onBack,
     onNext,
     onSeek,
-    onSelect
+    onSelect,
+    onMove,
+    onRemove,
+    onClear
 }) => {
     const disabled = !isFileLoaded || isRecording;
     const duration = Math.max(0, Number(durationMs) || 0);
@@ -69,35 +86,68 @@ const PlaybackControls = ({
     return React.createElement('div', {
         className: 'flex-none flex flex-col gap-1.5 p-2 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
     },
-        React.createElement('button', {
-            type: 'button',
-            className: 'flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200',
-            onClick: onToggleCollapsed
+        React.createElement('div', {
+            className: 'flex items-center gap-1 min-w-0'
         },
-            React.createElement(Chevron, { open: !collapsed }),
-            React.createElement('span', {
-                className: 'truncate'
-            }, `Queue · ${queue.length}`)
+            React.createElement('button', {
+                type: 'button',
+                className: 'flex items-center gap-1 min-w-0 flex-1 text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200',
+                onClick: onToggleCollapsed
+            },
+                React.createElement(Chevron, { open: !collapsed }),
+                React.createElement('span', {
+                    className: 'truncate'
+                }, `Queue · ${queue.length}`)
+            ),
+            React.createElement('button', {
+                type: 'button',
+                className: 'btn-quiet flex-none px-1.5 py-0.5',
+                disabled: queue.length === 0 || isRecording,
+                onClick: onClear
+            }, 'Clear queue')
         ),
         !collapsed && React.createElement('div', {
-            className: 'max-h-28 overflow-y-auto flex flex-col gap-0.5'
+            className: 'max-h-14 overflow-y-auto flex flex-col gap-0.5'
         },
             queue.length === 0
                 ? React.createElement('p', {
                     className: 'text-xs text-zinc-500 italic px-0.5'
-                }, 'Hover Play in Library to add looks.')
-                : queue.map((item, index) => React.createElement('button', {
+                }, 'Play or + a look from Library.')
+                : queue.map((item, index) => React.createElement('div', {
                     key: item.id,
-                    type: 'button',
-                    className: `w-full text-left truncate text-xs px-1.5 py-0.5 rounded ${
+                    className: `group flex items-center gap-0.5 text-xs px-1 py-0.5 rounded ${
                         index === currentIndex
                             ? 'bg-cyan-50 text-cyan-700 dark:bg-zinc-800 dark:text-cyan-400'
                             : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-                    }`,
-                    title: item.name,
-                    disabled: isRecording,
-                    onClick: () => onSelect(index)
-                }, item.name))
+                    }`
+                },
+                    React.createElement('button', {
+                        type: 'button',
+                        className: 'truncate flex-1 min-w-0 text-left',
+                        title: item.name,
+                        disabled: isRecording,
+                        onClick: () => onSelect(index)
+                    }, item.name),
+                    React.createElement('div', {
+                        className: 'flex-none hidden group-hover:flex items-center'
+                    },
+                        React.createElement(IconBtn, {
+                            title: 'Move up',
+                            disabled: isRecording || index === 0,
+                            onClick: () => onMove(index, -1)
+                        }, '▲'),
+                        React.createElement(IconBtn, {
+                            title: 'Move down',
+                            disabled: isRecording || index === queue.length - 1,
+                            onClick: () => onMove(index, 1)
+                        }, '▼'),
+                        React.createElement(IconBtn, {
+                            title: 'Remove',
+                            disabled: isRecording,
+                            onClick: () => onRemove(index)
+                        }, '×')
+                    )
+                ))
         ),
         React.createElement('div', {
             className: 'flex items-center gap-1 min-w-0'

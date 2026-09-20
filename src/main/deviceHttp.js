@@ -6,6 +6,7 @@ const SOFTAP_IP = '4.3.2.1';
 const IPV4 = /^(\d{1,3}\.){3}\d{1,3}$/;
 const SD_PATH_MAX = 63;
 const INVALID_NAME = /[<>:"/\\|?*\x00-\x1f]/g;
+const INVALID_SEG = /[<>:"/\\|?*\x00-\x1f]/;
 
 const isIpv4 = (ip) => typeof ip === 'string' && IPV4.test(ip.trim());
 
@@ -174,6 +175,20 @@ const destUploadPath = (filePath) => {
     return dest;
 };
 
+const isValidDestPath = (dest) => {
+    if (typeof dest !== 'string' || dest[0] !== '/' || dest.includes('..')) {
+        return false;
+    }
+    if (!/\.dmx$/i.test(dest) || dest.endsWith('/')) {
+        return false;
+    }
+    if (dest.length < 6 || dest.length > SD_PATH_MAX) {
+        return false;
+    }
+    const parts = dest.slice(1).split('/');
+    return parts.length > 0 && parts.every((part) => part && !INVALID_SEG.test(part));
+};
+
 const UPLOAD_IDLE_MS = 60000;
 const UPLOAD_MIN_BUDGET_MS = 10 * 60 * 1000;
 
@@ -223,7 +238,7 @@ const uploadFail = (err, sent, total) => {
     return { success: false, error: msg };
 };
 
-const postUpload = (ip, filePath, onProgress) => {
+const postUpload = (ip, filePath, onProgress, destPathArg) => {
     if (!isIpv4(ip)) {
         return Promise.resolve({ success: false, error: 'Invalid device IP' });
     }
@@ -233,8 +248,13 @@ const postUpload = (ip, filePath, onProgress) => {
     if (!fs.existsSync(filePath)) {
         return Promise.resolve({ success: false, error: 'File not found' });
     }
+    if (destPathArg && !isValidDestPath(destPathArg)) {
+        return Promise.resolve({ success: false, error: 'Invalid SD dest path' });
+    }
 
-    const destPath = destUploadPath(filePath);
+    const destPath = destPathArg && isValidDestPath(destPathArg)
+        ? destPathArg
+        : destUploadPath(filePath);
     const stat = fs.statSync(filePath);
     const startedAt = Date.now();
     let lastPhase = '';

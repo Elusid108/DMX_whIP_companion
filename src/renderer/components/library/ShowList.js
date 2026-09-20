@@ -1,6 +1,6 @@
 const React = require('react');
 const { useEffect, useMemo, useRef, useState } = React;
-const { findNode, flattenRows, folderContains } = require('../../../services/shared/libraryTree');
+const { collectLooks, findNode, flattenRows, folderContains } = require('../../../services/shared/libraryTree');
 
 const FolderIcon = () => React.createElement('svg', {
     xmlns: 'http://www.w3.org/2000/svg',
@@ -118,6 +118,7 @@ const ShowList = ({
     onMove,
     onPlay,
     onQueuePlay,
+    onQueueAdd,
     onOpenPush,
     canPush,
     onSelectedIdsChange
@@ -430,27 +431,6 @@ const ShowList = ({
                                     'aria-hidden': true
                                 }),
                             node.type === 'folder' && React.createElement(FolderIcon),
-                            editingId === node.id
-                                ? React.createElement('input', {
-                                    className: 'field py-0.5 text-sm',
-                                    value: draft,
-                                    autoFocus: true,
-                                    onClick: (event) => event.stopPropagation(),
-                                    onChange: (event) => setDraft(event.target.value),
-                                    onBlur: () => commitEdit(node),
-                                    onKeyDown: (event) => {
-                                        if (event.key === 'Enter') {
-                                            event.preventDefault();
-                                            commitEdit(node);
-                                        }
-                                        if (event.key === 'Escape') {
-                                            setEditingId('');
-                                        }
-                                    }
-                                })
-                                : React.createElement('span', {
-                                    className: `truncate text-sm flex-1 min-w-0 ${loaded ? 'text-cyan-600 dark:text-cyan-400' : ''}`
-                                }, loaded ? `${label} · loaded` : label),
                             node.type === 'show' && node.show && node.show.filePath
                                 && React.createElement('button', {
                                     type: 'button',
@@ -473,7 +453,53 @@ const ShowList = ({
                                     className: 'w-3.5 h-3.5',
                                     fill: 'currentColor',
                                     'aria-hidden': true
-                                }, React.createElement('path', { d: 'M8 5.2v13.6L19.4 12z' })))
+                                }, React.createElement('path', { d: 'M8 5.2v13.6L19.4 12z' }))),
+                            editingId === node.id
+                                ? React.createElement('input', {
+                                    className: 'field py-0.5 text-sm',
+                                    value: draft,
+                                    autoFocus: true,
+                                    onClick: (event) => event.stopPropagation(),
+                                    onChange: (event) => setDraft(event.target.value),
+                                    onBlur: () => commitEdit(node),
+                                    onKeyDown: (event) => {
+                                        if (event.key === 'Enter') {
+                                            event.preventDefault();
+                                            commitEdit(node);
+                                        }
+                                        if (event.key === 'Escape') {
+                                            setEditingId('');
+                                        }
+                                    }
+                                })
+                                : React.createElement('span', {
+                                    className: `truncate text-sm flex-1 min-w-0 ${loaded ? 'text-cyan-600 dark:text-cyan-400' : ''}`
+                                }, loaded ? `${label} · loaded` : label),
+                            ((node.type === 'show' && node.show && node.show.filePath)
+                                || (node.type === 'folder' && collectLooks(node).length > 0))
+                                && React.createElement('button', {
+                                    type: 'button',
+                                    className: 'flex-none px-1 rounded text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-cyan-500 text-sm font-medium',
+                                    title: 'Add to queue',
+                                    'aria-label': 'Add to queue',
+                                    disabled: busy,
+                                    onClick: (event) => {
+                                        event.stopPropagation();
+                                        if (!onQueueAdd) {
+                                            return;
+                                        }
+                                        if (node.type === 'show' && node.show && node.show.filePath) {
+                                            onQueueAdd([{
+                                                filePath: node.show.filePath,
+                                                name: (node.show && node.show.displayName) || label
+                                            }]);
+                                            return;
+                                        }
+                                        if (node.type === 'folder') {
+                                            onQueueAdd(collectLooks(node));
+                                        }
+                                    }
+                                }, '+')
                         )
                     )
                 );

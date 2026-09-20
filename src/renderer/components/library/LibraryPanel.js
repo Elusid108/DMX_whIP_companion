@@ -7,6 +7,7 @@ const ShowInspector = require('./ShowInspector');
 const PushToSdDialog = require('./PushToSdDialog');
 const {
     collectLooks,
+    collectLooksWithPath,
     findNode,
     firstShowPath,
     flattenFolderStack,
@@ -17,7 +18,8 @@ const LibraryPanel = React.forwardRef(({
     studioTrackId = 0,
     studioHasClips = false,
     railHost,
-    onQueuePlay
+    onQueuePlay,
+    onQueueAdd
 }, ref) => {
     const [shows, setShows] = useState([]);
     const [tree, setTree] = useState([]);
@@ -429,7 +431,50 @@ const LibraryPanel = React.forwardRef(({
     const folderPlayable = Boolean(selectedFolder && collectLooks(selectedFolder).length > 0);
     const compilationPlayable = Boolean(selectedCompilation && selectedCompilation.compilation);
     const targets = devices.filter((device) => device && device.ip && !device.stale);
-    const canPush = Boolean(selectedShowPath && inspect && inspect.playable && targets.length);
+
+    const collectPushJobs = () => {
+        const ids = (selectedIdsRef.current && selectedIdsRef.current.length)
+            ? selectedIdsRef.current
+            : (selection && selection.id ? [selection.id] : []);
+        const jobs = [];
+        const seen = new Set();
+        const addJob = (filePath, name, dest) => {
+            if (!filePath || seen.has(filePath)) {
+                return;
+            }
+            seen.add(filePath);
+            jobs.push({ filePath, name, dest });
+        };
+        for (const id of ids) {
+            const found = findNode(tree, id);
+            const node = found && found.node;
+            if (!node) {
+                continue;
+            }
+            if (node.type === 'show' && node.show && node.show.filePath) {
+                addJob(
+                    node.show.filePath,
+                    node.show.displayName || node.show.filename || node.id,
+                    null
+                );
+            } else if (node.type === 'folder') {
+                for (const look of collectLooksWithPath(node)) {
+                    addJob(look.filePath, look.name, look.dest);
+                }
+            }
+        }
+        if (!jobs.length && selectedShowPath) {
+            addJob(
+                selectedShowPath,
+                (inspect && (inspect.displayName || inspect.name)) || 'Look',
+                null
+            );
+        }
+        return jobs;
+    };
+
+    const pushJobs = collectPushJobs();
+    const canPush = Boolean(targets.length && pushJobs.length);
 
     const handleOpenPush = () => {
         if (!canPush || pushing) {
@@ -445,30 +490,46 @@ const LibraryPanel = React.forwardRef(({
         const chosen = devices.filter((device) => (
             list.includes(device.id) && device.ip && !device.stale
         ));
-        if (!selectedShowPath || !chosen.length || pushing) {
+        const jobs = collectPushJobs();
+        if (!jobs.length || !chosen.length || pushing) {
             return;
         }
         setPushing(true);
         setPushError('');
-        const results = [];
-        for (const target of chosen) {
+        const pushNode = async (target) => {
             const label = target.longName || target.shortName || target.ip;
-            setPushProgress({ phase: 'connecting', sent: 0, total: 0, label });
-            try {
-                const result = await ipcRenderer.invoke('device-push-show', {
-                    ip: target.ip,
-                    filePath: selectedShowPath
+            const results = [];
+            for (let i = 0; i < jobs.length; i += 1) {
+                const job = jobs[i];
+                setPushProgress({
+                    phase: 'connecting',
+                    sent: 0,
+                    total: 0,
+                    label: `${label} · ${i + 1}/${jobs.length} · ${job.dest || job.name}`
                 });
-                if (!result || !result.success) {
-                    results.push({ label, error: (result && result.error) || 'Push failed' });
-                } else {
-                    const dest = result.result && result.result.path;
-                    results.push({ label, dest });
+                try {
+                    const result = await ipcRenderer.invoke('device-push-show', {
+                        ip: target.ip,
+                        filePath: job.filePath,
+                        destPath: job.dest || undefined
+                    });
+                    if (!result || !result.success) {
+                        results.push({
+                            label,
+                            dest: job.dest,
+                            error: (result && result.error) || 'Push failed'
+                        });
+                    } else {
+                        const dest = (result.result && result.result.path) || job.dest;
+                        results.push({ label, dest });
+                    }
+                } catch (err) {
+                    results.push({ label, dest: job.dest, error: err.message });
                 }
-            } catch (err) {
-                results.push({ label, error: err.message });
             }
-        }
+            return results;
+        };
+        const results = (await Promise.all(chosen.map(pushNode))).flat();
         const failed = results.filter((item) => item.error);
         const ok = results.filter((item) => !item.error);
         if (failed.length && !ok.length) {
@@ -478,7 +539,7 @@ const LibraryPanel = React.forwardRef(({
         } else if (ok.length === 1) {
             setPushError(ok[0].dest ? `Pushed ${ok[0].dest}` : `Pushed ${ok[0].label}`);
         } else {
-            setPushError(`Pushed to ${ok.length} nodes`);
+            setPushError(`Pushed ${ok.length} files to ${chosen.length} node${chosen.length === 1 ? '' : 's'}`);
         }
         setPushing(false);
         setPushProgress(null);
@@ -554,6 +615,7 @@ const LibraryPanel = React.forwardRef(({
         onMove: handleMove,
         onPlay: handlePlay,
         onQueuePlay,
+        onQueueAdd,
         onOpenPush: handleOpenPush,
         canPush,
         onSelectedIdsChange: (ids) => {
@@ -562,7 +624,18 @@ const LibraryPanel = React.forwardRef(({
     });
     const pushDialog = React.createElement(PushToSdDialog, {
         open: pushOpen,
-        lookName: (inspect && (inspect.displayName || inspect.name)) || '',
+        lookName: (() => {
+            const ids = (selectedIdsRef.current && selectedIdsRef.current.length)
+                ? selectedIdsRef.current
+                : (selection && selection.id ? [selection.id] : []);
+            if (ids.length === 1 && selectedFolder && pushJobs.length) {
+                return `${selectedFolder.name} · ${pushJobs.length} look${pushJobs.length === 1 ? '' : 's'}`;
+            }
+            if (pushJobs.length === 1) {
+                return pushJobs[0].dest || pushJobs[0].name;
+            }
+            return pushJobs.length ? `${pushJobs.length} looks` : '';
+        })(),
         devices,
         pushing,
         pushProgress,

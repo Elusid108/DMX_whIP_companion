@@ -271,12 +271,12 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
 
     ipcMain.handle('device-list', () => snapshotDevices());
 
-    ipcMain.handle('device-push-show', async (event, { ip, filePath } = {}) => {
+    ipcMain.handle('device-push-show', async (event, { ip, filePath, destPath } = {}) => {
         try {
             assertInLibrary(filePath);
             return await postUpload(ip, filePath, (progress) => {
                 sendToRenderer('device-push-progress', progress);
-            });
+            }, destPath);
         } catch (error) {
             return { success: false, error: error.message };
         }

@@ -251,7 +251,10 @@ const App = () => {
                     onBack: player.handleBack,
                     onNext: player.handleNext,
                     onSeek: player.handleSeek,
-                    onSelect: player.handleSelect
+                    onSelect: player.handleSelect,
+                    onMove: player.moveItem,
+                    onRemove: player.removeItem,
+                    onClear: player.clearQueue
                 })
             ),
             React.createElement('div', {
@@ -323,7 +326,8 @@ const App = () => {
                     railHost: libraryRail,
                     studioTrackId: session.selectedTrackId,
                     studioHasClips: Boolean(session.clips && session.clips.length),
-                    onQueuePlay: player.enqueueAndPlay
+                    onQueuePlay: player.playExclusive,
+                    onQueueAdd: player.enqueueLooks
                 }),
                 mainView === 'devices' && React.createElement(DevicesPanel, {
                     focusDeviceId,

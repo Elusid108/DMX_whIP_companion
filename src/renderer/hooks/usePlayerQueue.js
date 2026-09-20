@@ -28,12 +28,16 @@ const usePlayerQueue = ({ playbackNetwork, isRecording } = {}) => {
     const indexRef = useRef(-1);
     const loopRef = useRef(false);
     const networkRef = useRef(playbackNetwork || '0.0.0.0');
+    const playingRef = useRef(false);
+    const pausedRef = useRef(false);
     const nextId = useRef(1);
 
     queueRef.current = queue;
     indexRef.current = currentIndex;
     loopRef.current = loop;
     networkRef.current = playbackNetwork || '0.0.0.0';
+    playingRef.current = isPlaying;
+    pausedRef.current = isPaused;
 
     const playAt = useCallback(async (index) => {
         const item = queueRef.current[index];
@@ -92,22 +96,130 @@ const usePlayerQueue = ({ playbackNetwork, isRecording } = {}) => {
         };
     }, [playAt]);
 
-    const enqueueAndPlay = useCallback(async ({ filePath, name } = {}) => {
-        if (!filePath || isRecording) {
-            return;
+    const makeItem = (look) => {
+        const filePath = look && look.filePath;
+        if (!filePath) {
+            return null;
         }
         const item = {
             id: `q${nextId.current}`,
             filePath,
-            name: name || filePath.split(/[\\/]/).pop()
+            name: look.name || filePath.split(/[\\/]/).pop()
         };
         nextId.current += 1;
-        const nextQueue = [...queueRef.current, item];
+        return item;
+    };
+
+    const playExclusive = useCallback(async ({ filePath, name } = {}) => {
+        if (!filePath || isRecording) {
+            return;
+        }
+        ipcRenderer.send('stop-playback', { source: 'player' });
+        const item = makeItem({ filePath, name });
+        const nextQueue = item ? [item] : [];
         queueRef.current = nextQueue;
         setQueue(nextQueue);
         setCollapsed(false);
-        await playAt(nextQueue.length - 1);
+        if (item) {
+            await playAt(0);
+        }
     }, [isRecording, playAt]);
+
+    const enqueueLooks = useCallback((looks) => {
+        if (isRecording) {
+            return;
+        }
+        const list = Array.isArray(looks) ? looks : [looks];
+        const seen = new Set(queueRef.current.map((item) => item.filePath));
+        const added = [];
+        for (const look of list) {
+            if (!look || !look.filePath || seen.has(look.filePath)) {
+                continue;
+            }
+            seen.add(look.filePath);
+            const item = makeItem(look);
+            if (item) {
+                added.push(item);
+            }
+        }
+        if (!added.length) {
+            return;
+        }
+        const nextQueue = [...queueRef.current, ...added];
+        queueRef.current = nextQueue;
+        setQueue(nextQueue);
+        setCollapsed(false);
+        if (indexRef.current < 0) {
+            setCurrentIndex(-1);
+        }
+    }, [isRecording]);
+
+    const moveItem = useCallback((index, delta) => {
+        const next = index + delta;
+        const list = queueRef.current.slice();
+        if (index < 0 || next < 0 || next >= list.length) {
+            return;
+        }
+        const [item] = list.splice(index, 1);
+        list.splice(next, 0, item);
+        queueRef.current = list;
+        setQueue(list);
+        if (indexRef.current === index) {
+            setCurrentIndex(next);
+            indexRef.current = next;
+        } else if (indexRef.current === next) {
+            setCurrentIndex(index);
+            indexRef.current = index;
+        }
+    }, []);
+
+    const removeItem = useCallback((index) => {
+        const list = queueRef.current.slice();
+        if (index < 0 || index >= list.length) {
+            return;
+        }
+        const removingCurrent = indexRef.current === index;
+        list.splice(index, 1);
+        queueRef.current = list;
+        setQueue(list);
+        if (!list.length) {
+            ipcRenderer.send('stop-playback', { source: 'player' });
+            setCurrentIndex(-1);
+            indexRef.current = -1;
+            setPlayheadMs(0);
+            setDurationMs(0);
+            setIsPlaying(false);
+            setIsPaused(false);
+            return;
+        }
+        if (removingCurrent) {
+            const next = Math.min(index, list.length - 1);
+            if (playingRef.current || pausedRef.current) {
+                playAt(next);
+                return;
+            }
+            setCurrentIndex(next);
+            indexRef.current = next;
+            return;
+        }
+        if (indexRef.current > index) {
+            const next = indexRef.current - 1;
+            setCurrentIndex(next);
+            indexRef.current = next;
+        }
+    }, [playAt]);
+
+    const clearQueue = useCallback(() => {
+        ipcRenderer.send('stop-playback', { source: 'player' });
+        queueRef.current = [];
+        setQueue([]);
+        setCurrentIndex(-1);
+        indexRef.current = -1;
+        setPlayheadMs(0);
+        setDurationMs(0);
+        setIsPlaying(false);
+        setIsPaused(false);
+    }, []);
 
     const handlePlay = useCallback(() => {
         if (isRecording || currentIndex < 0) {
@@ -202,7 +314,11 @@ const usePlayerQueue = ({ playbackNetwork, isRecording } = {}) => {
         durationMs,
         error,
         formatClock,
-        enqueueAndPlay,
+        playExclusive,
+        enqueueLooks,
+        moveItem,
+        removeItem,
+        clearQueue,
         handlePlay,
         handlePause,
         handleStop,
