@@ -1,11 +1,19 @@
 const { ipcMain, shell } = require('electron');
+const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const ArtNetReceiver = require('../../services/artnet/receiver');
 const SacnReceiver = require('../../services/sacn/receiver');
 const { getNetworkInterfaces } = require('../../services/shared/networkUtils');
+const { scanRecording } = require('../../services/shared/dmxRecording');
+const { analyzePush, slicePlan } = require('../../services/shared/pushFit');
+const { sliceRecording } = require('../../services/shared/dmxSlice');
 const { getUiView, setUiView, onUiViewChange, devicesUiWanted } = require('../uiView');
 const UniverseMonitor = require('../monitor/universeMonitor');
 const { assertInLibrary, sanitizeBaseName, uniqueDmxPath, writeSidecar, ensureLibrary } = require('./library');
 const {
+    destUploadPath,
     downloadFile,
     fetchStatus,
     isIpv4,
@@ -302,14 +310,160 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
 
     ipcMain.handle('device-list', () => snapshotDevices());
 
+    const inspectPushJobs = (jobs = []) => (jobs || []).map((job) => {
+        assertInLibrary(job.filePath);
+        let scan;
+        try {
+            scan = scanRecording(job.filePath);
+        } catch (err) {
+            scan = {
+                error: err.message,
+                playable: false,
+                activeChannels: 0,
+                spans: {},
+                protocols: []
+            };
+        }
+        return {
+            filePath: job.filePath,
+            name: job.name || path.parse(job.filePath).name,
+            dest: job.dest || null,
+            scan
+        };
+    });
+
+    const loadPushDeviceStates = async (rows = []) => Promise.all((rows || []).map(async (device) => {
+        const result = await fetchStatus(device.ip);
+        if (result && result.success) {
+            return {
+                ...device,
+                status: result.status,
+                statusError: ''
+            };
+        }
+        return {
+            ...device,
+            status: null,
+            statusError: (result && result.error) || 'Unable to read /status'
+        };
+    }));
+
+    const emitPushProgress = (progress) => {
+        sendToRenderer('device-push-progress', progress);
+    };
+
+    ipcMain.handle('device-push-analyze', async (event, { jobs, devices: rows } = {}) => {
+        try {
+            const looks = inspectPushJobs(jobs);
+            const states = await loadPushDeviceStates(rows);
+            return { success: true, analysis: analyzePush(looks, states) };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.handle('device-push-show', async (event, { ip, filePath, destPath } = {}) => {
         try {
             assertInLibrary(filePath);
             return await postUpload(ip, filePath, (progress) => {
-                sendToRenderer('device-push-progress', progress);
+                emitPushProgress(progress);
             }, destPath);
         } catch (error) {
             return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('device-push-batch', async (event, { jobs, devices: rows } = {}) => {
+        const temps = [];
+        try {
+            const looks = inspectPushJobs(jobs);
+            const states = await loadPushDeviceStates(rows);
+            const analysis = analyzePush(looks, states);
+            if (!analysis.overall.canPush) {
+                return { success: false, error: analysis.overall.label || 'Cannot push', analysis };
+            }
+            const results = [];
+            for (const look of analysis.looks) {
+                const receiving = (rows || []).filter((device) => slicePlan(look, device.id));
+                if (!receiving.length) {
+                    continue;
+                }
+                const group = crypto.randomUUID();
+                const wantSync = receiving.length > 1;
+                const members = JSON.stringify(receiving.map((device) => ({
+                    n: device.longName || device.shortName || device.ip,
+                    m: device.mac || ''
+                })));
+                for (const target of receiving) {
+                    const plan = slicePlan(look, target.id);
+                    if (!plan) {
+                        continue;
+                    }
+                    const destPath = plan.destPath || destUploadPath(plan.filePath);
+                    const tempPath = path.join(
+                        os.tmpdir(),
+                        `whip-push-${crypto.randomBytes(8).toString('hex')}.dmx`
+                    );
+                    temps.push(tempPath);
+                    emitPushProgress({
+                        phase: 'connecting',
+                        sent: 0,
+                        total: 0,
+                        label: `${target.longName || target.ip} · ${look.name}`
+                    });
+                    sliceRecording(plan.filePath, tempPath, {
+                        proto: plan.proto,
+                        destProto: plan.destProto,
+                        slideDelta: plan.slideDelta,
+                        destFirstAddr: plan.destFirstAddr,
+                        destLastAddr: plan.destLastAddr
+                    });
+                    const uploaded = await postUpload(target.ip, tempPath, (progress) => {
+                        emitPushProgress({
+                            ...progress,
+                            label: `${target.longName || target.ip} · ${look.name}`
+                        });
+                    }, destPath, {
+                        name: look.name,
+                        titlePath: plan.filePath,
+                        sync_group: wantSync ? group : undefined,
+                        sync_members: wantSync ? members : undefined
+                    });
+                    try {
+                        fs.unlinkSync(tempPath);
+                    } catch (err) {
+                        // ignore
+                    }
+                    if (!uploaded || !uploaded.success) {
+                        results.push({
+                            label: target.longName || target.ip,
+                            dest: destPath,
+                            error: (uploaded && uploaded.error) || 'Push failed'
+                        });
+                    } else {
+                        const dest = (uploaded.result && uploaded.result.path) || destPath;
+                        results.push({ label: target.longName || target.ip, dest });
+                    }
+                }
+            }
+            const failed = results.filter((item) => item.error);
+            const ok = results.filter((item) => !item.error);
+            if (failed.length && !ok.length) {
+                return { success: false, error: failed[0].error, results, analysis };
+            }
+            return { success: true, results, analysis };
+        } catch (error) {
+            return { success: false, error: error.message };
+        } finally {
+            temps.forEach((tempPath) => {
+                try {
+                    if (fs.existsSync(tempPath)) {
+                        fs.unlinkSync(tempPath);
+                    }
+                } catch (err) {
+                    // ignore
+                }
+            });
         }
     });
 
@@ -478,7 +632,9 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('device-identify');
         ipcMain.removeHandler('device-reboot');
         ipcMain.removeHandler('device-list');
+        ipcMain.removeHandler('device-push-analyze');
         ipcMain.removeHandler('device-push-show');
+        ipcMain.removeHandler('device-push-batch');
         ipcMain.removeHandler('device-play');
         ipcMain.removeHandler('device-stop');
         ipcMain.removeHandler('device-set-brightness');

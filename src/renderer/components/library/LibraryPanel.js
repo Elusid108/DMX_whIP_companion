@@ -496,50 +496,39 @@ const LibraryPanel = React.forwardRef(({
         }
         setPushing(true);
         setPushError('');
-        const pushNode = async (target) => {
-            const label = target.longName || target.shortName || target.ip;
-            const results = [];
-            for (let i = 0; i < jobs.length; i += 1) {
-                const job = jobs[i];
-                setPushProgress({
-                    phase: 'connecting',
-                    sent: 0,
-                    total: 0,
-                    label: `${label} · ${i + 1}/${jobs.length} · ${job.dest || job.name}`
-                });
-                try {
-                    const result = await ipcRenderer.invoke('device-push-show', {
-                        ip: target.ip,
-                        filePath: job.filePath,
-                        destPath: job.dest || undefined
-                    });
-                    if (!result || !result.success) {
-                        results.push({
-                            label,
-                            dest: job.dest,
-                            error: (result && result.error) || 'Push failed'
-                        });
-                    } else {
-                        const dest = (result.result && result.result.path) || job.dest;
-                        results.push({ label, dest });
-                    }
-                } catch (err) {
-                    results.push({ label, dest: job.dest, error: err.message });
-                }
+        setPushProgress({
+            phase: 'connecting',
+            sent: 0,
+            total: 0,
+            label: `${chosen.length} node${chosen.length === 1 ? '' : 's'}`
+        });
+        try {
+            const result = await ipcRenderer.invoke('device-push-batch', {
+                jobs,
+                devices: chosen.map((device) => ({
+                    id: device.id,
+                    ip: device.ip,
+                    mac: device.mac,
+                    longName: device.longName,
+                    shortName: device.shortName
+                }))
+            });
+            const results = (result && result.results) || [];
+            const failed = results.filter((item) => item.error);
+            const ok = results.filter((item) => !item.error);
+            if (!result || !result.success) {
+                setPushError((result && result.error) || 'Push failed');
+            } else if (failed.length && !ok.length) {
+                setPushError(failed[0].error);
+            } else if (failed.length) {
+                setPushError(`Pushed ${ok.length}; ${failed.length} failed`);
+            } else if (ok.length === 1) {
+                setPushError(ok[0].dest ? `Pushed ${ok[0].dest}` : `Pushed ${ok[0].label}`);
+            } else {
+                setPushError(`Pushed ${ok.length} files to ${chosen.length} node${chosen.length === 1 ? '' : 's'}`);
             }
-            return results;
-        };
-        const results = (await Promise.all(chosen.map(pushNode))).flat();
-        const failed = results.filter((item) => item.error);
-        const ok = results.filter((item) => !item.error);
-        if (failed.length && !ok.length) {
-            setPushError(failed[0].error);
-        } else if (failed.length) {
-            setPushError(`Pushed ${ok.length}; ${failed.length} failed`);
-        } else if (ok.length === 1) {
-            setPushError(ok[0].dest ? `Pushed ${ok[0].dest}` : `Pushed ${ok[0].label}`);
-        } else {
-            setPushError(`Pushed ${ok.length} files to ${chosen.length} node${chosen.length === 1 ? '' : 's'}`);
+        } catch (err) {
+            setPushError(err.message);
         }
         setPushing(false);
         setPushProgress(null);
@@ -624,6 +613,7 @@ const LibraryPanel = React.forwardRef(({
     });
     const pushDialog = React.createElement(PushToSdDialog, {
         open: pushOpen,
+        jobs: pushJobs,
         lookName: (() => {
             const ids = (selectedIdsRef.current && selectedIdsRef.current.length)
                 ? selectedIdsRef.current

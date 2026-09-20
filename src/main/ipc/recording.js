@@ -5,7 +5,8 @@ const path = require('path');
 const {
     CHUNK_TARGET,
     createHeader,
-    encodeFrame
+    encodeFrame,
+    shouldRecordUniverseFrame
 } = require('../../services/shared/dmxRecording');
 const { setUiView, studioVisible } = require('../uiView');
 
@@ -29,6 +30,7 @@ function setupRecordingHandlers(mainWindow) {
     let droppedFrames = 0;
     let lastFrameNs = null;
     let onLiveFrame = null;
+    let wokenUniverses = new Set();
 
     const closeFd = () => {
         if (fd == null) {
@@ -70,6 +72,7 @@ function setupRecordingHandlers(mainWindow) {
         fpsTimes = [];
         droppedFrames = 0;
         lastFrameNs = null;
+        wokenUniverses = new Set();
     };
 
     const sendStats = (force = false) => {
@@ -184,31 +187,40 @@ function setupRecordingHandlers(mainWindow) {
             }
 
             const nowNs = process.hrtime.bigint();
-            const timestamp = frameCount === 0
-                ? 0
-                : Number((nowNs - recordingOriginNs) / 1000000n);
-            const encoded = encodeFrame({
-                timestamp,
-                universe: frame.universe,
-                protocol: frame.protocol,
-                data: frame.data
-            });
+            const elapsed = Number((nowNs - recordingOriginNs) / 1000000n);
+            const timestamp = frameCount === 0 ? 0 : elapsed;
+            const writeFrame = shouldRecordUniverseFrame(
+                wokenUniverses,
+                frame.protocol,
+                frame.universe,
+                frame.data
+            );
 
-            pending.push(encoded);
-            pendingBytes += encoded.length;
-            frameCount += 1;
+            if (writeFrame) {
+                const encoded = encodeFrame({
+                    timestamp,
+                    universe: frame.universe,
+                    protocol: frame.protocol,
+                    data: frame.data
+                });
 
-            if (lastFrameNs && nowNs - lastFrameNs > 100000000n) {
-                droppedFrames += 1;
+                pending.push(encoded);
+                pendingBytes += encoded.length;
+                frameCount += 1;
+
+                if (lastFrameNs && nowNs - lastFrameNs > 100000000n) {
+                    droppedFrames += 1;
+                }
+                lastFrameNs = nowNs;
+                fpsTimes.push(Date.now());
+
+                if (pendingBytes >= CHUNK_TARGET) {
+                    flushChunk();
+                }
+
+                sendStats(false);
             }
-            lastFrameNs = nowNs;
-            fpsTimes.push(Date.now());
 
-            if (pendingBytes >= CHUNK_TARGET) {
-                flushChunk();
-            }
-
-            sendStats(false);
             if (onLiveFrame) {
                 try {
                     onLiveFrame({

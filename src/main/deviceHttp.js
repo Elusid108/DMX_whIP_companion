@@ -238,7 +238,7 @@ const uploadFail = (err, sent, total) => {
     return { success: false, error: msg };
 };
 
-const postUpload = (ip, filePath, onProgress, destPathArg) => {
+const postUpload = (ip, filePath, onProgress, destPathArg, extraMeta = {}) => {
     if (!isIpv4(ip)) {
         return Promise.resolve({ success: false, error: 'Invalid device IP' });
     }
@@ -418,9 +418,20 @@ const postUpload = (ip, filePath, onProgress, destPathArg) => {
         const uploaded = mapResult(result);
         if (uploaded.success) {
             const dest = (uploaded.result && uploaded.result.path) || destPath;
-            const name = readLocalTitle(filePath);
+            const name = (extraMeta && extraMeta.name)
+                || readLocalTitle((extraMeta && extraMeta.titlePath) || filePath);
+            const fields = { path: dest };
             if (name) {
-                await postForm(ip, '/meta', { path: dest, name });
+                fields.name = name;
+            }
+            if (extraMeta && extraMeta.sync_group) {
+                fields.sync_group = extraMeta.sync_group;
+                if (extraMeta.sync_members) {
+                    fields.sync_members = extraMeta.sync_members;
+                }
+            }
+            if (fields.name || fields.sync_group) {
+                await postForm(ip, '/meta', fields);
             }
         }
         return uploaded;
