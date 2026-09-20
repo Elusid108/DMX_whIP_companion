@@ -1,5 +1,7 @@
 const { ipcMain } = require('electron');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const {
     CHUNK_TARGET,
     createHeader,
@@ -25,6 +27,7 @@ function setupRecordingHandlers(mainWindow) {
     let fpsTimes = [];
     let droppedFrames = 0;
     let lastFrameNs = null;
+    let onLiveFrame = null;
 
     const closeFd = () => {
         if (fd == null) {
@@ -83,36 +86,29 @@ function setupRecordingHandlers(mainWindow) {
         });
     };
 
-    ipcMain.on('start-recording', () => {
+    const startAt = (filePath) => {
         if (isRecording) {
-            return;
+            return { success: false, error: 'Already recording' };
         }
-        if (!recordingPath) {
-            sendSafe(mainWindow, 'recording-error', { error: 'Create a recording file first' });
-            return;
-        }
+        const dest = filePath || recordingPath || path.join(
+            os.tmpdir(),
+            `dmxwhip-punch-${process.pid}-${Date.now()}.dmx`
+        );
+        closeFd();
+        resetSession();
+        fd = fs.openSync(dest, 'w');
+        fs.writeSync(fd, createHeader(0));
+        recordingPath = dest;
+        isRecording = true;
+        recordingOriginNs = process.hrtime.bigint();
+        sendStats(true);
+        return { success: true, filePath: dest };
+    };
 
-        try {
-            closeFd();
-            resetSession();
-            fd = fs.openSync(recordingPath, 'w');
-            fs.writeSync(fd, createHeader(0));
-            isRecording = true;
-            recordingOriginNs = process.hrtime.bigint();
-            sendStats(true);
-        } catch (error) {
-            closeFd();
-            isRecording = false;
-            console.error('Error starting recording:', error);
-            sendSafe(mainWindow, 'recording-error', { error: error.message });
-        }
-    });
-
-    ipcMain.on('stop-recording', () => {
+    const stopAt = ({ emitSaved = true } = {}) => {
         if (!isRecording) {
-            return;
+            return { success: false, error: 'Not recording', filePath: recordingPath, totalFrames: frameCount };
         }
-
         isRecording = false;
         try {
             flushChunk();
@@ -122,10 +118,33 @@ function setupRecordingHandlers(mainWindow) {
         }
         closeFd();
         sendStats(true);
-        sendSafe(mainWindow, 'recording-saved', {
+        const result = {
+            success: true,
             filePath: recordingPath,
             totalFrames: frameCount
-        });
+        };
+        if (emitSaved) {
+            sendSafe(mainWindow, 'recording-saved', result);
+        }
+        return result;
+    };
+
+    ipcMain.on('start-recording', () => {
+        try {
+            const result = startAt(recordingPath);
+            if (!result.success) {
+                sendSafe(mainWindow, 'recording-error', { error: result.error });
+            }
+        } catch (error) {
+            closeFd();
+            isRecording = false;
+            console.error('Error starting recording:', error);
+            sendSafe(mainWindow, 'recording-error', { error: error.message });
+        }
+    });
+
+    ipcMain.on('stop-recording', () => {
+        stopAt({ emitSaved: true });
     });
 
     ipcMain.removeHandler('cancel-recording');
@@ -183,6 +202,28 @@ function setupRecordingHandlers(mainWindow) {
             }
 
             sendStats(false);
+            if (onLiveFrame) {
+                try {
+                    onLiveFrame({
+                        protocol: frame.protocol,
+                        universe: frame.universe,
+                        data: frame.data
+                    }, timestamp);
+                } catch (error) {
+                    console.error('Live frame hook error:', error);
+                }
+            }
+        },
+        start: (filePath) => startAt(filePath),
+        stop: (options) => stopAt(options),
+        getElapsedMs: () => {
+            if (!isRecording || recordingOriginNs == null) {
+                return 0;
+            }
+            return Number((process.hrtime.bigint() - recordingOriginNs) / 1000000n);
+        },
+        setOnLiveFrame: (fn) => {
+            onLiveFrame = typeof fn === 'function' ? fn : null;
         },
         close: () => {
             if (isRecording) {

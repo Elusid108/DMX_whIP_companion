@@ -176,7 +176,7 @@ const ShowInspector = ({
                     : `${(compilation && compilation.clipCount) || 0} clips · editable stack`),
                 React.createElement('p', {
                     className: 'text-xs text-zinc-500'
-                }, 'Load on this PC opens the stack in Studio. Push needs a flattened .dmx export.'),
+                }, 'Import to Studio appends this stack onto the selected Studio track. Push needs a flattened .dmx export.'),
                 React.createElement('button', {
                     type: 'button',
                     className: 'btn-danger self-start',

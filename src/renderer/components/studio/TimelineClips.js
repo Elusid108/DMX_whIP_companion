@@ -1,7 +1,45 @@
 const React = require('react');
-const { useRef, useState } = React;
+const { useEffect, useRef, useState } = React;
+const { findGapOnTrack, SNAP_GAP_MS } = require('../../../services/shared/compilationEdl');
+
+const ClipNameInput = ({ value, onCommit }) => {
+    const ref = useRef(null);
+    const [draft, setDraft] = useState(value || '');
+    useEffect(() => {
+        if (ref.current) {
+            ref.current.focus();
+            ref.current.select();
+        }
+    }, []);
+    const commit = () => {
+        if (onCommit) {
+            onCommit(draft);
+        }
+    };
+    return React.createElement('input', {
+        ref,
+        className: 'relative z-[2]',
+        value: draft,
+        onChange: (event) => setDraft(event.target.value),
+        onPointerDown: (event) => event.stopPropagation(),
+        onBlur: commit,
+        onKeyDown: (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                commit();
+            }
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                if (onCommit) {
+                    onCommit(value);
+                }
+            }
+        }
+    });
+};
 
 const EDGE = 7;
+const FADE_EDGE = 10;
 const ROW_H = 28;
 
 const TimelineClips = ({
@@ -16,11 +54,15 @@ const TimelineClips = ({
     onTrim,
     onRangeChange,
     onInspect,
-    onAddTrack
+    onCloseGap,
+    onFade,
+    namingClipId,
+    onNameCommit
 }) => {
     const stackRef = useRef(null);
     const dragRef = useRef(null);
     const [preview, setPreview] = useState(null);
+    const [gap, setGap] = useState(null);
 
     const rows = Math.max(1, trackCount || 1);
     const timeFromClientX = (clientX) => {
@@ -29,8 +71,7 @@ const TimelineClips = ({
             return 0;
         }
         const rect = node.getBoundingClientRect();
-        const x = clientX - rect.left;
-        return Math.max(0, Math.min(durationMs, (x / pixelsPerSecond) * 1000));
+        return Math.max(0, Math.min(durationMs, ((clientX - rect.left) / pixelsPerSecond) * 1000));
     };
 
     const trackFromClientY = (clientY, originTrack) => {
@@ -45,8 +86,8 @@ const TimelineClips = ({
 
     const displayClips = preview && preview.clips ? preview.clips : (clips || []);
 
-    const onPointerDown = (event, clip, edge) => {
-        if (event.button !== 0) {
+    const onPointerDown = (event, clip, edge, fadeEdge) => {
+        if (event.button !== 0 || clip.live) {
             return;
         }
         event.stopPropagation();
@@ -59,6 +100,18 @@ const TimelineClips = ({
             return;
         }
         onSelect(clip.id);
+        if (fadeEdge && onFade) {
+            dragRef.current = {
+                kind: 'fade',
+                clipId: clip.id,
+                edge: fadeEdge,
+                startX: event.clientX,
+                fadeInMs: clip.fadeInMs || 0,
+                fadeOutMs: clip.fadeOutMs || 0,
+                durationMs: Math.max(0, (clip.sourceOutMs || 0) - (clip.sourceInMs || 0))
+            };
+            return;
+        }
         if (edge) {
             dragRef.current = {
                 kind: 'trim',
@@ -84,6 +137,10 @@ const TimelineClips = ({
     const onPointerMove = (event) => {
         const drag = dragRef.current;
         if (!drag) {
+            const t = timeFromClientX(event.clientX);
+            const trackId = trackFromClientY(event.clientY, 0);
+            const next = findGapOnTrack(clips, trackId, t);
+            setGap(next);
             return;
         }
         event.stopPropagation();
@@ -92,6 +149,22 @@ const TimelineClips = ({
             onRangeChange({
                 startMs: Math.min(drag.start, t),
                 endMs: Math.max(drag.start, t)
+            });
+            return;
+        }
+        if (drag.kind === 'fade') {
+            const deltaMs = ((event.clientX - drag.startX) / pixelsPerSecond) * 1000;
+            const half = Math.floor(drag.durationMs / 2);
+            const fadeInMs = drag.edge === 'in'
+                ? Math.max(0, Math.min(half, drag.fadeInMs + deltaMs))
+                : drag.fadeInMs;
+            const fadeOutMs = drag.edge === 'out'
+                ? Math.max(0, Math.min(half, drag.fadeOutMs - deltaMs))
+                : drag.fadeOutMs;
+            setPreview({
+                clips: (clips || []).map((clip) => (
+                    clip.id === drag.clipId ? { ...clip, fadeInMs, fadeOutMs } : clip
+                ))
             });
             return;
         }
@@ -136,6 +209,16 @@ const TimelineClips = ({
         dragRef.current = null;
         const nextPreview = preview;
         setPreview(null);
+        if (drag.kind === 'fade' && nextPreview && nextPreview.clips && onFade) {
+            const clip = nextPreview.clips.find((item) => item.id === drag.clipId);
+            if (clip) {
+                onFade(clip.id, {
+                    fadeInMs: clip.fadeInMs,
+                    fadeOutMs: clip.fadeOutMs
+                });
+            }
+            return;
+        }
         if (drag.kind === 'trim' && nextPreview && nextPreview.clips) {
             const clip = nextPreview.clips.find((item) => item.id === drag.clipId);
             if (clip && onTrim) {
@@ -145,10 +228,9 @@ const TimelineClips = ({
         }
         if (drag.kind === 'move' && nextPreview && nextPreview.clips && onMove) {
             const clip = nextPreview.clips.find((item) => item.id === drag.clipId);
-            if (!clip) {
-                return;
+            if (clip) {
+                onMove(clip.id, clip.startMs, clip.trackId);
             }
-            onMove(clip.id, clip.startMs, clip.trackId);
         }
     };
 
@@ -162,7 +244,12 @@ const TimelineClips = ({
         style: { height: `${rowCount * ROW_H}px` },
         onPointerMove,
         onPointerUp,
-        onPointerCancel: onPointerUp
+        onPointerCancel: onPointerUp,
+        onPointerLeave: () => {
+            if (!dragRef.current) {
+                setGap(null);
+            }
+        }
     },
         range && range.endMs > range.startMs && React.createElement('div', {
             className: 'timeline-range',
@@ -175,15 +262,38 @@ const TimelineClips = ({
             key: `row-${trackId}`,
             className: 'timeline-clips'
         })),
+        gap && (gap.gapRight - gap.gapLeft) >= SNAP_GAP_MS && React.createElement('button', {
+            type: 'button',
+            className: 'timeline-snap',
+            style: {
+                left: `${(gap.gapLeft / 1000) * pixelsPerSecond}px`,
+                width: `${((gap.gapRight - gap.gapLeft) / 1000) * pixelsPerSecond}px`,
+                top: `${(gap.trackId * ROW_H) + 2}px`,
+                height: `${ROW_H - 4}px`
+            },
+            onPointerDown: (event) => {
+                event.stopPropagation();
+                event.preventDefault();
+            },
+            onClick: (event) => {
+                event.stopPropagation();
+                if (onCloseGap) {
+                    onCloseGap(gap.gapLeft, gap.gapRight);
+                }
+                setGap(null);
+            }
+        }, '› ‹'),
         displayClips.map((clip) => {
             const start = clip.startMs || 0;
             const widthMs = Math.max(0, (clip.sourceOutMs || 0) - (clip.sourceInMs || 0));
             const left = (start / 1000) * pixelsPerSecond;
             const width = Math.max(8, (widthMs / 1000) * pixelsPerSecond);
             const top = ((clip.trackId || 0) * ROW_H) + 2;
+            const fadeInW = Math.max(0, ((clip.fadeInMs || 0) / 1000) * pixelsPerSecond);
+            const fadeOutW = Math.max(0, ((clip.fadeOutMs || 0) / 1000) * pixelsPerSecond);
             return React.createElement('div', {
                 key: clip.id,
-                className: `timeline-block ${selectedId === clip.id ? 'is-active' : ''}`,
+                className: `timeline-block ${selectedId === clip.id ? 'is-active' : ''} ${clip.live ? 'is-live' : ''}`,
                 style: { left: `${left}px`, width: `${width}px`, top: `${top}px`, height: `${ROW_H - 4}px` },
                 onContextMenu: (event) => {
                     event.preventDefault();
@@ -197,13 +307,37 @@ const TimelineClips = ({
                     const rect = event.currentTarget.getBoundingClientRect();
                     const x = event.clientX - rect.left;
                     const edge = x <= EDGE ? 'in' : (x >= rect.width - EDGE ? 'out' : null);
-                    onPointerDown(event, clip, edge);
+                    const fadeEdge = !edge && x <= EDGE + FADE_EDGE
+                        ? 'in'
+                        : (!edge && x >= rect.width - EDGE - FADE_EDGE ? 'out' : null);
+                    onPointerDown(event, clip, edge, fadeEdge);
                 }
             },
+                fadeInW > 0 && React.createElement('span', {
+                    className: 'timeline-fade is-in',
+                    style: { width: `${fadeInW}px` }
+                }),
+                fadeOutW > 0 && React.createElement('span', {
+                    className: 'timeline-fade is-out',
+                    style: { width: `${fadeOutW}px` }
+                }),
                 React.createElement('span', { className: 'timeline-block-edge is-in' }),
                 React.createElement('span', {
-                    className: 'truncate px-1.5 text-[10px] font-medium'
-                }, clip.name || 'Clip'),
+                    className: 'timeline-fade-handle',
+                    style: { left: `${Math.max(EDGE, fadeInW)}px` }
+                }),
+                namingClipId === clip.id
+                    ? React.createElement(ClipNameInput, {
+                        value: clip.name || 'Clip',
+                        onCommit: (name) => onNameCommit && onNameCommit(clip.id, name)
+                    })
+                    : React.createElement('span', {
+                        className: 'truncate px-1.5 text-[10px] font-medium relative z-[1]'
+                    }, clip.name || 'Clip'),
+                React.createElement('span', {
+                    className: 'timeline-fade-handle',
+                    style: { right: `${Math.max(EDGE, fadeOutW)}px` }
+                }),
                 React.createElement('span', { className: 'timeline-block-edge is-out' })
             );
         })

@@ -1,4 +1,5 @@
 const React = require('react');
+const { createPortal } = require('react-dom');
 const { useState, useEffect, useRef } = React;
 const ipcRenderer = require('../../ipc');
 const DeviceList = require('./DeviceList');
@@ -32,7 +33,8 @@ const DevicesPanel = ({
     focusDeviceId,
     selectedNic,
     networkInterfaces,
-    onNetworkChange
+    onNetworkChange,
+    railHost
 } = {}) => {
     const [devices, setDevices] = useState([]);
     const [selectedId, setSelectedId] = useState(null);
@@ -203,67 +205,64 @@ const DevicesPanel = ({
         ipcRenderer.send('devices-scan');
     };
 
-    return React.createElement('div', {
-        className: 'flex-1 min-h-0 flex flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950'
-    },
+    const rail = React.createElement(React.Fragment, null,
         React.createElement('div', {
-            className: 'flex flex-1 min-h-0'
+            className: 'flex-none p-2 border-b border-zinc-200 dark:border-zinc-800 flex flex-col gap-1.5'
         },
-            React.createElement('div', {
-                className: 'app-sidebar overflow-hidden'
-            },
-                React.createElement('div', {
-                    className: 'flex-none p-2 border-b border-zinc-200 dark:border-zinc-800 flex flex-col gap-1.5'
-                },
-                    React.createElement(NetworkSelect, {
-                        selectedNic,
-                        networkInterfaces: networkInterfaces || [],
-                        onChange: onNetworkChange
-                    }),
-                    React.createElement('button', {
-                        type: 'button',
-                        className: 'btn-quiet w-full justify-center',
-                        onClick: handleScan
-                    }, 'Scan')
-                ),
-                React.createElement('div', {
-                    className: 'flex-1 min-h-0 overflow-y-auto p-2'
-                },
-                React.createElement(DeviceList, {
-                    devices: devices.map((device) => (
-                        device.id === selectedId && nodeName
-                            ? { ...device, longName: nodeName }
-                            : device
-                    )),
-                    selectedId,
-                    onSelect: setSelectedId,
-                    onOpenPortal: (device) => {
-                        if (!device || !device.ip) {
-                            return;
-                        }
-                        ipcRenderer.invoke('device-open-portal', { ip: device.ip });
+            React.createElement(NetworkSelect, {
+                selectedNic,
+                networkInterfaces: networkInterfaces || [],
+                onChange: onNetworkChange
+            }),
+            React.createElement('button', {
+                type: 'button',
+                className: 'btn-quiet w-full justify-center',
+                onClick: handleScan
+            }, 'Scan')
+        ),
+        React.createElement('div', {
+            className: 'flex-1 min-h-0 overflow-y-auto p-2'
+        },
+            React.createElement(DeviceList, {
+                devices: devices.map((device) => (
+                    device.id === selectedId && nodeName
+                        ? { ...device, longName: nodeName }
+                        : device
+                )),
+                selectedId,
+                onSelect: setSelectedId,
+                onOpenPortal: (device) => {
+                    if (!device || !device.ip) {
+                        return;
                     }
-                })
-                )
-            ),
-            React.createElement('div', {
-                className: 'flex-1 p-3 min-h-0 overflow-hidden'
-            },
-                React.createElement(DeviceInspector, {
-                    device: selected,
-                    status,
-                    statusError,
-                    liveLocked,
-                    via,
-                    files,
-                    pullPath,
-                    busy,
-                    onPullPathChange: setPullPath,
-                    onPullShow: handlePullShow,
-                    onReboot: handleReboot
-                })
-            )
+                    ipcRenderer.invoke('device-open-portal', { ip: device.ip });
+                }
+            })
         )
+    );
+    const main = React.createElement('div', {
+        className: 'flex-1 p-3 min-h-0 overflow-hidden bg-zinc-50 dark:bg-zinc-950'
+    },
+        React.createElement(DeviceInspector, {
+            device: selected,
+            status,
+            statusError,
+            liveLocked,
+            via,
+            files,
+            pullPath,
+            busy,
+            onPullPathChange: setPullPath,
+            onPullShow: handlePullShow,
+            onReboot: handleReboot
+        })
+    );
+    if (!railHost) {
+        return main;
+    }
+    return React.createElement(React.Fragment, null,
+        createPortal(rail, railHost),
+        main
     );
 };
 

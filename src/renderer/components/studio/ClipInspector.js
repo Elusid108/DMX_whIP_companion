@@ -21,12 +21,18 @@ const ClipInspector = ({ info, x, y, onClose, onApply }) => {
     const [startUniverse, setStartUniverse] = useState(info.outputStartUniverse || 0);
     const [startChannel, setStartChannel] = useState(info.outputStartChannel || 1);
     const [destIp, setDestIp] = useState(info.destIp || '');
+    const [fadeInMs, setFadeInMs] = useState(info.fadeInMs || 0);
+    const [fadeOutMs, setFadeOutMs] = useState(info.fadeOutMs || 0);
+    const [fadeCurve, setFadeCurve] = useState(info.fadeCurve || 'linear');
 
     useEffect(() => {
         setName(info.name || '');
         setStartUniverse(info.outputStartUniverse || 0);
         setStartChannel(info.outputStartChannel || 1);
         setDestIp(info.destIp || '');
+        setFadeInMs(info.fadeInMs || 0);
+        setFadeOutMs(info.fadeOutMs || 0);
+        setFadeCurve(info.fadeCurve || 'linear');
     }, [info]);
 
     useEffect(() => {
@@ -46,7 +52,10 @@ const ClipInspector = ({ info, x, y, onClose, onApply }) => {
             name: name.trim() || info.name || 'Clip',
             universeOffset: universe - (info.startUniverse || 0),
             channelOffset: channel - 1,
-            destIp: destIp.trim()
+            destIp: destIp.trim(),
+            fadeInMs: Math.max(0, Math.round(Number(fadeInMs) || 0)),
+            fadeOutMs: Math.max(0, Math.round(Number(fadeOutMs) || 0)),
+            fadeCurve: fadeCurve === 'smooth' ? 'smooth' : 'linear'
         });
     };
 
@@ -95,6 +104,37 @@ const ClipInspector = ({ info, x, y, onClose, onApply }) => {
                 value: destIp,
                 onChange: (event) => setDestIp(event.target.value)
             })
+        ),
+        React.createElement('label', { className: 'timeline-inspector-field' },
+            React.createElement('span', null, 'Fade in (ms)'),
+            React.createElement('input', {
+                className: 'field w-full',
+                type: 'number',
+                min: 0,
+                value: fadeInMs,
+                onChange: (event) => setFadeInMs(event.target.value)
+            })
+        ),
+        React.createElement('label', { className: 'timeline-inspector-field' },
+            React.createElement('span', null, 'Fade out (ms)'),
+            React.createElement('input', {
+                className: 'field w-full',
+                type: 'number',
+                min: 0,
+                value: fadeOutMs,
+                onChange: (event) => setFadeOutMs(event.target.value)
+            })
+        ),
+        React.createElement('label', { className: 'timeline-inspector-field' },
+            React.createElement('span', null, 'Fade curve'),
+            React.createElement('select', {
+                className: 'field w-full',
+                value: fadeCurve,
+                onChange: (event) => setFadeCurve(event.target.value)
+            },
+                React.createElement('option', { value: 'linear' }, 'Linear'),
+                React.createElement('option', { value: 'smooth' }, 'Smooth')
+            )
         ),
         React.createElement('dl', { className: 'timeline-inspector-meta' },
             React.createElement('dt', null, 'Protocols'),

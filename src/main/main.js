@@ -97,7 +97,7 @@ function createWindow() {
 
     const recordingHandler = setupRecordingHandlers(mainWindow);
     const cleanupNetwork = setupNetworkHandlers(mainWindow, recordingHandler);
-    const playback = setupPlaybackHandlers(mainWindow);
+    const playback = setupPlaybackHandlers(mainWindow, recordingHandler);
     protocol.handle('compmedia', (request) => {
         try {
             const parsed = new URL(request.url);

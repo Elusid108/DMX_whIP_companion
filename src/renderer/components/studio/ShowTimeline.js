@@ -4,8 +4,9 @@ const TimelineLane = require('./TimelineLane');
 const TimelineClips = require('./TimelineClips');
 const TimelineAudio = require('./TimelineAudio');
 const ClipInspector = require('./ClipInspector');
+const TransportButtons = require('../controls/TransportButtons');
 
-const HEADER_WIDTH = 252;
+const HEADER_WIDTH = 220;
 const MIN_PPS = 4;
 const MAX_PPS = 400;
 const PAD_PX = 24;
@@ -56,7 +57,7 @@ const buildProtocolTracks = (overview, selectedUniverses, recordingPath, isRecor
         }));
     }
 
-    if (!recordingPath || !selectedUniverses || selectedUniverses.size === 0) {
+    if ((!recordingPath && !isRecording) || !selectedUniverses || selectedUniverses.size === 0) {
         return [];
     }
 
@@ -111,12 +112,27 @@ const ShowTimeline = ({
     onInspectApply,
     inspector,
     onCloseInspector,
+    selectedClipId,
+    onSelectClip,
     onImportAudio,
     onPlay,
     onPause,
     onStop,
     onBack,
-    onNext
+    onNext,
+    onCloseGap,
+    onFadeClip,
+    onRecord,
+    canRecord,
+    trackNames,
+    selectedTrackId,
+    onSelectTrack,
+    onRenameTrack,
+    onReorderTracks,
+    punchClip,
+    namingClipId,
+    onNameCommit,
+    footer
 }) => {
     const scrollRef = useRef(null);
     const didFitRef = useRef(false);
@@ -125,11 +141,17 @@ const ShowTimeline = ({
     const [viewWidth, setViewWidth] = useState(640);
     const [scrollLeft, setScrollLeft] = useState(0);
     const [selectedKey, setSelectedKey] = useState(null);
-    const [selectedClipId, setSelectedClipId] = useState(null);
     const [range, setRange] = useState(null);
+    const [trackArmed, setTrackArmed] = useState(false);
+    const [renamingTrackId, setRenamingTrackId] = useState(null);
+    const [trackDraft, setTrackDraft] = useState('');
+    const [dropTrack, setDropTrack] = useState(null);
+    const trackDragRef = useRef(null);
+    const trackNameRef = useRef(null);
 
     const durationMs = Math.max(
         isRecording ? recordingDuration : 0,
+        lastEndMs(punchClip ? [punchClip] : []),
         (overview && overview.durationMs) || 0,
         lastEndMs(clips),
         lastEndMs(audioClips)
@@ -141,12 +163,35 @@ const ShowTimeline = ({
     );
     const lightingTracks = Math.max(1, trackCount || 1);
     const hasClips = Boolean(clips && clips.length > 0);
+    const showLighting = isFileLoaded || isRecording || hasClips;
+    const displayClips = punchClip ? [...(clips || []), punchClip] : (clips || []);
+    const names = Array.isArray(trackNames) && trackNames.length
+        ? trackNames
+        : Array.from({ length: lightingTracks }, (_, index) => `Track ${index + 1}`);
 
     const contentWidth = Math.max(viewWidth, (durationSec * pixelsPerSecond) + PAD_PX);
     const playheadX = Math.max(0, (playheadMs / 1000) * pixelsPerSecond);
     const clipWidth = Math.max(durationMs > 0 || isRecording ? 2 : 0, durationSec * pixelsPerSecond);
     const canSeek = Boolean(isFileLoaded && !isRecording && onSeek);
     const canTransport = Boolean(isFileLoaded && !isRecording);
+
+    useEffect(() => {
+        if (renamingTrackId == null || !trackNameRef.current) {
+            return;
+        }
+        trackNameRef.current.focus();
+        trackNameRef.current.select();
+    }, [renamingTrackId]);
+
+    const commitTrackName = () => {
+        if (renamingTrackId == null) {
+            return;
+        }
+        if (onRenameTrack) {
+            onRenameTrack(renamingTrackId, trackDraft);
+        }
+        setRenamingTrackId(null);
+    };
 
     const applyFit = useCallback(() => {
         const width = scrollRef.current ? scrollRef.current.clientWidth : viewWidth;
@@ -266,13 +311,6 @@ const ShowTimeline = ({
         return { list, step };
     }, [pixelsPerSecond, scrollLeft, viewWidth]);
 
-    const transportBtn = (label, onClick, disabled) => React.createElement('button', {
-        type: 'button',
-        className: 'btn-quiet !px-1.5 !py-0.5',
-        disabled: Boolean(disabled),
-        onClick
-    }, label);
-
     return React.createElement('div', {
         className: 'flex flex-1 min-h-0 flex-col bg-white dark:bg-zinc-900 relative'
     },
@@ -286,33 +324,21 @@ const ShowTimeline = ({
                 className: 'flex flex-col flex-none',
                 style: { width: HEADER_WIDTH }
             },
-                React.createElement('div', { className: 'timeline-corner justify-between' },
-                    React.createElement('div', { className: 'flex items-center gap-0.5' },
-                        transportBtn('Play', onPlay, !canTransport || isPlaying),
-                        transportBtn('Pause', onPause, !canTransport || !isPlaying),
-                        transportBtn('Stop', onStop, !canTransport),
-                        transportBtn('Back', onBack, !canTransport),
-                        transportBtn('Next', onNext, !canTransport)
-                    ),
-                    React.createElement('div', { className: 'flex items-center gap-0.5' },
-                        React.createElement('button', {
-                            type: 'button',
-                            className: 'btn-quiet !px-1.5 !py-0.5',
-                            onClick: applyFit
-                        }, 'Fit'),
-                        React.createElement('button', {
-                            type: 'button',
-                            className: 'btn-quiet !px-1.5 !py-0.5',
-                            onClick: () => zoomBy(1 / 1.25)
-                        }, '−'),
-                        React.createElement('button', {
-                            type: 'button',
-                            className: 'btn-quiet !px-1.5 !py-0.5',
-                            onClick: () => zoomBy(1.25)
-                        }, '+')
-                    )
+                React.createElement('div', { className: 'timeline-corner' },
+                    React.createElement(TransportButtons, {
+                        isPlaying,
+                        isRecording,
+                        disabled: !canTransport,
+                        recordDisabled: isRecording ? false : !canRecord,
+                        onPlay,
+                        onPause,
+                        onStop,
+                        onBack,
+                        onNext,
+                        onRecord
+                    })
                 ),
-                hasClips && React.createElement('div', {
+                showLighting && React.createElement('div', {
                     className: 'timeline-corner justify-between'
                 },
                     React.createElement('span', {
@@ -339,11 +365,101 @@ const ShowTimeline = ({
                         }, 'Cut')
                     )
                 ),
-                hasClips && Array.from({ length: lightingTracks }, (_, index) => React.createElement('div', {
+                showLighting && React.createElement('div', {
+                    ref: (node) => {
+                        trackDragRef.current = {
+                            ...(trackDragRef.current || {}),
+                            node
+                        };
+                    }
+                }, Array.from({ length: lightingTracks }, (_, index) => React.createElement('div', {
                     key: `track-${index}`,
-                    className: 'timeline-header-sm'
-                }, `Track ${index + 1}`)),
-                hasClips && React.createElement('button', {
+                    className: `timeline-header-sm ${
+                        selectedTrackId === index ? 'is-active' : ''
+                    } ${dropTrack === index ? 'is-drop' : ''}`,
+                    onPointerDown: (event) => {
+                        if (event.button !== 0 || renamingTrackId === index) {
+                            return;
+                        }
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        trackDragRef.current = {
+                            ...(trackDragRef.current || {}),
+                            from: index,
+                            startY: event.clientY,
+                            dragging: false,
+                            pointerId: event.pointerId
+                        };
+                    },
+                    onPointerMove: (event) => {
+                        const drag = trackDragRef.current;
+                        if (!drag || drag.from == null) {
+                            return;
+                        }
+                        if (!drag.dragging && Math.abs(event.clientY - drag.startY) > 4) {
+                            drag.dragging = true;
+                        }
+                        if (drag.dragging) {
+                            const node = drag.node;
+                            if (!node) {
+                                return;
+                            }
+                            const rect = node.getBoundingClientRect();
+                            const next = Math.max(
+                                0,
+                                Math.min(lightingTracks - 1, Math.floor((event.clientY - rect.top) / 28))
+                            );
+                            drag.over = next;
+                            setDropTrack(next);
+                        }
+                    },
+                    onPointerUp: (event) => {
+                        const drag = trackDragRef.current;
+                        const from = drag && drag.from;
+                        const wasDrag = Boolean(drag && drag.dragging);
+                        const over = drag && drag.over;
+                        trackDragRef.current = { node: drag && drag.node };
+                        setDropTrack(null);
+                        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                            event.currentTarget.releasePointerCapture(event.pointerId);
+                        }
+                        if (from == null) {
+                            return;
+                        }
+                        if (wasDrag && over != null && over !== from && onReorderTracks) {
+                            onReorderTracks(from, over);
+                            return;
+                        }
+                        if (!wasDrag) {
+                            if (selectedTrackId === from && trackArmed && onRenameTrack) {
+                                setTrackDraft(names[from] || `Track ${from + 1}`);
+                                setRenamingTrackId(from);
+                            } else if (onSelectTrack) {
+                                onSelectTrack(from);
+                                setTrackArmed(true);
+                            }
+                        }
+                    }
+                }, renamingTrackId === index
+                    ? React.createElement('input', {
+                        ref: trackNameRef,
+                        value: trackDraft,
+                        onChange: (event) => setTrackDraft(event.target.value),
+                        onBlur: commitTrackName,
+                        onKeyDown: (event) => {
+                            if (event.key === 'Enter') {
+                                event.preventDefault();
+                                commitTrackName();
+                            }
+                            if (event.key === 'Escape') {
+                                event.preventDefault();
+                                setRenamingTrackId(null);
+                            }
+                        },
+                        onPointerDown: (event) => event.stopPropagation()
+                    })
+                    : (names[index] || `Track ${index + 1}`)
+                ))),
+                showLighting && React.createElement('button', {
                     type: 'button',
                     className: 'timeline-header-sm is-ghost',
                     onClick: onAddTrack
@@ -373,10 +489,10 @@ const ShowTimeline = ({
                 tracks.length === 0 && React.createElement('div', {
                     className: 'timeline-header text-xs text-zinc-500'
                 }, 'No layers'),
-                isFileLoaded && !isRecording && React.createElement(React.Fragment, null,
+                (isFileLoaded || isRecording) && React.createElement(React.Fragment, null,
                     React.createElement('div', { className: 'timeline-header-audio' }, 'Audio L'),
                     React.createElement('div', { className: 'timeline-header-audio' }, 'Audio R'),
-                    React.createElement('button', {
+                    !isRecording && React.createElement('button', {
                         type: 'button',
                         className: 'timeline-header-sm is-ghost',
                         onClick: () => onImportAudio && onImportAudio(playheadMs)
@@ -403,22 +519,26 @@ const ShowTimeline = ({
                             style: { left: `${time * pixelsPerSecond}px` }
                         }, formatTick(time, ticks.step)))
                     ),
-                    hasClips && React.createElement('div', { className: 'timeline-corner-spacer' }),
-                    hasClips && React.createElement(TimelineClips, {
-                        clips,
+                    showLighting && React.createElement('div', { className: 'timeline-corner-spacer' }),
+                    showLighting && React.createElement(TimelineClips, {
+                        clips: displayClips,
                         trackCount: lightingTracks,
                         pixelsPerSecond,
                         durationMs,
                         selectedId: selectedClipId,
                         range,
-                        onSelect: setSelectedClipId,
+                        onSelect: onSelectClip,
                         onMove: onMoveClip,
                         onTrim: onTrimClip,
                         onRangeChange: setRange,
                         onInspect: onInspectClip,
-                        onAddTrack
+                        onAddTrack,
+                        onCloseGap,
+                        onFade: onFadeClip,
+                        namingClipId,
+                        onNameCommit
                     }),
-                    hasClips && React.createElement('div', {
+                    showLighting && React.createElement('div', {
                         className: 'timeline-clips is-ghost'
                     }),
                     isLoopEnabled && clipWidth > 0 && React.createElement('div', {
@@ -439,19 +559,20 @@ const ShowTimeline = ({
                     tracks.length === 0 && React.createElement('div', {
                         className: 'timeline-track'
                     }),
-                    isFileLoaded && !isRecording && React.createElement(TimelineAudio, {
+                    (isFileLoaded || isRecording) && React.createElement(TimelineAudio, {
                         clips: audioClips,
                         audioMedia,
                         pixelsPerSecond,
                         durationMs,
                         selectedId: selectedClipId,
                         range,
-                        onSelect: setSelectedClipId,
+                        onSelect: onSelectClip,
                         onMove: onMoveClip,
                         onTrim: onTrimClip,
-                        onRangeChange: setRange
+                        onRangeChange: setRange,
+                        onCloseGap
                     }),
-                    isFileLoaded && !isRecording && React.createElement('div', {
+                    (isFileLoaded || isRecording) && !isRecording && React.createElement('div', {
                         className: 'timeline-clips is-ghost cursor-pointer',
                         onPointerDown: (event) => {
                             event.stopPropagation();
@@ -466,7 +587,7 @@ const ShowTimeline = ({
                     }),
                     isIdle && React.createElement('p', {
                         className: 'absolute inset-x-6 top-12 text-sm text-zinc-500 pointer-events-none'
-                    }, 'Select universes, create a file in Studio or load a look from Library, then record or play.')
+                    }, 'Select universes, then Record from the playhead, or load a look from Library.')
                 )
             )
         ),
@@ -476,7 +597,27 @@ const ShowTimeline = ({
             y: inspector.y,
             onClose: onCloseInspector,
             onApply: onInspectApply
-        })
+        }),
+        React.createElement('div', { className: 'timeline-footer' },
+            React.createElement('div', { className: 'flex items-center gap-0.5' },
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet !px-1.5 !py-0.5',
+                    onClick: applyFit
+                }, 'Fit'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet !px-1.5 !py-0.5',
+                    onClick: () => zoomBy(1 / 1.25)
+                }, '−'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet !px-1.5 !py-0.5',
+                    onClick: () => zoomBy(1.25)
+                }, '+')
+            ),
+            footer
+        )
     );
 };
 

@@ -102,7 +102,8 @@ const ShowList = ({
     pushError,
     onTargetChange,
     onPush,
-    canPush
+    canPush,
+    onSelectedIdsChange
 }) => {
     const [editingId, setEditingId] = useState('');
     const [draft, setDraft] = useState('');
@@ -111,6 +112,12 @@ const ShowList = ({
     const [dragIds, setDragIds] = useState([]);
     const [dropHint, setDropHint] = useState(null);
     const lastActivated = useRef('');
+
+    useEffect(() => {
+        if (onSelectedIdsChange) {
+            onSelectedIdsChange([...selectedIds]);
+        }
+    }, [selectedIds, onSelectedIdsChange]);
 
     const collapsedSet = useMemo(() => new Set(collapsed || []), [collapsed]);
     const rows = useMemo(
@@ -307,12 +314,6 @@ const ShowList = ({
         },
             React.createElement('button', {
                 type: 'button',
-                className: 'btn-primary w-full justify-center',
-                disabled: busy || playDisabled,
-                onClick: onPlay
-            }, 'Load on this PC'),
-            React.createElement('button', {
-                type: 'button',
                 className: 'btn-quiet w-full justify-center',
                 disabled: busy,
                 onClick: onCreateFolder
@@ -452,6 +453,16 @@ const ShowList = ({
                 && React.createElement('div', {
                     className: 'h-0.5 mx-1 rounded-full bg-cyan-500'
                 })
+        ),
+        React.createElement('div', {
+            className: 'flex-none flex flex-col gap-1.5 pt-2'
+        },
+            React.createElement('button', {
+                type: 'button',
+                className: 'btn-primary w-full justify-center',
+                disabled: busy || playDisabled,
+                onClick: onPlay
+            }, 'Import to Studio')
         ),
         React.createElement('div', {
             className: 'flex-none flex flex-col gap-1.5 pt-2 border-t border-zinc-200 dark:border-zinc-800'

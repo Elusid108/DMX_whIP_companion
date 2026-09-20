@@ -8,6 +8,7 @@ const {
     cloneTree,
     collectFolderIds,
     dissolveFolder,
+    findNode,
     hydrateTree,
     insertNode,
     moveNodes,
@@ -351,7 +352,8 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
         'library-delete-folder',
         'library-move',
         'library-set-collapsed',
-        'library-save-compilation-meta'
+        'library-save-compilation-meta',
+        'library-duplicate'
     ];
 
     ipcMain.handle('library-list', async () => {
@@ -605,6 +607,56 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
             writeIndexItems(items);
             emitList();
             return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('library-duplicate', async (event, { ids } = {}) => {
+        try {
+            const items = cloneTree(readIndexItems());
+            const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+            for (const id of list) {
+                const found = findNode(items, id);
+                if (!found || !found.node) {
+                    continue;
+                }
+                const parentId = found.parent ? found.parent.id : 'root';
+                if (found.node.type === 'show') {
+                    const src = path.join(ensureLibrary(), found.node.id);
+                    assertInLibrary(src);
+                    if (!fs.existsSync(src)) {
+                        continue;
+                    }
+                    const base = `${path.parse(found.node.id).name} copy`;
+                    const dest = uniqueDmxPath(ensureLibrary(), sanitizeBaseName(base));
+                    fs.copyFileSync(src, dest);
+                    const meta = readSidecar(src);
+                    writeSidecar(dest, {
+                        name: `${meta.name || path.parse(found.node.id).name} copy`,
+                        notes: meta.notes
+                    });
+                    insertNode(items, { type: 'show', id: path.basename(dest) }, parentId, found.index + 1);
+                } else if (found.node.type === 'compilation') {
+                    const src = path.join(ensureLibrary(), found.node.id);
+                    assertInLibrary(src);
+                    if (!fs.existsSync(src)) {
+                        continue;
+                    }
+                    const dest = uniqueCompPath(ensureLibrary(), `${path.basename(found.node.id, '.comp')} copy`);
+                    fs.cpSync(src, dest, { recursive: true });
+                    const projectFile = path.join(dest, 'project.json');
+                    if (fs.existsSync(projectFile)) {
+                        const raw = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+                        raw.name = `${raw.name || 'Stack'} copy`;
+                        fs.writeFileSync(projectFile, `${JSON.stringify(raw, null, 2)}\n`);
+                    }
+                    insertNode(items, { type: 'compilation', id: path.basename(dest) }, parentId, found.index + 1);
+                }
+            }
+            writeIndexItems(items);
+            emitList();
+            return { success: true, ...listLibrary() };
         } catch (error) {
             return { success: false, error: error.message };
         }

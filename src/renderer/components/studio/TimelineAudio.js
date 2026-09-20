@@ -1,5 +1,6 @@
 const React = require('react');
 const { useEffect, useRef, useState } = React;
+const { findGapOnTrack, SNAP_GAP_MS } = require('../../../services/shared/compilationEdl');
 
 const EDGE = 7;
 
@@ -85,11 +86,13 @@ const TimelineAudio = ({
     onSelect,
     onMove,
     onTrim,
-    onRangeChange
+    onRangeChange,
+    onCloseGap
 }) => {
     const rowRef = useRef(null);
     const dragRef = useRef(null);
     const [preview, setPreview] = useState(null);
+    const [gap, setGap] = useState(null);
     const displayClips = preview && preview.clips ? preview.clips : (clips || []);
 
     const timeFromClientX = (clientX) => {
@@ -138,6 +141,7 @@ const TimelineAudio = ({
     const onPointerMove = (event) => {
         const drag = dragRef.current;
         if (!drag) {
+            setGap(findGapOnTrack(clips, 0, timeFromClientX(event.clientX)));
             return;
         }
         event.stopPropagation();
@@ -206,7 +210,12 @@ const TimelineAudio = ({
         className: 'timeline-audio-stack',
         onPointerMove,
         onPointerUp,
-        onPointerCancel: onPointerUp
+        onPointerCancel: onPointerUp,
+        onPointerLeave: () => {
+            if (!dragRef.current) {
+                setGap(null);
+            }
+        }
     },
         React.createElement(WaveRow, {
             clips: displayClips,
@@ -222,6 +231,27 @@ const TimelineAudio = ({
             pixelsPerSecond,
             durationMs
         }),
+        gap && (gap.gapRight - gap.gapLeft) >= SNAP_GAP_MS && React.createElement('button', {
+            type: 'button',
+            className: 'timeline-snap',
+            style: {
+                left: `${(gap.gapLeft / 1000) * pixelsPerSecond}px`,
+                width: `${((gap.gapRight - gap.gapLeft) / 1000) * pixelsPerSecond}px`,
+                top: '4px',
+                height: '72px'
+            },
+            onPointerDown: (event) => {
+                event.stopPropagation();
+                event.preventDefault();
+            },
+            onClick: (event) => {
+                event.stopPropagation();
+                if (onCloseGap) {
+                    onCloseGap(gap.gapLeft, gap.gapRight);
+                }
+                setGap(null);
+            }
+        }, '› ‹'),
         range && range.endMs > range.startMs && React.createElement('div', {
             className: 'timeline-range',
             style: {

@@ -1,4 +1,5 @@
 const React = require('react');
+const { createPortal } = require('react-dom');
 const { useState, useEffect, useRef } = React;
 const ipcRenderer = require('../../ipc');
 const ShowList = require('./ShowList');
@@ -11,7 +12,11 @@ const {
     folderExists
 } = require('../../../services/shared/libraryTree');
 
-const LibraryPanel = () => {
+const LibraryPanel = React.forwardRef(({
+    studioTrackId = 0,
+    studioHasClips = false,
+    railHost
+}, ref) => {
     const [shows, setShows] = useState([]);
     const [tree, setTree] = useState([]);
     const [selection, setSelection] = useState(null);
@@ -33,6 +38,25 @@ const LibraryPanel = () => {
     const dirtyRef = useRef(false);
     const nameRef = useRef('');
     const notesRef = useRef('');
+
+    const selectedIdsRef = useRef([]);
+    const libraryClipboardRef = useRef([]);
+
+    React.useImperativeHandle(ref, () => ({
+        copy: () => {
+            libraryClipboardRef.current = selectedIdsRef.current.slice();
+        },
+        paste: async () => {
+            const ids = libraryClipboardRef.current;
+            if (!ids.length) {
+                return;
+            }
+            const result = await ipcRenderer.invoke('library-duplicate', { ids });
+            if (result && !result.success && result.error) {
+                setError(result.error);
+            }
+        }
+    }));
 
     selectedRef.current = selection;
     nameRef.current = name;
@@ -267,43 +291,74 @@ const LibraryPanel = () => {
     };
 
     const handlePlay = () => runAction(async () => {
-        if (selectedCompilation && selectedCompilation.compilation) {
-            const result = await ipcRenderer.invoke('load-compilation', {
-                dirPath: selectedCompilation.compilation.dirPath
-            });
-            if (result && !result.success) {
-                setError(result.error || 'Unable to load compilation');
-            }
-            return;
-        }
-        if (selectedFolder) {
-            const sources = collectLooks(selectedFolder);
-            if (sources.length === 0) {
-                setError('This folder has no looks to load');
+        const ids = (selectedIdsRef.current && selectedIdsRef.current.length)
+            ? selectedIdsRef.current
+            : (selection && selection.id ? [selection.id] : []);
+        const sources = [];
+        const seen = new Set();
+        const compilations = [];
+        const addLook = (filePath, name) => {
+            if (!filePath || seen.has(filePath)) {
                 return;
             }
+            seen.add(filePath);
+            sources.push({ filePath, name });
+        };
+        for (const id of ids) {
+            const found = findNode(tree, id);
+            const node = found && found.node;
+            if (!node) {
+                continue;
+            }
+            if (node.type === 'show' && node.show && node.show.filePath) {
+                addLook(node.show.filePath, node.show.displayName || node.show.filename || node.id);
+            } else if (node.type === 'folder') {
+                for (const look of collectLooks(node)) {
+                    addLook(look.filePath, look.name);
+                }
+            } else if (node.type === 'compilation' && node.compilation && node.compilation.dirPath) {
+                compilations.push(node);
+            }
+        }
+        const trackId = studioTrackId || 0;
+        const append = Boolean(studioHasClips);
+        if (sources.length) {
             const result = await ipcRenderer.invoke('load-compilation', {
-                name: selectedFolder.name,
-                sources
+                name: selectedFolder ? selectedFolder.name : 'Stack',
+                sources,
+                trackId,
+                append
             });
             if (result && !result.success) {
-                setError(result.error || 'Unable to load folder');
+                setError(result.error || 'Unable to import');
             } else if (result && result.skipped && result.skipped.length) {
-                setError(`Loaded with ${result.skipped.length} skipped look(s)`);
+                setError(`Imported with ${result.skipped.length} skipped look(s)`);
             }
             return;
         }
-        if (!selectedShowPath) {
+        if (compilations.length === 1) {
+            const result = await ipcRenderer.invoke('load-compilation', {
+                dirPath: compilations[0].compilation.dirPath,
+                trackId,
+                append
+            });
+            if (result && !result.success) {
+                setError(result.error || 'Unable to import compilation');
+            }
             return;
         }
-        const displayName = (inspect && (inspect.name || inspect.displayName)) || undefined;
-        const result = await ipcRenderer.invoke('load-recording', {
-            filePath: selectedShowPath,
-            displayName
-        });
-        if (result && !result.success) {
-            setError(result.error || 'Unable to load recording');
+        if (selectedCompilation && selectedCompilation.compilation) {
+            const result = await ipcRenderer.invoke('load-compilation', {
+                dirPath: selectedCompilation.compilation.dirPath,
+                trackId,
+                append
+            });
+            if (result && !result.success) {
+                setError(result.error || 'Unable to import compilation');
+            }
+            return;
         }
+        setError('Select a look, folder, or compilation to import');
     });
 
     const handleRenameCompilation = (id, nextName) => {
@@ -467,66 +522,69 @@ const LibraryPanel = () => {
     const canPush = Boolean(selectedShowPath && inspect && inspect.playable && targetId
         && targets.some((device) => device.id === targetId));
 
-    return React.createElement('div', {
+    const list = React.createElement(ShowList, {
+        tree,
+        collapsed,
+        selected: selection,
+        loadedPath,
+        busy,
+        playDisabled: busy || !(playable || folderPlayable || compilationPlayable),
+        onSelect: setSelection,
+        onRenameShow: handleRenameShow,
+        onRenameFolder: handleRenameFolder,
+        onRenameCompilation: handleRenameCompilation,
+        onCreateFolder: handleCreateFolder,
+        onToggleCollapsed: handleToggleCollapsed,
+        onMove: handleMove,
+        onPlay: handlePlay,
+        devices,
+        targetId,
+        pushing,
+        pushProgress,
+        pushError,
+        onTargetChange: setTargetId,
+        onPush: handlePush,
+        canPush,
+        onSelectedIdsChange: (ids) => {
+            selectedIdsRef.current = ids || [];
+        }
+    });
+    const inspector = React.createElement(ShowInspector, {
+        selection,
+        show: inspect,
+        folder: selectedFolder,
+        compilation: selectedCompilation && selectedCompilation.compilation,
+        stack: folderStack,
+        name,
+        notes,
+        busy,
+        onNameChange: handleNameChange,
+        onNotesChange: handleNotesChange,
+        onFolderNameChange: handleRenameFolder,
+        onCompilationNameChange: handleRenameCompilation,
+        onDelete: handleDelete,
+        onDeleteFolder: handleDeleteFolder,
+        onDeleteCompilation: handleDeleteCompilation
+    });
+    const main = React.createElement('div', {
         className: 'flex-1 min-h-0 flex flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950'
     },
         error && React.createElement('div', {
             className: 'px-3 pt-2 text-sm text-red-500'
         }, error),
         React.createElement('div', {
-            className: 'flex flex-1 min-h-0'
-        },
-            React.createElement('div', {
-                className: 'app-sidebar overflow-hidden p-2 flex flex-col'
-            },
-                React.createElement(ShowList, {
-                    tree,
-                    collapsed,
-                    selected: selection,
-                    loadedPath,
-                    busy,
-                    playDisabled: busy || !(playable || folderPlayable || compilationPlayable),
-                    onSelect: setSelection,
-                    onRenameShow: handleRenameShow,
-                    onRenameFolder: handleRenameFolder,
-                    onRenameCompilation: handleRenameCompilation,
-                    onCreateFolder: handleCreateFolder,
-                    onToggleCollapsed: handleToggleCollapsed,
-                    onMove: handleMove,
-                    onPlay: handlePlay,
-                    devices,
-                    targetId,
-                    pushing,
-                    pushProgress,
-                    pushError,
-                    onTargetChange: setTargetId,
-                    onPush: handlePush,
-                    canPush
-                })
-            ),
-            React.createElement('div', {
-                className: 'flex-1 p-3 min-h-0 overflow-hidden'
-            },
-                React.createElement(ShowInspector, {
-                    selection,
-                    show: inspect,
-                    folder: selectedFolder,
-                    compilation: selectedCompilation && selectedCompilation.compilation,
-                    stack: folderStack,
-                    name,
-                    notes,
-                    busy,
-                    onNameChange: handleNameChange,
-                    onNotesChange: handleNotesChange,
-                    onFolderNameChange: handleRenameFolder,
-                    onCompilationNameChange: handleRenameCompilation,
-                    onDelete: handleDelete,
-                    onDeleteFolder: handleDeleteFolder,
-                    onDeleteCompilation: handleDeleteCompilation
-                })
-            )
-        )
+            className: 'flex-1 p-3 min-h-0 overflow-hidden'
+        }, inspector)
     );
-};
+    if (!railHost) {
+        return main;
+    }
+    return React.createElement(React.Fragment, null,
+        createPortal(React.createElement('div', {
+            className: 'h-full min-h-0 flex flex-col p-2'
+        }, list), railHost),
+        main
+    );
+});
 
 module.exports = LibraryPanel;

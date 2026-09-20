@@ -1,31 +1,36 @@
 const React = require('react');
+const TransportButtons = require('./TransportButtons');
 
 const PlaybackControls = ({
     networkInterfaces,
     isFileLoaded,
     isPlaying,
     isRecording,
+    canRecord,
     isLoopEnabled,
     playbackNetwork,
     displayFileName,
     onLoopChange,
     onPlaybackNetworkChange,
-    onPlayback,
-    onStopPlayback
+    onPlay,
+    onPause,
+    onStopPlayback,
+    onBack,
+    onNext,
+    onRecord
 }) => React.createElement(React.Fragment, null,
-    React.createElement('button', {
-        type: 'button',
-        onClick: onPlayback,
-        className: 'btn-primary',
-        disabled: !isFileLoaded || isRecording
-    }, isPlaying ? 'Pause' : 'Play'),
-
-    React.createElement('button', {
-        type: 'button',
-        onClick: onStopPlayback,
-        className: 'btn-danger',
-        disabled: !isFileLoaded || isRecording
-    }, 'Stop'),
+    React.createElement(TransportButtons, {
+        isPlaying,
+        isRecording,
+        disabled: !isFileLoaded || isRecording,
+        recordDisabled: isRecording ? false : !canRecord,
+        onPlay,
+        onPause,
+        onStop: onStopPlayback,
+        onBack,
+        onNext,
+        onRecord
+    }),
 
     React.createElement('label', {
         className: 'flex items-center gap-1.5 text-xs text-zinc-500'

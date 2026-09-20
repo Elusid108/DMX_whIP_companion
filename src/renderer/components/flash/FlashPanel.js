@@ -1,4 +1,5 @@
 const React = require('react');
+const { createPortal } = require('react-dom');
 const { useEffect, useMemo, useRef, useState } = React;
 const ipcRenderer = require('../../ipc');
 const { resolveNodeName, normalizeNameOpts, normMac } = require('../../../services/shared/flashName');
@@ -117,7 +118,7 @@ const waitForArtPoll = (mac, timeoutMs) => new Promise((resolve) => {
     const timer = setTimeout(() => finish(null), timeoutMs);
 });
 
-const FlashPanel = ({ onOpenDevice } = {}) => {
+const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
     const [rows, setRows] = useState([]);
     const [boards, setBoards] = useState([]);
     const [boardId, setBoardId] = useState('waveshare-s3-matrix');
@@ -615,12 +616,9 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
 
     const allSelected = rows.length > 0 && rows.every((row) => row.selected);
 
-    return React.createElement('div', {
-        className: 'flex-1 min-h-0 flex overflow-hidden bg-zinc-50 dark:bg-zinc-950'
+    const rail = React.createElement('div', {
+        className: railHost ? 'h-full min-h-0 flex flex-col overflow-hidden' : 'app-sidebar overflow-hidden'
     },
-        React.createElement('div', {
-            className: 'app-sidebar overflow-hidden'
-        },
             React.createElement('div', {
                 className: 'flex-none flex flex-col gap-1.5 p-2 border-b border-zinc-200 dark:border-zinc-800'
             },
@@ -742,10 +740,10 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                 ref: logRef,
                 className: 'flex-none h-[12.5%] overflow-auto border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-2 readout whitespace-pre-wrap'
             }, log.join('\n') || 'Log output appears here. Passwords are not printed.')
-        ),
-        React.createElement('div', {
-            className: 'flex-1 min-h-0 overflow-y-auto p-3'
-        },
+    );
+    const main = React.createElement('div', {
+        className: 'flex-1 min-h-0 overflow-y-auto p-3 bg-zinc-50 dark:bg-zinc-950'
+    },
         React.createElement('div', {
             className: 'max-w-xl mx-auto w-full flex flex-col gap-3'
         },
@@ -1036,7 +1034,13 @@ const FlashPanel = ({ onOpenDevice } = {}) => {
                 className: 'text-sm text-red-500'
             }, error)
         )
-        )
+    );
+    if (!railHost) {
+        return main;
+    }
+    return React.createElement(React.Fragment, null,
+        createPortal(rail, railHost),
+        main
     );
 };
 

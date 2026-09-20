@@ -50,6 +50,75 @@ const App = () => {
     const [theme, setTheme] = React.useState('dark');
     const [focusDeviceId, setFocusDeviceId] = React.useState(null);
     const session = useStudioSession(selectedUniverses, selectedNic);
+    const libraryRef = React.useRef(null);
+    const [libraryRail, setLibraryRail] = React.useState(null);
+    const [devicesRail, setDevicesRail] = React.useState(null);
+    const [flashRail, setFlashRail] = React.useState(null);
+
+    const isEditableTarget = (target) => Boolean(
+        target && target.closest && target.closest('input, textarea, select, [contenteditable="true"]')
+    );
+
+    React.useEffect(() => {
+        const onKeyDown = (event) => {
+            if (isEditableTarget(event.target)) {
+                return;
+            }
+            if ((event.key === 'Delete' || event.key === 'Backspace')
+                && mainView !== 'library'
+                && session.isFileLoaded
+                && !session.isRecording
+            ) {
+                event.preventDefault();
+                session.handleDeleteClips();
+                return;
+            }
+            if (!(event.ctrlKey || event.metaKey)) {
+                return;
+            }
+            const key = String(event.key || '').toLowerCase();
+            if (mainView === 'library') {
+                if (key === 'c' && libraryRef.current) {
+                    event.preventDefault();
+                    libraryRef.current.copy();
+                }
+                if (key === 'v' && libraryRef.current) {
+                    event.preventDefault();
+                    libraryRef.current.paste();
+                }
+                return;
+            }
+            if (!session.isFileLoaded || session.isRecording) {
+                return;
+            }
+            if (key === 'c') {
+                event.preventDefault();
+                session.handleCopyClips();
+                return;
+            }
+            if (key === 'x') {
+                event.preventDefault();
+                session.handleCutClips();
+                return;
+            }
+            if (key === 'v') {
+                event.preventDefault();
+                session.handlePasteClips();
+                return;
+            }
+            if (key === 'z' && !event.shiftKey) {
+                event.preventDefault();
+                session.handleUndo();
+                return;
+            }
+            if (key === 'y' || (key === 'z' && event.shiftKey)) {
+                event.preventDefault();
+                session.handleRedo();
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [mainView, session]);
 
     const handleUniverseClick = (id, protocol) => {
         setSelectedUniverse(id);
@@ -133,107 +202,139 @@ const App = () => {
             })
         ),
         React.createElement('div', {
-            className: 'app-toolbar flex-none bg-zinc-50 dark:bg-zinc-900'
-        },
-            React.createElement(PlaybackControls, {
-                networkInterfaces,
-                isFileLoaded: session.isFileLoaded,
-                isPlaying: session.isPlaying,
-                isRecording: session.isRecording,
-                isLoopEnabled: session.isLoopEnabled,
-                playbackNetwork: session.playbackNetwork,
-                displayFileName: session.displayFileName,
-                onLoopChange: session.setIsLoopEnabled,
-                onPlaybackNetworkChange: session.setPlaybackNetwork,
-                onPlayback: session.handlePlayback,
-                onStopPlayback: session.handleStopPlayback
-            })
-        ),
-        mainView === 'monitor' && React.createElement('div', {
             className: 'flex flex-1 min-h-0'
         },
             React.createElement('div', {
-                className: 'app-sidebar overflow-y-auto'
+                className: 'app-sidebar overflow-hidden'
             },
-                React.createElement(UniverseSidebar, universeSidebar)
+                (mainView === 'monitor' || mainView === 'studio') && React.createElement('div', {
+                    className: 'h-full min-h-0 overflow-y-auto'
+                },
+                    React.createElement(UniverseSidebar, universeSidebar)
+                ),
+                mainView === 'library' && React.createElement('div', {
+                    ref: setLibraryRail,
+                    className: 'h-full min-h-0 flex flex-col'
+                }),
+                mainView === 'devices' && React.createElement('div', {
+                    ref: setDevicesRail,
+                    className: 'h-full min-h-0 flex flex-col'
+                }),
+                mainView === 'flash' && React.createElement('div', {
+                    ref: setFlashRail,
+                    className: 'h-full min-h-0 flex flex-col'
+                })
             ),
             React.createElement('div', {
                 className: 'flex flex-1 min-w-0 min-h-0 flex-col'
             },
                 React.createElement('div', {
-                    className: 'app-toolbar items-end bg-zinc-50 dark:bg-zinc-900'
+                    className: 'app-toolbar flex-none bg-zinc-50 dark:bg-zinc-900'
                 },
-                    React.createElement('div', { className: 'flex flex-col min-w-fit' },
-                        React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
-                            'Format'
-                        ),
-                        React.createElement('select', {
-                            value: displayFormat,
-                            onChange: (e) => handleDisplayFormatChange(e.target.value),
-                            className: compactSelect
-                        },
-                            React.createElement('option', { value: 'decimal' }, '0-255'),
-                            React.createElement('option', { value: 'percent' }, '0-100%'),
-                            React.createElement('option', { value: 'hex' }, '0-FF')
-                        )
-                    ),
-                    React.createElement('div', { className: 'flex flex-col min-w-fit' },
-                        React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
-                            'Grid'
-                        ),
-                        React.createElement('select', {
-                            value: gridDimensions,
-                            onChange: (e) => handleGridDimensionsChange(e.target.value),
-                            className: compactSelect
-                        },
-                            React.createElement('option', { value: '16x32' }, '16 × 32'),
-                            React.createElement('option', { value: '32x16' }, '32 × 16')
-                        )
-                    ),
-                    React.createElement('div', { className: 'flex flex-col min-w-fit' },
-                        React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
-                            'Bars'
-                        ),
-                        React.createElement('button', {
-                            type: 'button',
-                            onClick: toggleAnimations,
-                            className: 'btn-quiet'
-                        }, showAnimations ? 'On' : 'Off')
-                    )
+                    React.createElement(PlaybackControls, {
+                        networkInterfaces,
+                        isFileLoaded: session.isFileLoaded,
+                        isPlaying: session.isPlaying,
+                        isRecording: session.isRecording,
+                        canRecord: session.canRecord,
+                        isLoopEnabled: session.isLoopEnabled,
+                        playbackNetwork: session.playbackNetwork,
+                        displayFileName: session.displayFileName,
+                        onLoopChange: session.setIsLoopEnabled,
+                        onPlaybackNetworkChange: session.setPlaybackNetwork,
+                        onPlay: session.handlePlay,
+                        onPause: session.handlePause,
+                        onStopPlayback: session.handleStopPlayback,
+                        onBack: session.handleBack,
+                        onNext: session.handleNext,
+                        onRecord: session.isRecording
+                            ? session.handleStopRecording
+                            : session.handleStartRecording
+                    })
                 ),
-                React.createElement(DmxGrid, {
-                    dmxData,
-                    selectedUniverse,
-                    selectedProtocol,
-                    displayFormat,
-                    gridDimensions,
-                    showAnimations
+                mainView === 'monitor' && React.createElement('div', {
+                    className: 'flex flex-1 min-h-0 flex-col'
+                },
+                    React.createElement('div', {
+                        className: 'app-toolbar items-end bg-zinc-50 dark:bg-zinc-900'
+                    },
+                        React.createElement('div', { className: 'flex flex-col min-w-fit' },
+                            React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
+                                'Format'
+                            ),
+                            React.createElement('select', {
+                                value: displayFormat,
+                                onChange: (e) => handleDisplayFormatChange(e.target.value),
+                                className: compactSelect
+                            },
+                                React.createElement('option', { value: 'decimal' }, '0-255'),
+                                React.createElement('option', { value: 'percent' }, '0-100%'),
+                                React.createElement('option', { value: 'hex' }, '0-FF')
+                            )
+                        ),
+                        React.createElement('div', { className: 'flex flex-col min-w-fit' },
+                            React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
+                                'Grid'
+                            ),
+                            React.createElement('select', {
+                                value: gridDimensions,
+                                onChange: (e) => handleGridDimensionsChange(e.target.value),
+                                className: compactSelect
+                            },
+                                React.createElement('option', { value: '16x32' }, '16 × 32'),
+                                React.createElement('option', { value: '32x16' }, '32 × 16')
+                            )
+                        ),
+                        React.createElement('div', { className: 'flex flex-col min-w-fit' },
+                            React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
+                                'Bars'
+                            ),
+                            React.createElement('button', {
+                                type: 'button',
+                                onClick: toggleAnimations,
+                                className: 'btn-quiet'
+                            }, showAnimations ? 'On' : 'Off')
+                        )
+                    ),
+                    React.createElement(DmxGrid, {
+                        dmxData,
+                        selectedUniverse,
+                        selectedProtocol,
+                        displayFormat,
+                        gridDimensions,
+                        showAnimations
+                    })
+                ),
+                React.createElement('div', {
+                    className: mainView === 'studio' ? 'flex flex-1 min-h-0 flex-col' : 'hidden'
+                },
+                    React.createElement(StudioPanel, {
+                        session,
+                        selectedUniverses
+                    })
+                ),
+                mainView === 'library' && React.createElement(LibraryPanel, {
+                    ref: libraryRef,
+                    railHost: libraryRail,
+                    studioTrackId: session.selectedTrackId,
+                    studioHasClips: Boolean(session.clips && session.clips.length)
+                }),
+                mainView === 'devices' && React.createElement(DevicesPanel, {
+                    focusDeviceId,
+                    selectedNic,
+                    networkInterfaces,
+                    onNetworkChange: handleNetworkChange,
+                    railHost: devicesRail
+                }),
+                mainView === 'flash' && React.createElement(FlashPanel, {
+                    railHost: flashRail,
+                    onOpenDevice: (id) => {
+                        setFocusDeviceId(id);
+                        setMainView('devices');
+                    }
                 })
             )
-        ),
-        React.createElement('div', {
-            className: mainView === 'studio' ? 'flex flex-1 min-h-0 flex-col' : 'hidden'
-        },
-            React.createElement(StudioPanel, {
-                session,
-                networkInterfaces,
-                selectedNic,
-                ...universeSidebar
-            })
-        ),
-        mainView === 'library' && React.createElement(LibraryPanel),
-        mainView === 'flash' && React.createElement(FlashPanel, {
-            onOpenDevice: (id) => {
-                setFocusDeviceId(id);
-                setMainView('devices');
-            }
-        }),
-        mainView === 'devices' && React.createElement(DevicesPanel, {
-            focusDeviceId,
-            selectedNic,
-            networkInterfaces,
-            onNetworkChange: handleNetworkChange
-        })
+        )
     );
 };
 

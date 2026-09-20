@@ -33,13 +33,6 @@ const RecordingControls = ({
             disabled: isRecording || isPlaying
         }, 'New File'),
 
-        recordingPath && React.createElement('button', {
-            type: 'button',
-            onClick: isRecording ? onStopRecording : onStartRecording,
-            className: isRecording ? 'btn-danger' : 'btn-primary',
-            disabled: isPlaying || (!isRecording && (!selectedUniverses || selectedUniverses.size === 0))
-        }, isRecording ? 'STOP' : 'Record'),
-
         isRecording && React.createElement('button', {
             type: 'button',
             onClick: onCancelRecording,
