@@ -317,7 +317,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             return '';
         }
         if (wlan.current && wlan.current.ssid === ssid && wlan.current.is24ghz === false) {
-            return 'This PC is on 5 GHz. The S3 can only join 2.4 GHz — it will fail if this SSID has no 2.4 GHz radio.';
+            return 'This PC is on 5 GHz. Current firmware STA scan is 2.4 GHz only — it will fail if this SSID has no 2.4 GHz radio.';
         }
         return '';
     }, [ssid, wlan.current]);

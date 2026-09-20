@@ -45,7 +45,17 @@ const boardById = (catalog, id) => {
 
 const chipKey = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-const isEsp32s3 = (name) => chipKey(name).startsWith('esp32s3');
+const detectedChipName = (chip, loader) =>
+    chip || (loader && loader.chip && loader.chip.CHIP_NAME) || '';
+
+const chipMatchesBoard = (board, detected) => {
+    const want = chipKey(board && board.chip);
+    const got = chipKey(detected);
+    if (!want || !got) {
+        return false;
+    }
+    return got === want || got.startsWith(want) || want.startsWith(got);
+};
 
 const looksLikeDownloadFail = (err) => {
     const m = String((err && err.message) || err || '');
@@ -392,11 +402,8 @@ function setupFirmwareFlashHandlers(mainWindow) {
                         } catch (err) {
                             flashSize = '';
                         }
-                        if (!isEsp32s3(chip) && !isEsp32s3(loader.chip && loader.chip.CHIP_NAME)) {
-                            throw new Error(`This flasher only supports ESP32-S3 (detected ${chip || 'unknown'})`);
-                        }
                         return {
-                            chip: chip || (loader.chip && loader.chip.CHIP_NAME) || 'ESP32-S3',
+                            chip: detectedChipName(chip, loader) || 'unknown',
                             mac,
                             flashSize
                         };
@@ -434,8 +441,8 @@ function setupFirmwareFlashHandlers(mainWindow) {
             return await withPort(portPath, async () => {
                 const catalog = loadCatalog();
                 const board = boardById(catalog, boardId);
-                if (!board || board.chip !== 'esp32s3') {
-                    throw new Error('Select the Waveshare ESP32-S3-Matrix board profile');
+                if (!board) {
+                    throw new Error('Select a board profile');
                 }
                 const artifacts = resolveArtifacts(board);
                 const flash = board.flash || {};
@@ -488,8 +495,11 @@ function setupFirmwareFlashHandlers(mainWindow) {
                     log: (line) => logPort(portPath, line),
                     work: async ({ loader }) => {
                         const chip = await loader.main('default_reset');
-                        if (!isEsp32s3(chip) && !isEsp32s3(loader.chip && loader.chip.CHIP_NAME)) {
-                            throw new Error(`This flasher only supports ESP32-S3 (detected ${chip || 'unknown'})`);
+                        const detected = detectedChipName(chip, loader);
+                        if (!chipMatchesBoard(board, detected)) {
+                            throw new Error(
+                                `Selected ${board.name} (${board.chip}) but port is ${detected || 'unknown'}`
+                            );
                         }
                         let mac = '';
                         try {
