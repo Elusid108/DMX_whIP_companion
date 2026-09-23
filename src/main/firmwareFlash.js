@@ -431,12 +431,14 @@ function setupFirmwareFlashHandlers(mainWindow) {
         longName,
         shortName,
         clearWifi,
-        pixels
+        pixels,
+        keepNvs
     } = {}) => {
         const portPath = String(port || '').trim();
         if (!portPath) {
             return { success: false, error: 'Select a USB serial port' };
         }
+        const keepExisting = Boolean(keepNvs);
         try {
             return await withPort(portPath, async () => {
                 const catalog = loadCatalog();
@@ -452,38 +454,46 @@ function setupFirmwareFlashHandlers(mainWindow) {
                     clk: Number(pins && pins.clk),
                     miso: Number(pins && pins.miso)
                 };
-                const ssidTrim = clipName(ssid, 32);
-                const passTrim = password == null ? '' : String(password);
-                const pattern = clipName(namePattern, 40);
+                const ssidTrim = keepExisting ? '' : clipName(ssid, 32);
+                const passTrim = keepExisting || password == null ? '' : String(password);
+                const pattern = keepExisting ? '' : clipName(namePattern, 40);
                 const nameOpts = normalizeNameOpts({
                     mode: nameMode,
                     start: nameStart,
                     digits: nameDigits
                 });
                 const seqIndex = Number.isFinite(Number(nameIndex)) ? Math.max(0, Math.round(Number(nameIndex))) : 0;
-                const givenLong = clipName(longName, 63);
-                const pixelCheck = validatePixels(pixels, sdPins, seqIndex + 1);
-                if (!pixelCheck.ok) {
-                    throw new Error(pixelCheck.error);
+                const givenLong = keepExisting ? '' : clipName(longName, 63);
+                let pixelMap = null;
+                let pixelChip = null;
+                let addr = null;
+                if (!keepExisting) {
+                    const pixelCheck = validatePixels(pixels, sdPins, seqIndex + 1);
+                    if (!pixelCheck.ok) {
+                        throw new Error(pixelCheck.error);
+                    }
+                    pixelMap = pixelCheck.pixels;
+                    pixelChip = pixelCheck.chip || chipByName(pixelMap.chip);
+                    addr = addressAt(pixelMap, seqIndex);
+                    saveSettings({
+                        flashPort: portPath,
+                        flashBoardId: board.id,
+                        flashSdPins: sdPins,
+                        flashPixels: pixelMap,
+                        flashNamePattern: pattern || 'Whip',
+                        flashNameMode: nameOpts.mode,
+                        flashNameStart: nameOpts.start,
+                        flashNameDigits: nameOpts.digits,
+                        ...(ssidTrim ? { flashSsid: ssidTrim, flashPassword: passTrim } : {})
+                    });
                 }
-                const pixelMap = pixelCheck.pixels;
-                const pixelChip = pixelCheck.chip || chipByName(pixelMap.chip);
-                const addr = addressAt(pixelMap, seqIndex);
-                saveSettings({
-                    flashPort: portPath,
-                    flashBoardId: board.id,
-                    flashSdPins: sdPins,
-                    flashPixels: pixelMap,
-                    flashNamePattern: pattern || 'Whip',
-                    flashNameMode: nameOpts.mode,
-                    flashNameStart: nameOpts.start,
-                    flashNameDigits: nameOpts.digits,
-                    ...(ssidTrim ? { flashSsid: ssidTrim, flashPassword: passTrim } : {})
-                });
                 logPort(portPath, `Using image from ${artifacts.source}`);
+                if (keepExisting) {
+                    logPort(portPath, 'Keeping existing NVS (name, start address, Wi-Fi)');
+                }
                 progressPort(portPath, { percent: 0, label: 'Connecting' });
 
-                const writeNvs = shouldWriteNvs({
+                const writeNvs = !keepExisting && shouldWriteNvs({
                     ssid: ssidTrim,
                     clearWifi,
                     pixels: pixelMap
@@ -592,16 +602,17 @@ function setupFirmwareFlashHandlers(mainWindow) {
                 });
 
                 let pinsResult = { success: true, skipped: true };
-                if (!nvsWritten && !ssidTrim && pinsDiffer(sdPins, board.defaults && board.defaults.sd)) {
+                if (!keepExisting && !nvsWritten && !ssidTrim && pinsDiffer(sdPins, board.defaults && board.defaults.sd)) {
                     pinsResult = await applyPinsSoftAp(sdPins, (line) => logPort(portPath, line));
                 }
                 return {
                     success: true,
                     chip: result.chip,
                     mac: result.mac,
-                    name: result.names && result.names.long,
+                    name: keepExisting ? '' : (result.names && result.names.long),
                     artifacts: artifacts.source,
-                    provisioned: Boolean(nvsWritten && ssidTrim && !clearWifi),
+                    provisioned: Boolean(!keepExisting && nvsWritten && ssidTrim && !clearWifi),
+                    keptNvs: keepExisting,
                     nvsWritten,
                     pinsApplied: Boolean(pinsResult.success && !pinsResult.skipped),
                     pinsError: pinsResult.success ? '' : pinsResult.error

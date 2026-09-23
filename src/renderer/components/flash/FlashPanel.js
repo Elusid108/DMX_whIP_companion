@@ -136,6 +136,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
     const [artifactNote, setArtifactNote] = useState('');
     const [artifactError, setArtifactError] = useState('');
     const [batchBusy, setBatchBusy] = useState(false);
+    const [batchAction, setBatchAction] = useState('');
     const [buildBusy, setBuildBusy] = useState(false);
     const [buildStatus, setBuildStatus] = useState('');
     const [buildOk, setBuildOk] = useState(false);
@@ -460,11 +461,12 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
         }
     };
 
-    const runBatch = async (work) => {
+    const runBatch = async (work, action) => {
         if (busy) {
             return;
         }
         setBatchBusy(true);
+        setBatchAction(action || '');
         setError('');
         try {
             await work();
@@ -472,6 +474,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             setError(err.message);
         } finally {
             setBatchBusy(false);
+            setBatchAction('');
         }
     };
 
@@ -579,7 +582,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 provisioned: Boolean(result.provisioned),
                 error: result.pinsError || ''
             });
-            if (result.provisioned && result.mac) {
+            if ((result.provisioned || result.keptNvs) && result.mac) {
                 patchRow(row.path, { label: 'Waiting for ArtPoll…', waiting: true });
                 const found = await waitForArtPoll(result.mac, ARTPOLL_WAIT_MS);
                 if (found) {
@@ -597,7 +600,67 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 }
             }
         });
-    });
+    }, 'flash');
+
+    const handleUpdate = () => runBatch(async () => {
+        const targets = selectedRows;
+        if (!targets.length) {
+            setError('Select at least one COM port');
+            return;
+        }
+        setLog([]);
+        await runPool(targets, async (row) => {
+            patchRow(row.path, {
+                error: '',
+                downloadMode: false,
+                percent: 0,
+                label: 'Starting',
+                deviceId: '',
+                waiting: false,
+                provisioned: false
+            });
+            const result = await ipcRenderer.invoke('flash-run', {
+                port: row.path,
+                boardId,
+                keepNvs: true
+            });
+            if (!result || !result.success) {
+                patchRow(row.path, {
+                    error: (result && result.error) || 'Update failed',
+                    downloadMode: Boolean(result && result.downloadMode),
+                    label: 'Failed',
+                    percent: 0
+                });
+                return;
+            }
+            patchRow(row.path, {
+                chip: result.chip || row.chip,
+                mac: result.mac || row.mac,
+                percent: 100,
+                label: 'Updated',
+                provisioned: false,
+                error: ''
+            });
+            if (result.mac) {
+                patchRow(row.path, { label: 'Waiting for ArtPoll…', waiting: true });
+                const found = await waitForArtPoll(result.mac, ARTPOLL_WAIT_MS);
+                if (found) {
+                    patchRow(row.path, {
+                        waiting: false,
+                        deviceId: found.id,
+                        name: found.longName || found.shortName || row.name,
+                        label: `On network · ${found.ip || found.id}`
+                    });
+                } else {
+                    patchRow(row.path, {
+                        waiting: false,
+                        label: 'No ArtPoll yet',
+                        error: 'Board did not appear on ArtPoll. Stay on the show NIC. SoftAP dmxwhip / 4.3.2.1 is recovery only.'
+                    });
+                }
+            }
+        });
+    }, 'update');
 
     const selectedChip = chipByName(pixels.chip);
     const needsClock = Boolean(selectedChip && selectedChip.needsClock);
@@ -653,7 +716,13 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                     className: 'btn-primary w-full justify-center',
                     disabled: busy || !selectedRows.length || Boolean(artifactError),
                     onClick: handleFlash
-                }, batchBusy ? 'Flashing…' : `Flash selected (${selectedRows.length})`)
+                }, batchAction === 'flash' ? 'Flashing…' : `Flash selected (${selectedRows.length})`),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet w-full justify-center',
+                    disabled: busy || !selectedRows.length || Boolean(artifactError),
+                    onClick: handleUpdate
+                }, batchAction === 'update' ? 'Updating…' : `Update selected (${selectedRows.length})`)
             ),
             React.createElement('div', {
                 className: 'flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-1'
@@ -824,8 +893,8 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             React.createElement('p', {
                 className: 'readout -mt-1'
             }, nameMode === 'seq'
-                ? `Selected ports are ${namePattern || 'Whip'}-${String(nameStart).padStart(nameDigits, '0')}, then +1. Digits 1 → 1, digits 4 → 0001. Leave SSID empty to keep existing NVS (firmware-only).`
-                : 'Long name is pattern plus last 4 hex of the MAC (Whip-A4F2), written with Wi-Fi. Leave SSID empty to keep existing NVS (firmware-only).'),
+                ? `Selected ports are ${namePattern || 'Whip'}-${String(nameStart).padStart(nameDigits, '0')}, then +1. Digits 1 → 1, digits 4 → 0001. Flash writes this name, start address, and Wi-Fi into NVS. Update writes firmware only; name and start address stay on the device.`
+                : 'Long name is pattern plus last 4 hex of the MAC (Whip-A4F2). Flash writes this name, start address, and Wi-Fi into NVS. Update writes firmware only; name and start address stay on the device.'),
             React.createElement('div', {
                 className: 'grid grid-cols-2 gap-2'
             },
