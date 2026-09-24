@@ -1,11 +1,64 @@
 const React = require('react');
+const { useEffect, useRef, useState } = React;
 const { MIN_FIRMWARE_API, statusApi, apiTooOld } = require('../../../services/shared/firmwareCompat');
 
 const ORDER_PREFIX = /^(\d{2})_/;
+const GUEST_SCROLL_CSS = 'html, body { overflow: auto !important; }';
+const TAB_BUTTONS = ['tabLive', 'tabPlay', 'tabPixels', 'tabSetup'];
+const TAB_NAMES = {
+    tabLive: 'live',
+    tabPlay: 'play',
+    tabPixels: 'pixels',
+    tabSetup: 'setup'
+};
+
+const tabRestoreJs = (buttonId) => {
+    const name = TAB_NAMES[buttonId] || 'live';
+    return `(function(){
+        if(!window.__whipTabWatch){
+            window.__whipTabWatch=true;
+            var buttons=document.querySelectorAll('.tabs button');
+            for(var i=0;i<buttons.length;i++){
+                buttons[i].addEventListener('click',function(){console.log('whip-tab:'+this.id);});
+            }
+        }
+        if(${JSON.stringify(name)}==='live'||window.__whipTabWrap||typeof showTab!=='function') return;
+        window.__whipTabWrap=true;
+        var orig=showTab;
+        var want=${JSON.stringify(name)};
+        var hold=true;
+        showTab=function(next){
+            if(hold&&next==='live'){
+                hold=false;
+                console.log('whip-held');
+                return orig.call(this,want);
+            }
+            hold=false;
+            return orig.apply(this,arguments);
+        };
+        orig(want);
+    })();`;
+};
 
 const sdDisplayName = (sdPath) => {
     const base = String(sdPath || '').split('/').pop() || '';
     return base.replace(/\.dmx$/i, '').replace(ORDER_PREFIX, '') || sdPath;
+};
+
+const guestPath = (raw) => {
+    if (!raw) {
+        return '';
+    }
+    try {
+        const url = new URL(raw);
+        if (url.protocol !== 'http:') {
+            return '';
+        }
+        const path = `${url.pathname || '/'}${url.search}${url.hash}`;
+        return path.startsWith('/') ? path : `/${path}`;
+    } catch (err) {
+        return '';
+    }
 };
 
 const DeviceInspector = ({
@@ -21,22 +74,155 @@ const DeviceInspector = ({
     onPullShow,
     onReboot
 }) => {
+    const pageRef = useRef('/');
+    const tabRef = useRef('tabLive');
+    const hostRef = useRef('');
+    const srcRef = useRef('');
+    const webviewRef = useRef(null);
+    const [concealed, setConcealed] = useState(false);
+    const concealedRef = useRef(false);
+    concealedRef.current = concealed;
+    if (via !== hostRef.current) {
+        const previousHost = hostRef.current;
+        hostRef.current = via || '';
+        const path = pageRef.current || '/';
+        srcRef.current = via
+            ? `http://${via}${path.startsWith('/') ? path : `/${path}`}`
+            : '';
+        const nextConcealed = Boolean(via) && tabRef.current !== 'tabLive';
+        if (nextConcealed !== concealed) {
+            setConcealed(nextConcealed);
+        }
+        // #region agent log
+        fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'pre-fix',hypothesisId:'B',location:'DeviceInspector.js:host',message:'host snapshot',data:{previousHost,via:via||'',page:path,src:srcRef.current},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+    }
+    const portalUrl = srcRef.current;
+    const showPortal = Boolean(portalUrl) && Boolean(device) && !device.stale;
+
+    useEffect(() => {
+        const el = webviewRef.current;
+        if (!el) {
+            // #region agent log
+            fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'pre-fix',hypothesisId:'C',location:'DeviceInspector.js:effect',message:'webview ref missing',data:{via:via||'',showPortal},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
+            return undefined;
+        }
+        const remember = (event) => {
+            const path = guestPath(event && event.url);
+            if (path) {
+                pageRef.current = path;
+            }
+            // #region agent log
+            fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'pre-fix',hypothesisId:'A',location:'DeviceInspector.js:remember',message:'webview navigated',data:{url:(event&&event.url)||'',path:path||'',isMain:event?event.isMainFrame:undefined},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
+        };
+        const onReady = () => {
+            // #region agent log
+            let readyUrl = '';
+            try { readyUrl = typeof el.getURL === 'function' ? el.getURL() : ''; } catch (err) { readyUrl = ''; }
+            fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'pre-fix',hypothesisId:'D',location:'DeviceInspector.js:dom-ready',message:'webview dom-ready',data:{url:readyUrl,page:pageRef.current},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
+            const wanted = tabRef.current;
+            const reveal = () => {
+                el.style.visibility = 'visible';
+                setConcealed(false);
+                // #region agent log
+                fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'post-fix',hypothesisId:'F',location:'DeviceInspector.js:reveal',message:'portal revealed',data:{wanted,via:via||''},timestamp:Date.now()})}).catch(()=>{});
+                // #endregion
+            };
+            if (typeof el.executeJavaScript === 'function') {
+                const restore = el.executeJavaScript(tabRestoreJs(wanted));
+                if (restore && typeof restore.then === 'function') {
+                    restore.then(reveal, reveal);
+                } else {
+                    reveal();
+                }
+                // #region agent log
+                fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'post-fix',hypothesisId:'E',location:'DeviceInspector.js:openTab',message:'restore portal tab',data:{wanted,via:via||''},timestamp:Date.now()})}).catch(()=>{});
+                // #endregion
+            } else {
+                reveal();
+            }
+            if (typeof el.insertCSS !== 'function') {
+                return;
+            }
+            const result = el.insertCSS(GUEST_SCROLL_CSS);
+            if (result && typeof result.catch === 'function') {
+                result.catch(() => {});
+            }
+        };
+        const onConsole = (event) => {
+            const msg = String((event && event.message) || '');
+            if (msg === 'whip-held') {
+                // #region agent log
+                fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'post-fix',hypothesisId:'E',location:'DeviceInspector.js:console',message:'startup live redirected',data:{kept:tabRef.current},timestamp:Date.now()})}).catch(()=>{});
+                // #endregion
+                return;
+            }
+            if (msg.indexOf('whip-tab:') !== 0) {
+                return;
+            }
+            const id = msg.slice('whip-tab:'.length);
+            if (TAB_BUTTONS.indexOf(id) >= 0) {
+                tabRef.current = id;
+            }
+            // #region agent log
+            fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'post-fix',hypothesisId:'A',location:'DeviceInspector.js:console',message:'portal tab',data:{id,kept:tabRef.current},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
+            // #region agent log
+            fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'post-fix',hypothesisId:'G',location:'DeviceInspector.js:console',message:'tab click visibility',data:{id,concealed:concealedRef.current,visibility:(webviewRef.current&&webviewRef.current.style.visibility)||''},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
+        };
+        // #region agent log
+        fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'pre-fix',hypothesisId:'C',location:'DeviceInspector.js:effect',message:'listeners attached',data:{via:via||'',src:srcRef.current},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        el.addEventListener('did-navigate', remember);
+        el.addEventListener('did-navigate-in-page', remember);
+        el.addEventListener('dom-ready', onReady);
+        el.addEventListener('console-message', onConsole);
+        return () => {
+            let rawUrl = '';
+            let path = '';
+            try {
+                rawUrl = typeof el.getURL === 'function' ? el.getURL() : '';
+                path = guestPath(rawUrl);
+                if (path) {
+                    pageRef.current = path;
+                }
+            } catch (err) {
+                rawUrl = 'getURL-failed';
+            }
+            // #region agent log
+            fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'pre-fix',hypothesisId:'B',location:'DeviceInspector.js:cleanup',message:'webview unmount url',data:{rawUrl,path:path||'',page:pageRef.current},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
+            el.removeEventListener('did-navigate', remember);
+            el.removeEventListener('did-navigate-in-page', remember);
+            el.removeEventListener('dom-ready', onReady);
+            el.removeEventListener('console-message', onConsole);
+        };
+    }, [via, showPortal]);
+
+    useEffect(() => {
+        // #region agent log
+        fetch('http://127.0.0.1:7854/ingest/2d14efb0-a19b-45fd-b996-9a7138b6d6ab',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'55968c'},body:JSON.stringify({sessionId:'55968c',runId:'post-fix',hypothesisId:'G',location:'DeviceInspector.js:conceal',message:'conceal state',data:{via:via||'',tab:tabRef.current,concealed},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+    }, [concealed, via]);
+
     if (!device) {
         return React.createElement('div', {
             className: 'text-sm text-zinc-500 italic p-2'
         }, 'Select a node to see details.');
     }
 
-    const portalUrl = via ? `http://${via}/` : '';
     const httpUp = Boolean(status) && !statusError && !device.stale && !liveLocked;
     const canReboot = Boolean(device.ip) && !device.stale && !busy && Boolean(status || liveLocked);
-    const showPortal = Boolean(portalUrl) && !device.stale;
     const coverPortal = showPortal && !httpUp;
     const fileList = Array.isArray(files) ? files : [];
     const pullDisabled = busy || !httpUp || !pullPath;
 
     return React.createElement('div', {
-        className: 'h-full flex flex-col max-w-xl mx-auto w-full min-h-0'
+        className: 'flex-1 flex flex-col max-w-xl mx-auto w-full min-h-[40rem]'
     },
         React.createElement('div', {
             className: 'status-strip flex-none'
@@ -55,14 +241,19 @@ const DeviceInspector = ({
             }, statusError)
         ),
         React.createElement('div', {
-            className: 'relative flex-1 min-h-0 rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden bg-zinc-950'
+            className: 'relative flex-1 min-h-[28rem] rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden bg-zinc-950'
         },
             showPortal
                 ? React.createElement('webview', {
-                    key: portalUrl,
+                    key: via,
+                    ref: webviewRef,
                     src: portalUrl,
-                    className: 'absolute inset-0 w-full h-full',
-                    style: { width: '100%', height: '100%' }
+                    className: 'w-full h-full',
+                    style: {
+                        width: '100%',
+                        height: '100%',
+                        visibility: concealed ? 'hidden' : 'visible'
+                    }
                 })
                 : React.createElement('div', {
                     className: 'absolute inset-0 flex items-center justify-center text-sm text-zinc-500 italic p-4 text-center'

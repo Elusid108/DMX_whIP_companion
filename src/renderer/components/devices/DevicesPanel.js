@@ -241,7 +241,7 @@ const DevicesPanel = ({
         )
     );
     const main = React.createElement('div', {
-        className: 'flex-1 p-3 min-h-0 overflow-hidden bg-zinc-50 dark:bg-zinc-950'
+        className: 'flex flex-1 flex-col p-3 min-h-0 overflow-y-auto bg-zinc-50 dark:bg-zinc-950'
     },
         React.createElement(DeviceInspector, {
             device: selected,
