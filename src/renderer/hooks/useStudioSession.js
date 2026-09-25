@@ -89,6 +89,12 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
     const [inspector, setInspector] = useState(null);
     const [selectedClipId, setSelectedClipId] = useState(null);
     const [compilationDirty, setCompilationDirty] = useState(false);
+    const [compilationSaveNeeded, setCompilationSaveNeeded] = useState(false);
+    const [isArmed, setIsArmed] = useState(false);
+    const [startMode, setStartMode] = useState('none');
+    const [stopMode, setStopMode] = useState('none');
+    const [startChannel, setStartChannel] = useState({ protocol: 'artnet', universe: 0, channel: 1 });
+    const [stopChannel, setStopChannel] = useState({ protocol: 'artnet', universe: 0, channel: 1 });
     const [compilationName, setCompilationName] = useState('');
     const [projectPath, setProjectPath] = useState(null);
     const [saveNaming, setSaveNaming] = useState(false);
@@ -168,6 +174,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
                 setSelectedClipId(result.namingClipId);
             }
             setCompilationDirty(Boolean(result.dirty));
+            setCompilationSaveNeeded(Boolean(result.compilationSaveNeeded));
             const label = result.displayName || result.name;
             if (label) {
                 setCompilationName(label);
@@ -209,8 +216,10 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
                 setPunchInStartMs(0);
                 setPunchTrackId(0);
                 setCompilationDirty(false);
+                setCompilationSaveNeeded(false);
                 setCompilationName('');
                 setProjectPath(null);
+                setIsArmed(false);
                 return;
             }
             if (result.error && result.error !== 'No file selected') {
@@ -311,7 +320,55 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         ipcRenderer.on('recording-stats-update', handleFrameRecorded);
         ipcRenderer.on('recording-error', handleRecordingError);
         ipcRenderer.on('recording-saved', handleRecordingSaved);
+        const handlePunchInStarted = (event, result = {}) => {
+            setIsArmed(false);
+            setIsRecording(true);
+            recordingStartTime.current = Date.now();
+            setRecordingDuration(0);
+            setFrameCount(0);
+            setDroppedFrames(0);
+            setLoadError('');
+            setIsFileLoaded(true);
+            applyCompilation(result);
+            if (typeof result.punchInStartMs === 'number') {
+                setPunchInStartMs(result.punchInStartMs);
+                setPlayheadMs(result.punchInStartMs);
+            }
+            if (typeof result.punchTrackId === 'number') {
+                setPunchTrackId(result.punchTrackId);
+                setSelectedTrackId(result.punchTrackId);
+                lastSelectedTrackRef.current = result.punchTrackId;
+            }
+        };
+
+        const handlePunchInAutoStopped = (event, result = {}) => {
+            setIsRecording(false);
+            setIsArmed(false);
+            clearInterval(durationTimer.current);
+            if (!result || !result.success) {
+                setLoadError((result && result.error) || 'Could not stop recording');
+                return;
+            }
+            applyCompilation(result);
+            setIsFileLoaded(true);
+            if (typeof result.playheadMs === 'number') {
+                setPlayheadMs(result.playheadMs);
+            }
+        };
+
+        const handlePunchInFailed = (event, result = {}) => {
+            setIsRecording(false);
+            setIsArmed(false);
+            clearInterval(durationTimer.current);
+            setRecordingDuration(0);
+            setFrameCount(0);
+            setLoadError((result && result.error) || 'Recording failed');
+        };
+
         ipcRenderer.on('punch-in-progress', handlePunchInProgress);
+        ipcRenderer.on('punch-in-started', handlePunchInStarted);
+        ipcRenderer.on('punch-in-auto-stopped', handlePunchInAutoStopped);
+        ipcRenderer.on('punch-in-failed', handlePunchInFailed);
 
         return () => {
             ipcRenderer.removeListener('file-loaded', handleFileLoaded);
@@ -321,6 +378,9 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
             ipcRenderer.removeListener('recording-error', handleRecordingError);
             ipcRenderer.removeListener('recording-saved', handleRecordingSaved);
             ipcRenderer.removeListener('punch-in-progress', handlePunchInProgress);
+            ipcRenderer.removeListener('punch-in-started', handlePunchInStarted);
+            ipcRenderer.removeListener('punch-in-auto-stopped', handlePunchInAutoStopped);
+            ipcRenderer.removeListener('punch-in-failed', handlePunchInFailed);
             clearInterval(durationTimer.current);
         };
     }, []);
@@ -343,6 +403,8 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         setPunchInStartMs(0);
         setPunchTrackId(0);
         setCompilationDirty(false);
+        setCompilationSaveNeeded(false);
+        setIsArmed(false);
         setCompilationName('');
         setProjectPath(null);
     };
@@ -679,6 +741,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         if (result && result.success) {
             setSaveNaming(false);
             setCompilationDirty(false);
+            setCompilationSaveNeeded(false);
             setCompilationName(name);
             setLoadedFileName(name);
             if (clearAfterSaveRef.current) {
@@ -717,7 +780,11 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         if (isRecording) {
             return;
         }
-        if (compilationDirty) {
+        if (isArmed) {
+            await ipcRenderer.invoke('cancel-punch-in');
+            setIsArmed(false);
+        }
+        if (compilationSaveNeeded) {
             const result = await ipcRenderer.invoke('confirm-unsaved-compilation', { reason: 'new' });
             const choice = result && result.choice;
             if (choice === 'cancel' || !choice) {
@@ -754,7 +821,11 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         if (isRecording) {
             return false;
         }
-        if (!compilationDirty) {
+        if (isArmed) {
+            await ipcRenderer.invoke('cancel-punch-in');
+            setIsArmed(false);
+        }
+        if (!compilationSaveNeeded) {
             return true;
         }
         const result = await ipcRenderer.invoke('confirm-unsaved-compilation', { reason: 'leave' });
@@ -773,6 +844,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
                 return false;
             }
             setCompilationDirty(false);
+            setCompilationSaveNeeded(false);
             return true;
         }
         return new Promise((resolve) => {
@@ -784,7 +856,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
     };
 
     const handleStartRecording = async () => {
-        if (isRecording) {
+        if (isRecording || isArmed) {
             return;
         }
         if (!selectedUniverses || selectedUniverses.size === 0) {
@@ -800,8 +872,6 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         setPunchTrackId(trackId);
         setSelectedTrackId(trackId);
         lastSelectedTrackRef.current = trackId;
-        setIsRecording(true);
-        recordingStartTime.current = Date.now();
         setRecordingDuration(0);
         setFrameCount(0);
         setDroppedFrames(0);
@@ -810,14 +880,26 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
             const result = await ipcRenderer.invoke('start-punch-in', {
                 trackId,
                 startMs,
-                playbackNetwork
+                playbackNetwork,
+                startMode,
+                stopMode,
+                startChannel,
+                stopChannel
             });
             if (!result || !result.success) {
                 setIsRecording(false);
+                setIsArmed(false);
                 clearInterval(durationTimer.current);
                 setLoadError((result && result.error) || 'Could not start recording');
                 return;
             }
+            if (result.armed) {
+                setIsArmed(true);
+                setIsRecording(false);
+                return;
+            }
+            setIsRecording(true);
+            recordingStartTime.current = Date.now();
             setIsFileLoaded(true);
             if (Array.isArray(result.clips)) {
                 setClips(result.clips);
@@ -839,6 +921,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
             }
         } catch (error) {
             setIsRecording(false);
+            setIsArmed(false);
             clearInterval(durationTimer.current);
             setLoadError(error.message);
         }
@@ -860,6 +943,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
                     setTrackNames(result.trackNames);
                 }
                 setCompilationDirty(Boolean(result.dirty));
+                setCompilationSaveNeeded(Boolean(result.compilationSaveNeeded));
                 setIsFileLoaded(true);
                 if (result.namingClipId) {
                     setNamingClipId(result.namingClipId);
@@ -879,15 +963,16 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
     };
 
     const handleCancelRecording = async () => {
-        if (!isRecording) {
+        if (!isRecording && !isArmed) {
             return;
         }
-        if (!window.confirm('Discard this recording? It will not be saved.')) {
+        if (isRecording && !window.confirm('Discard this recording? It will not be saved.')) {
             return;
         }
         try {
             await ipcRenderer.invoke('cancel-punch-in');
             setIsRecording(false);
+            setIsArmed(false);
             clearInterval(durationTimer.current);
             setRecordingDuration(0);
             setFrameCount(0);
@@ -1000,6 +1085,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
 
     return {
         isRecording,
+        isArmed,
         isPlaying,
         isPaused,
         isLoading,
@@ -1057,7 +1143,16 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         setSelectedClipId,
         audioRef,
         compilationDirty,
+        compilationSaveNeeded,
         compilationName,
+        startMode,
+        setStartMode,
+        stopMode,
+        setStopMode,
+        startChannel,
+        setStartChannel,
+        stopChannel,
+        setStopChannel,
         projectPath,
         saveNaming,
         saveDraft,

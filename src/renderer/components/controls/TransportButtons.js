@@ -41,6 +41,7 @@ const TransportButton = ({ action, label, onClick, disabled, accent, record }) =
 const TransportButtons = ({
     isPlaying,
     isRecording,
+    isArmed,
     disabled,
     recordDisabled,
     onPlay,
@@ -87,7 +88,7 @@ const TransportButtons = ({
     }),
     onRecord && React.createElement(TransportButton, {
         action: 'record',
-        label: isRecording ? 'Stop recording' : 'Record',
+        label: isRecording ? 'Stop recording' : (isArmed ? 'Waiting for trigger' : 'Record'),
         onClick: onRecord,
         disabled: recordDisabled,
         record: true

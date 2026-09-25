@@ -36,6 +36,17 @@ const {
     blendLookAtWithLive
 } = require('../../services/shared/compilationEdl');
 const { describeWav } = require('../../services/shared/audioWav');
+const {
+    normalizeTriggerConfig,
+    createWatch,
+    feedArmed,
+    beginRecordingWatch,
+    feedRecording,
+    pollStop,
+    omitTriggerChannel,
+    formatLookTimestamp,
+    isRedundantCompilation
+} = require('../../services/shared/recordTriggers');
 const { convertToStudioWav, tempWavPath } = require('../audioConvert');
 const { studioVisible } = require('../uiView');
 const {
@@ -84,6 +95,10 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     let punchIn = null;
     let punchTimer = null;
     let lastPunchProgressAt = 0;
+    let recordWatch = null;
+    let watchTimer = null;
+    let punchStopLock = null;
+    let triggerOmit = null;
     const HISTORY_CAP = 100;
 
     const resolvedTrackNames = () => normalizeTrackNames(
@@ -575,6 +590,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         trackCount: Math.max(editSession.trackCount, trackCountOf(editSession.clips, 1)),
         trackNames: resolvedTrackNames(),
         dirty: editSession.dirty,
+        compilationSaveNeeded: Boolean(editSession.dirty) && !isRedundantCompilation(editSession),
         skipped: editSession.skipped,
         ...extra
     });
@@ -596,6 +612,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             trackCount: Math.max(editSession.trackCount, trackCountOf(editSession.clips, 1)),
             trackNames: resolvedTrackNames(),
             dirty: editSession.dirty,
+            compilationSaveNeeded: Boolean(editSession.dirty) && !isRedundantCompilation(editSession),
             name: editSession.name,
             projectPath: editSession.projectPath,
             frameCount: playbackData ? playbackData.length : 0,
@@ -1106,20 +1123,54 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
                     );
                 }
             } else if (op === 'update') {
-                editSession.clips = updateClip(editSession.clips, payload.clipId, payload.patch || {});
+                const patch = payload.patch || {};
+                if (typeof patch.name === 'string') {
+                    const existing = editSession.clips.find((clip) => clip.id === payload.clipId);
+                    if (existing && existing.libraryPath) {
+                        let nextBase;
+                        try {
+                            nextBase = sanitizeBaseName(patch.name);
+                        } catch (error) {
+                            undoStack.pop();
+                            throw error;
+                        }
+                        const currentBase = path.parse(existing.libraryPath).name;
+                        if (nextBase !== currentBase) {
+                            const dest = path.join(path.dirname(existing.libraryPath), `${nextBase}.dmx`);
+                            if (fs.existsSync(dest)) {
+                                undoStack.pop();
+                                throw new Error('A show with that filename already exists');
+                            }
+                        }
+                    }
+                }
+                editSession.clips = updateClip(editSession.clips, payload.clipId, patch);
                 const renamed = editSession.clips.find((clip) => clip.id === payload.clipId);
                 if (
                     renamed
                     && renamed.libraryPath
-                    && payload.patch
-                    && typeof payload.patch.name === 'string'
+                    && typeof patch.name === 'string'
                 ) {
                     try {
                         assertInLibrary(renamed.libraryPath);
-                        writeSidecar(renamed.libraryPath, { name: payload.patch.name });
+                        writeSidecar(renamed.libraryPath, { name: patch.name });
+                        const nextBase = sanitizeBaseName(patch.name);
+                        const currentBase = path.parse(renamed.libraryPath).name;
+                        if (nextBase !== currentBase) {
+                            const dir = path.dirname(renamed.libraryPath);
+                            const dest = path.join(dir, `${nextBase}.dmx`);
+                            const oldSidecar = path.join(dir, `${currentBase}.json`);
+                            const nextSidecar = path.join(dir, `${nextBase}.json`);
+                            fs.renameSync(renamed.libraryPath, dest);
+                            if (fs.existsSync(oldSidecar)) {
+                                fs.renameSync(oldSidecar, nextSidecar);
+                            }
+                            renamed.libraryPath = dest;
+                        }
                         sendSafe('library-updated', listLibrary());
                     } catch (error) {
                         console.error('Error updating look sidecar:', error);
+                        throw error;
                     }
                 }
             } else if (op === 'add-track') {
@@ -1423,7 +1474,11 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         const endMs = punchIn.startMs + elapsed;
         bumpPunchTrack(Math.max(endMs, punchIn.startMs + 1));
         const looked = lookAt(endMs);
-        const blended = blendLookAtWithLive(looked, punchIn.liveByKey);
+        const blended = omitTriggerChannel(
+            blendLookAtWithLive(looked, punchIn.liveByKey),
+            looked,
+            triggerOmit
+        );
         for (const frame of blended) {
             outputFrame(frame, false);
         }
@@ -1457,9 +1512,26 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         });
     };
 
+    const stopWatchTimer = () => {
+        if (watchTimer) {
+            clearInterval(watchTimer);
+            watchTimer = null;
+        }
+    };
+
+    const clearRecordWatch = () => {
+        stopWatchTimer();
+        recordWatch = null;
+        triggerOmit = null;
+        if (recordingHandler && recordingHandler.setSuppressChannel) {
+            recordingHandler.setSuppressChannel(null);
+        }
+    };
+
     const clearPunchIn = ({ deleteTemp = false } = {}) => {
         stopPunchTimer();
         lastPunchProgressAt = 0;
+        clearRecordWatch();
         if (recordingHandler && recordingHandler.isRecording && recordingHandler.isRecording()) {
             recordingHandler.stop({ emitSaved: false });
         }
@@ -1476,6 +1548,228 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     };
 
+    const openPunchFile = (request = {}) => {
+        if (!recordingHandler || !recordingHandler.start) {
+            throw new Error('Recording is unavailable');
+        }
+        if (recordingHandler.isRecording()) {
+            throw new Error('Already recording');
+        }
+        const config = request.config || normalizeTriggerConfig(request);
+        isPlaying = false;
+        isPaused = false;
+        clearPlayTimeout();
+        stopHoldOutput();
+        const created = ensureCompilationSession();
+        let trackId = Math.max(0, Math.round(Number(request.trackId) || 0));
+        const startMs = Math.max(0, Math.round(Number(request.startMs) || 0));
+        if (trackId >= editSession.trackCount) {
+            editSession.trackCount = trackId + 1;
+        }
+        syncTracks();
+        const tempPath = path.join(
+            os.tmpdir(),
+            `dmxwhip-punch-${process.pid}-${Date.now()}.dmx`
+        );
+        punchIn = {
+            startMs,
+            trackId,
+            tempPath,
+            liveByKey: new Map()
+        };
+        bumpPunchTrack(startMs + 1);
+        if (recordingHandler.setSuppressChannel) {
+            recordingHandler.setSuppressChannel(config.startChannel);
+        }
+        triggerOmit = config.startChannel;
+        const started = recordingHandler.start(tempPath);
+        if (!started || !started.success) {
+            clearPunchIn({ deleteTemp: true });
+            throw new Error((started && started.error) || 'Could not start recording');
+        }
+        punchIn.tempPath = started.filePath || tempPath;
+        recordingHandler.setOnLiveFrame(handleLivePunchFrame);
+        const senderPromise = initializeSenders(request.playbackNetwork || activeNetwork, { forceSacn: true });
+        lastPunchProgressAt = 0;
+        stopPunchTimer();
+        punchTimer = setInterval(tickPunchIn, 40);
+        tickPunchIn();
+        pausedElapsed = startMs;
+        emitStats({
+            isPlaying: false,
+            isPaused: false,
+            playheadMs: startMs
+        });
+        const result = sessionPayload({
+            created,
+            punchInStartMs: startMs,
+            punchTrackId: punchIn.trackId
+        });
+        if (created) {
+            sendSafe('file-loaded', result);
+        }
+        return { result, senderPromise };
+    };
+
+    const startWatchTimer = () => {
+        stopWatchTimer();
+        if (!recordWatch) {
+            return;
+        }
+        const mode = recordWatch.config.stopMode;
+        if (mode !== 'signal-cut' && mode !== 'blackout') {
+            return;
+        }
+        watchTimer = setInterval(() => {
+            if (!recordWatch || punchStopLock) {
+                return;
+            }
+            if (pollStop(recordWatch, Date.now()) === 'stop') {
+                finishPunchIn({ notify: true });
+            }
+        }, 200);
+    };
+
+    const finishPunchIn = ({ notify = false } = {}) => {
+        if (punchStopLock) {
+            return punchStopLock;
+        }
+        const run = (async () => {
+            try {
+                if (!punchIn || !recordingHandler) {
+                    throw new Error('Not recording');
+                }
+                stopWatchTimer();
+                recordWatch = null;
+                const take = punchIn;
+                stopPunchTimer();
+                if (recordingHandler.setOnLiveFrame) {
+                    recordingHandler.setOnLiveFrame(null);
+                }
+                if (recordingHandler.setSuppressChannel) {
+                    recordingHandler.setSuppressChannel(null);
+                }
+                triggerOmit = null;
+                const stopped = recordingHandler.stop({ emitSaved: false });
+                const filePath = (stopped && stopped.filePath) || take.tempPath;
+                punchIn = null;
+                cleanupSenders();
+                if (!stopped || !stopped.success || !stopped.totalFrames) {
+                    if (filePath && fs.existsSync(filePath)) {
+                        try {
+                            fs.unlinkSync(filePath);
+                        } catch (error) {
+                            console.error('Error removing empty punch-in:', error);
+                        }
+                    }
+                    throw new Error('Nothing was recorded');
+                }
+                const fileData = await fs.promises.readFile(filePath);
+                const libraryPath = uniqueDmxPath(ensureLibrary(), formatLookTimestamp());
+                const lookName = path.parse(libraryPath).name;
+                fs.writeFileSync(libraryPath, fileData);
+                writeSidecar(libraryPath, { name: lookName, notes: '' });
+                pushHistory();
+                const added = addMediaFromBuffer(fileData, lookName, take.startMs, take.trackId, {
+                    libraryPath
+                });
+                try {
+                    fs.unlinkSync(filePath);
+                } catch (error) {
+                    console.error('Error removing punch-in temp:', error);
+                }
+                sendSafe('library-updated', listLibrary());
+                syncTracks();
+                editSession.dirty = true;
+                playbackData = flattenToFrames(editSession.media, editSession.clips);
+                const endMs = take.startMs + mediaDurationMs(editSession.media[added.mediaId] || []);
+                if (playbackData && playbackData.length) {
+                    applySeek(endMs);
+                } else {
+                    pausedElapsed = endMs;
+                }
+                const result = sessionPayload({
+                    namingClipId: added.clipId,
+                    playheadMs: endMs
+                });
+                sendSafe('compilation-updated', {
+                    ...result,
+                    namingClipId: added.clipId
+                });
+                if (notify) {
+                    sendSafe('punch-in-auto-stopped', result);
+                }
+                return result;
+            } catch (error) {
+                console.error('Error stopping punch-in:', error);
+                clearPunchIn({ deleteTemp: true });
+                const failure = { success: false, error: error.message };
+                if (notify) {
+                    sendSafe('punch-in-failed', failure);
+                }
+                return failure;
+            } finally {
+                punchStopLock = null;
+            }
+        })();
+        punchStopLock = run;
+        return run;
+    };
+
+    const handleTriggerFrame = (frame, meta) => {
+        if (!recordWatch || punchStopLock) {
+            return;
+        }
+        const selected = Boolean(meta && meta.selected);
+        const now = Date.now();
+        if (recordWatch.phase === 'armed') {
+            if (feedArmed(recordWatch, frame, selected) !== 'start') {
+                return;
+            }
+            const request = recordWatch.payload;
+            beginRecordingWatch(recordWatch, frame, selected, now);
+            try {
+                const opened = openPunchFile(request);
+                sendSafe('punch-in-started', opened.result);
+                startWatchTimer();
+                opened.senderPromise.catch((error) => {
+                    console.error('Error opening punch-in output:', error);
+                });
+            } catch (error) {
+                console.error('Error starting triggered recording:', error);
+                clearPunchIn({ deleteTemp: true });
+                sendSafe('punch-in-failed', { error: error.message });
+            }
+            return;
+        }
+        if (feedRecording(recordWatch, frame, selected, now) === 'stop') {
+            finishPunchIn({ notify: true });
+        }
+    };
+
+    if (recordingHandler && recordingHandler.setObserver) {
+        recordingHandler.setObserver({
+            wantsObserve: () => Boolean(
+                recordWatch
+                && (recordWatch.phase === 'armed' || recordWatch.config.stopMode !== 'none')
+            ),
+            watchesUniverse: (protocol, universe) => {
+                if (!recordWatch) {
+                    return false;
+                }
+                const spec = recordWatch.phase === 'recording'
+                    ? recordWatch.config.stopChannel
+                    : recordWatch.config.startChannel;
+                if (!spec) {
+                    return false;
+                }
+                const proto = protocol === 'sacn' ? 'sacn' : 'artnet';
+                return spec.protocol === proto && spec.universe === (Number(universe) || 0);
+            },
+            observe: handleTriggerFrame
+        });
+    }
+
     ipcMain.removeHandler('start-punch-in');
     ipcMain.handle('start-punch-in', async (event, payload = {}) => {
         try {
@@ -1485,125 +1779,49 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             if (recordingHandler.isRecording()) {
                 throw new Error('Already recording');
             }
-            isPlaying = false;
-            isPaused = false;
-            clearPlayTimeout();
-            stopHoldOutput();
-            const created = ensureCompilationSession();
-            let trackId = Math.max(0, Math.round(Number(payload.trackId) || 0));
-            const startMs = Math.max(0, Math.round(Number(payload.startMs) || 0));
-            if (trackId >= editSession.trackCount) {
-                editSession.trackCount = trackId + 1;
+            if (recordWatch && recordWatch.phase === 'armed') {
+                throw new Error('Already waiting for a trigger');
             }
-            syncTracks();
-            const tempPath = path.join(
-                os.tmpdir(),
-                `dmxwhip-punch-${process.pid}-${Date.now()}.dmx`
-            );
-            punchIn = {
-                startMs,
-                trackId,
-                tempPath,
-                liveByKey: new Map()
+            const config = normalizeTriggerConfig(payload);
+            const request = {
+                trackId: payload.trackId,
+                startMs: payload.startMs,
+                playbackNetwork: payload.playbackNetwork,
+                config
             };
-            bumpPunchTrack(startMs + 1);
-            const started = recordingHandler.start(tempPath);
-            if (!started || !started.success) {
-                clearPunchIn({ deleteTemp: true });
-                throw new Error((started && started.error) || 'Could not start recording');
+            if (config.startMode === 'none') {
+                const opened = openPunchFile(request);
+                if (config.stopMode !== 'none') {
+                    recordWatch = createWatch(config, Date.now());
+                    beginRecordingWatch(recordWatch, null, false, Date.now());
+                    startWatchTimer();
+                }
+                try {
+                    await opened.senderPromise;
+                } catch (error) {
+                    clearPunchIn({ deleteTemp: true });
+                    cleanupSenders();
+                    throw error;
+                }
+                return opened.result;
             }
-            punchIn.tempPath = started.filePath || tempPath;
-            recordingHandler.setOnLiveFrame(handleLivePunchFrame);
-            await initializeSenders(payload.playbackNetwork || activeNetwork, { forceSacn: true });
-            lastPunchProgressAt = 0;
-            stopPunchTimer();
-            punchTimer = setInterval(tickPunchIn, 40);
-            tickPunchIn();
-            pausedElapsed = startMs;
-            emitStats({
-                isPlaying: false,
-                isPaused: false,
-                playheadMs: startMs
-            });
-            const result = sessionPayload({
-                created,
-                punchInStartMs: startMs,
-                punchTrackId: punchIn.trackId
-            });
-            if (created) {
-                sendSafe('file-loaded', result);
-            }
-            return result;
+            recordWatch = createWatch(config, Date.now());
+            recordWatch.payload = request;
+            return { success: true, armed: true };
         } catch (error) {
             console.error('Error starting punch-in:', error);
-            clearPunchIn({ deleteTemp: true });
+            const kept = error.message === 'Already recording'
+                || error.message === 'Already waiting for a trigger'
+                || error.message === 'Recording is unavailable';
+            if (!kept) {
+                clearPunchIn({ deleteTemp: true });
+            }
             return { success: false, error: error.message };
         }
     });
 
     ipcMain.removeHandler('stop-punch-in');
-    ipcMain.handle('stop-punch-in', async () => {
-        try {
-            if (!punchIn || !recordingHandler) {
-                throw new Error('Not recording');
-            }
-            const take = punchIn;
-            stopPunchTimer();
-            if (recordingHandler.setOnLiveFrame) {
-                recordingHandler.setOnLiveFrame(null);
-            }
-            const stopped = recordingHandler.stop({ emitSaved: false });
-            const filePath = (stopped && stopped.filePath) || take.tempPath;
-            punchIn = null;
-            cleanupSenders();
-            if (!stopped || !stopped.success || !stopped.totalFrames) {
-                if (filePath && fs.existsSync(filePath)) {
-                    try {
-                        fs.unlinkSync(filePath);
-                    } catch (error) {
-                        console.error('Error removing empty punch-in:', error);
-                    }
-                }
-                throw new Error('Nothing was recorded');
-            }
-            const fileData = await fs.promises.readFile(filePath);
-            const libraryPath = uniqueDmxPath(ensureLibrary(), 'Clip');
-            fs.writeFileSync(libraryPath, fileData);
-            writeSidecar(libraryPath, { name: 'Clip', notes: '' });
-            pushHistory();
-            const added = addMediaFromBuffer(fileData, 'Clip', take.startMs, take.trackId, {
-                libraryPath
-            });
-            try {
-                fs.unlinkSync(filePath);
-            } catch (error) {
-                console.error('Error removing punch-in temp:', error);
-            }
-            sendSafe('library-updated', listLibrary());
-            syncTracks();
-            editSession.dirty = true;
-            playbackData = flattenToFrames(editSession.media, editSession.clips);
-            const endMs = take.startMs + mediaDurationMs(editSession.media[added.mediaId] || []);
-            if (playbackData && playbackData.length) {
-                applySeek(endMs);
-            } else {
-                pausedElapsed = endMs;
-            }
-            const result = sessionPayload({
-                namingClipId: added.clipId,
-                playheadMs: endMs
-            });
-            sendSafe('compilation-updated', {
-                ...result,
-                namingClipId: added.clipId
-            });
-            return result;
-        } catch (error) {
-            console.error('Error stopping punch-in:', error);
-            clearPunchIn({ deleteTemp: true });
-            return { success: false, error: error.message };
-        }
-    });
+    ipcMain.handle('stop-punch-in', async () => finishPunchIn({ notify: false }));
 
     ipcMain.removeHandler('cancel-punch-in');
     ipcMain.handle('cancel-punch-in', async () => {

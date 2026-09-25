@@ -8,6 +8,7 @@ const {
     encodeFrame,
     shouldRecordUniverseFrame
 } = require('../../services/shared/dmxRecording');
+const { maskedRecordData } = require('../../services/shared/recordTriggers');
 const { setUiView, studioVisible } = require('../uiView');
 
 const sendSafe = (mainWindow, channel, payload) => {
@@ -31,6 +32,8 @@ function setupRecordingHandlers(mainWindow) {
     let lastFrameNs = null;
     let onLiveFrame = null;
     let wokenUniverses = new Set();
+    let suppressChannel = null;
+    let observer = null;
 
     const closeFd = () => {
         if (fd == null) {
@@ -119,6 +122,7 @@ function setupRecordingHandlers(mainWindow) {
         }
         isRecording = false;
         setUiView({ recording: false });
+        suppressChannel = null;
         try {
             flushChunk();
             writeFrameCount();
@@ -189,11 +193,12 @@ function setupRecordingHandlers(mainWindow) {
             const nowNs = process.hrtime.bigint();
             const elapsed = Number((nowNs - recordingOriginNs) / 1000000n);
             const timestamp = frameCount === 0 ? 0 : elapsed;
+            const recordedData = maskedRecordData(frame, suppressChannel);
             const writeFrame = shouldRecordUniverseFrame(
                 wokenUniverses,
                 frame.protocol,
                 frame.universe,
-                frame.data
+                recordedData
             );
 
             if (writeFrame) {
@@ -201,7 +206,7 @@ function setupRecordingHandlers(mainWindow) {
                     timestamp,
                     universe: frame.universe,
                     protocol: frame.protocol,
-                    data: frame.data
+                    data: recordedData
                 });
 
                 pending.push(encoded);
@@ -243,6 +248,28 @@ function setupRecordingHandlers(mainWindow) {
         },
         setOnLiveFrame: (fn) => {
             onLiveFrame = typeof fn === 'function' ? fn : null;
+        },
+        setSuppressChannel: (mask) => {
+            suppressChannel = mask && mask.channel ? mask : null;
+        },
+        setObserver: (next) => {
+            observer = next && typeof next.observe === 'function' ? next : null;
+        },
+        wantsObserve: () => Boolean(observer && observer.wantsObserve && observer.wantsObserve()),
+        watchesUniverse: (protocol, universe) => Boolean(
+            observer
+            && observer.watchesUniverse
+            && observer.watchesUniverse(protocol, universe)
+        ),
+        observe: (frame, meta) => {
+            if (!observer) {
+                return;
+            }
+            try {
+                observer.observe(frame, meta);
+            } catch (error) {
+                console.error('Record trigger error:', error);
+            }
         },
         close: () => {
             if (isRecording) {

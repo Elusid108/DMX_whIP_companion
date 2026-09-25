@@ -255,32 +255,60 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
                 });
             };
 
-            artnetReceiver.onDmxData('main', (data) => {
-                if (recordingHandler && recordingHandler.isRecording()) {
-                    maybeRecord('artnet', data.universe, data.dmxData);
+            const observeDmx = (protocol, universe, dmxData) => {
+                if (!recordingHandler || !recordingHandler.wantsObserve || !recordingHandler.wantsObserve()) {
                     return;
                 }
-                monitor.ingest({
-                    protocol: 'artnet',
-                    universe: data.universe,
-                    sourceIp: data.sourceIp,
-                    dmxData: data.dmxData
+                const selected = selectedUniverses.has(`${protocol}-${universe}`);
+                const watched = recordingHandler.watchesUniverse
+                    && recordingHandler.watchesUniverse(protocol, universe);
+                if (!selected && !watched) {
+                    return;
+                }
+                recordingHandler.observe({
+                    protocol,
+                    universe,
+                    data: dmxData
+                }, { selected });
+            };
+
+            const dispatchDmx = (protocol, universe, dmxData, ingest) => {
+                const wasRecording = Boolean(recordingHandler && recordingHandler.isRecording());
+                if (!wasRecording) {
+                    observeDmx(protocol, universe, dmxData);
+                }
+                if (recordingHandler && recordingHandler.isRecording()) {
+                    maybeRecord(protocol, universe, dmxData);
+                    if (wasRecording) {
+                        observeDmx(protocol, universe, dmxData);
+                    }
+                    return;
+                }
+                ingest();
+            };
+
+            artnetReceiver.onDmxData('main', (data) => {
+                dispatchDmx('artnet', data.universe, data.dmxData, () => {
+                    monitor.ingest({
+                        protocol: 'artnet',
+                        universe: data.universe,
+                        sourceIp: data.sourceIp,
+                        dmxData: data.dmxData
+                    });
                 });
             });
 
             artnetReceiver.onPollReply('main', ingestPollReply);
 
             sacnReceiver.onDmxData('main', (data) => {
-                if (recordingHandler && recordingHandler.isRecording()) {
-                    maybeRecord('sacn', data.universe, data.dmxData);
-                    return;
-                }
-                monitor.ingest({
-                    protocol: 'sacn',
-                    universe: data.universe,
-                    sourceIp: data.sourceIp,
-                    sourceName: data.sourceName,
-                    dmxData: data.dmxData
+                dispatchDmx('sacn', data.universe, data.dmxData, () => {
+                    monitor.ingest({
+                        protocol: 'sacn',
+                        universe: data.universe,
+                        sourceIp: data.sourceIp,
+                        sourceName: data.sourceName,
+                        dmxData: data.dmxData
+                    });
                 });
             });
 

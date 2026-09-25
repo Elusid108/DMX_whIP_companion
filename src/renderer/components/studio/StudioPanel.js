@@ -34,9 +34,18 @@ const StudioPanel = ({
             },
                 React.createElement(RecordingControls, {
                     isRecording: session.isRecording,
+                    isArmed: session.isArmed,
                     isPlaying: session.isPlaying,
                     onNewFile: session.handleNewFile,
-                    onCancelRecording: session.handleCancelRecording
+                    onCancelRecording: session.handleCancelRecording,
+                    startMode: session.startMode,
+                    stopMode: session.stopMode,
+                    startChannel: session.startChannel,
+                    stopChannel: session.stopChannel,
+                    onStartMode: session.setStartMode,
+                    onStopMode: session.setStopMode,
+                    onStartChannel: session.setStartChannel,
+                    onStopChannel: session.setStopChannel
                 }),
                 session.isFileLoaded && !session.isRecording && React.createElement(React.Fragment, null,
                     React.createElement('button', {
@@ -93,6 +102,7 @@ const StudioPanel = ({
                 overview: session.timelineOverview,
                 playheadMs,
                 isRecording: session.isRecording,
+                isArmed: session.isArmed,
                 recordingDuration: session.recordingDuration,
                 selectedUniverses,
                 isLoopEnabled: session.isLoopEnabled,
@@ -137,7 +147,7 @@ const StudioPanel = ({
                 onNext: session.handleNext,
                 onRecord: session.isRecording
                     ? session.handleStopRecording
-                    : session.handleStartRecording,
+                    : (session.isArmed ? session.handleCancelRecording : session.handleStartRecording),
                 footer: React.createElement(React.Fragment, null,
                     React.createElement('span', {
                         className: 'readout text-zinc-700 dark:text-zinc-300'

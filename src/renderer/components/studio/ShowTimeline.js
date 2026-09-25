@@ -89,6 +89,7 @@ const ShowTimeline = ({
     overview,
     playheadMs,
     isRecording,
+    isArmed,
     recordingDuration,
     selectedUniverses,
     isLoopEnabled,
@@ -328,8 +329,9 @@ const ShowTimeline = ({
                     React.createElement(TransportButtons, {
                         isPlaying,
                         isRecording,
+                        isArmed,
                         disabled: !canTransport,
-                        recordDisabled: isRecording ? false : !canRecord,
+                        recordDisabled: (isRecording || isArmed) ? false : !canRecord,
                         onPlay,
                         onPause,
                         onStop,
@@ -585,7 +587,10 @@ const ShowTimeline = ({
                         className: 'timeline-playhead',
                         style: { left: `${playheadX}px` }
                     }),
-                    isIdle && React.createElement('p', {
+                    isArmed && React.createElement('p', {
+                        className: 'absolute inset-x-6 top-12 text-sm text-zinc-500 pointer-events-none'
+                    }, 'Waiting for start trigger'),
+                    isIdle && !isArmed && React.createElement('p', {
                         className: 'absolute inset-x-6 top-12 text-sm text-zinc-500 pointer-events-none'
                     }, 'Select universes, then Record from the playhead, or load a look from Library.')
                 )

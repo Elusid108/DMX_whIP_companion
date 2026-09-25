@@ -1,6 +1,6 @@
 {
   "name": "dmx-whip-companion",
-  "version": "0.35.1",
+  "version": "0.36.0",
   "description": "Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN)",
   "main": "src/main/main.js",
   "scripts": {
@@ -14,7 +14,7 @@
     "rebuild": "electron-rebuild -f -w serialport",
     "start": "electron .",
     "dev": "electron .",
-    "test": "node --test src/services/shared/scanRecording.test.js src/services/shared/pushFit.test.js"
+    "test": "node --test src/services/shared/scanRecording.test.js src/services/shared/pushFit.test.js src/services/shared/recordTriggers.test.js"
   },
   "keywords": [
     "dmx",
