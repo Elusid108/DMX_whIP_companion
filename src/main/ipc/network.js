@@ -418,6 +418,8 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
                 }
                 const group = crypto.randomUUID();
                 const wantSync = receiving.length > 1;
+                const batchKind = look.batch && look.batch.kind;
+                const syncKind = (batchKind === 'fit' || batchKind === 'shift') ? 'uni' : 'split';
                 const members = JSON.stringify(receiving.map((device) => ({
                     n: device.longName || device.shortName || device.ip,
                     m: device.mac || ''
@@ -455,7 +457,8 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
                         name: look.name,
                         titlePath: plan.filePath,
                         sync_group: wantSync ? group : undefined,
-                        sync_members: wantSync ? members : undefined
+                        sync_members: wantSync ? members : undefined,
+                        sync_kind: wantSync ? syncKind : undefined
                     });
                     try {
                         fs.unlinkSync(tempPath);

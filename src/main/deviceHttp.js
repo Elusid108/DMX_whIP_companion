@@ -429,6 +429,9 @@ const postUpload = (ip, filePath, onProgress, destPathArg, extraMeta = {}) => {
                 if (extraMeta.sync_members) {
                     fields.sync_members = extraMeta.sync_members;
                 }
+                if (extraMeta.sync_kind) {
+                    fields.sync_kind = extraMeta.sync_kind;
+                }
             }
             if (fields.name || fields.sync_group) {
                 await postForm(ip, '/meta', fields);
