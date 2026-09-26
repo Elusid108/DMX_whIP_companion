@@ -332,6 +332,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             const nextPixels = normalizePixels({
                 ...pixels,
                 data: led.data,
+                clk: led.clk != null ? led.clk : pixels.clk,
                 count: led.count || pixels.count,
                 order: led.order || pixels.order
             });
