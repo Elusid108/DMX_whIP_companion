@@ -3,7 +3,6 @@ const { useEffect, useRef, useState } = React;
 const { MIN_FIRMWARE_API, statusApi, apiTooOld } = require('../../../services/shared/firmwareCompat');
 
 const ORDER_PREFIX = /^(\d{2})_/;
-const GUEST_SCROLL_CSS = 'html, body { overflow: auto !important; }';
 const TAB_BUTTONS = ['tabLive', 'tabPlay', 'tabPixels', 'tabSetup'];
 const TAB_NAMES = {
     tabLive: 'live',
@@ -119,13 +118,6 @@ const DeviceInspector = ({
                 }
             } else {
                 reveal();
-            }
-            if (typeof el.insertCSS !== 'function') {
-                return;
-            }
-            const result = el.insertCSS(GUEST_SCROLL_CSS);
-            if (result && typeof result.catch === 'function') {
-                result.catch(() => {});
             }
         };
         const onConsole = (event) => {
