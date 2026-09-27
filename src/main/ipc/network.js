@@ -18,12 +18,15 @@ const {
     fetchStatus,
     isIpv4,
     postForm,
+    postFirmware,
     postIdentify,
     postMeta,
     postReboot,
     postUpload,
     scanWifi
 } = require('../deviceHttp');
+const { listImages } = require('../firmwareImages');
+const { otaVerdict } = require('../../services/shared/firmwareCompat');
 
 const ORDER_PREFIX = /^(\d{2})_/;
 
@@ -38,6 +41,47 @@ let setupGeneration = 0;
 
 const POLL_MS = 2500;
 const PUSH_PARALLEL = 3;
+const OTA_PARALLEL = 3;
+// Firmware facts (/status) for the list: every 4th ArtPoll tick while the
+// Devices view is open.
+const FW_REFRESH_TICKS = 4;
+const REPORT_VERSION = /\bv(\d+\.\d+\.\d+)\b/;
+
+// The /status fields the update logic needs.
+const fwFacts = (status) => {
+    if (!status) {
+        return null;
+    }
+    const ota = status.ota && typeof status.ota === 'object'
+        ? {
+            max: Number(status.ota.max) || 0,
+            busy: Boolean(status.ota.busy),
+            pending: Boolean(status.ota.pending),
+            rolled_back: Boolean(status.ota.rolled_back)
+        }
+        : null;
+    return {
+        ver: String(status.ver || ''),
+        api: Number(status.api) || 0,
+        board: String(status.board || ''),
+        ota
+    };
+};
+
+// Run work(item) over items, at most limit at a time.
+const runPool = async (items, limit, work) => {
+    const results = new Array(items.length);
+    let next = 0;
+    const worker = async () => {
+        while (next < items.length) {
+            const index = next;
+            next += 1;
+            results[index] = await work(items[index], index);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+};
 const STALE_MS = 9000;
 const DROP_MS = 20000;
 
@@ -97,6 +141,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     };
 
     const snapshotDevices = () => {
+        const images = listImages();
         const now = Date.now();
         const rows = [];
         for (const [id, node] of devices) {
@@ -105,9 +150,11 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
                 devices.delete(id);
                 continue;
             }
+            const fw = node.fw || null;
             rows.push({
                 ...node,
-                stale: age > STALE_MS
+                stale: age > STALE_MS,
+                update: fw ? otaVerdict(fw, images[fw.board] || null) : null
             });
         }
         rows.sort((a, b) => {
@@ -173,8 +220,12 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         if (!isWhipPollReply(reply)) {
             return;
         }
+        const prev = devices.get(id);
+        const reported = REPORT_VERSION.exec(String(reply.nodeReport || ''));
         devices.set(id, {
             id,
+            fw: prev ? prev.fw : null,
+            ver: reported ? reported[1] : (prev && prev.ver) || '',
             ip: reply.ip,
             sourceIp: reply.sourceIp,
             mac: reply.mac,
@@ -191,6 +242,34 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         emitDevices();
     };
 
+    const setFw = (id, status) => {
+        const node = devices.get(id);
+        if (node && status) {
+            node.fw = fwFacts(status);
+            node.ver = node.fw.ver || node.ver;
+        }
+    };
+
+    let fwRefreshing = false;
+    const refreshFirmware = async () => {
+        if (fwRefreshing || getUiView().view !== 'devices' || quietRecord()) {
+            return;
+        }
+        fwRefreshing = true;
+        try {
+            const rows = [...devices.values()].filter((node) => node.ip);
+            await runPool(rows, 4, async (node) => {
+                const result = await fetchStatus(node.ip);
+                if (result && result.success) {
+                    setFw(node.id, result.status);
+                }
+            });
+            emitDevices();
+        } finally {
+            fwRefreshing = false;
+        }
+    };
+
     const stopPoll = () => {
         if (pollTimer) {
             clearInterval(pollTimer);
@@ -202,11 +281,16 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         if (pollTimer) {
             return;
         }
+        let ticks = 0;
         const tick = () => {
             if (artnetReceiver && artnetReceiver.sendPoll) {
                 artnetReceiver.sendPoll();
             }
             emitDevices();
+            if (ticks % FW_REFRESH_TICKS === 1) {
+                refreshFirmware();
+            }
+            ticks += 1;
         };
         tick();
         pollTimer = setInterval(tick, POLL_MS);
@@ -359,6 +443,74 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     });
 
     ipcMain.handle('device-list', () => snapshotDevices());
+
+    // Over-the-air firmware: what each node would get, then the update run.
+    ipcMain.handle('device-ota-plan', async (event, { ids } = {}) => {
+        try {
+            const images = listImages();
+            const wanted = Array.isArray(ids) && ids.length ? new Set(ids) : null;
+            const list = snapshotDevices().devices.filter((node) => !wanted || wanted.has(node.id));
+            const rows = await runPool(list, 4, async (node) => {
+                const result = node.ip && !node.stale ? await fetchStatus(node.ip) : null;
+                const ok = Boolean(result && result.success);
+                if (ok) {
+                    setFw(node.id, result.status);
+                }
+                const fw = ok ? fwFacts(result.status) : null;
+                return {
+                    id: node.id,
+                    name: node.longName || node.shortName || node.ip,
+                    ip: node.ip,
+                    fw,
+                    image: fw ? images[fw.board] || null : null,
+                    error: ok ? '' : ((result && result.error) || 'No reply')
+                };
+            });
+            emitDevices();
+            return { success: true, images: Object.values(images), rows };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    let otaRunning = false;
+    ipcMain.handle('device-ota-run', async (event, { ids, includeBusy = false } = {}) => {
+        if (otaRunning) {
+            return { success: false, error: 'An update is already running' };
+        }
+        const wanted = new Set(Array.isArray(ids) ? ids : []);
+        const list = snapshotDevices().devices.filter((node) => wanted.has(node.id) && node.ip);
+        if (!list.length) {
+            return { success: false, error: 'No nodes selected' };
+        }
+        otaRunning = true;
+        const progress = (id, payload) => sendToRenderer('device-ota-progress', { id, ...payload });
+        try {
+            const images = listImages();
+            const results = await runPool(list, OTA_PARALLEL, async (node) => {
+                progress(node.id, { phase: 'connecting' });
+                const statusResult = await fetchStatus(node.ip);
+                const fw = statusResult && statusResult.success ? fwFacts(statusResult.status) : null;
+                const image = fw ? images[fw.board] || null : null;
+                const verdict = otaVerdict(fw, image, { includeBusy });
+                if (verdict.verdict !== 'update') {
+                    progress(node.id, { phase: 'skipped', message: verdict.label });
+                    return { id: node.id, success: false, skipped: true, error: verdict.label };
+                }
+                const result = await postFirmware(node.ip, image.path, (payload) => progress(node.id, payload), {
+                    force: Boolean(includeBusy && verdict.busy),
+                    targetVersion: image.version
+                });
+                return { id: node.id, ...result };
+            });
+            return { success: true, results };
+        } catch (error) {
+            return { success: false, error: error.message };
+        } finally {
+            otaRunning = false;
+            refreshFirmware();
+        }
+    });
 
     const inspectPushJobs = async (jobs = []) => Promise.all((jobs || []).map(async (job) => {
         assertInLibrary(job.filePath);
@@ -824,6 +976,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
             artnetReceiver.sendPoll();
         }
         emitDevices();
+        refreshFirmware();
     };
 
     const handleUiView = (event, payload = {}) => {
@@ -865,6 +1018,8 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('device-identify');
         ipcMain.removeHandler('device-reboot');
         ipcMain.removeHandler('device-list');
+        ipcMain.removeHandler('device-ota-plan');
+        ipcMain.removeHandler('device-ota-run');
         ipcMain.removeHandler('device-push-analyze');
         ipcMain.removeHandler('device-push-show');
         ipcMain.removeHandler('device-push-batch');

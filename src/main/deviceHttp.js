@@ -253,6 +253,148 @@ const uploadFail = (err, sent, total) => {
     return { success: false, error: msg };
 };
 
+// Stream one file as multipart/form-data (text fields first, then the file
+// part) with byte progress through emit({ phase, sent, total }). Resolves
+// { statusCode, json, sent, total }; rejects on network errors or timeouts.
+const sendMultipart = (host, {
+    urlPath,
+    filePath,
+    size,
+    fields = {},
+    fileField = 'file',
+    fileName,
+    startedAt = Date.now(),
+    emit = () => {}
+}) => new Promise((resolve, reject) => {
+    const boundary = `----whip${Date.now().toString(16)}`;
+    const parts = Object.keys(fields).map((name) => (
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="${name}"\r\n\r\n` +
+        `${fields[name]}\r\n`
+    )).join('');
+    const header = Buffer.from(
+        parts +
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="${fileField}"; filename="${fileName || path.basename(filePath)}"\r\n` +
+        `Content-Type: application/octet-stream\r\n\r\n`
+    );
+    const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
+    const total = header.length + size + footer.length;
+    let sent = 0;
+    let settled = false;
+    const budgetMs = uploadBudgetMs(size);
+
+    const finish = (fn) => {
+        if (settled) {
+            return;
+        }
+        settled = true;
+        clearTimeout(budgetTimer);
+        fn();
+    };
+
+    const timeoutError = () => new Error(
+        `Upload timed out after ${formatUploadElapsed(Date.now() - startedAt)} — sent ${formatUploadBytes(sent)} of ${formatUploadBytes(total)}`
+    );
+
+    const bumpIdle = () => {
+        if (req.socket) {
+            req.socket.setTimeout(UPLOAD_IDLE_MS);
+        } else {
+            req.setTimeout(UPLOAD_IDLE_MS);
+        }
+    };
+
+    emit({ phase: 'connecting', sent: 0, total });
+
+    const req = http.request({
+        host,
+        port: 80,
+        path: urlPath,
+        method: 'POST',
+        headers: {
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': total
+        }
+    }, (res) => {
+        bumpIdle();
+        let data = '';
+        res.on('data', (chunk) => {
+            bumpIdle();
+            data += chunk;
+        });
+        res.on('end', () => {
+            let json = {};
+            if (data) {
+                try {
+                    json = JSON.parse(data);
+                } catch (err) {
+                    finish(() => reject(new Error('Invalid JSON from node')));
+                    return;
+                }
+            }
+            finish(() => resolve({ statusCode: res.statusCode, json, sent, total }));
+        });
+    });
+
+    let stream = null;
+    const abort = () => {
+        if (stream) {
+            stream.destroy();
+        }
+        req.destroy();
+    };
+
+    const budgetTimer = setTimeout(() => {
+        abort();
+        finish(() => reject(timeoutError()));
+    }, budgetMs);
+
+    req.setTimeout(UPLOAD_IDLE_MS);
+    req.on('socket', (socket) => {
+        socket.setTimeout(UPLOAD_IDLE_MS);
+    });
+    req.on('timeout', () => {
+        abort();
+        finish(() => reject(timeoutError()));
+    });
+    req.on('error', (err) => {
+        if (stream) {
+            stream.destroy();
+        }
+        finish(() => reject(err));
+    });
+
+    req.write(header);
+    sent = header.length;
+    emit({ phase: 'sending', sent, total });
+    bumpIdle();
+
+    stream = fs.createReadStream(filePath);
+    stream.on('error', (err) => {
+        req.destroy();
+        finish(() => reject(err));
+    });
+    stream.on('data', (chunk) => {
+        sent += chunk.length;
+        emit({ phase: 'sending', sent, total });
+        bumpIdle();
+        if (!req.write(chunk)) {
+            stream.pause();
+            req.once('drain', () => {
+                bumpIdle();
+                stream.resume();
+            });
+        }
+    });
+    stream.on('end', () => {
+        req.end(footer);
+        sent = total;
+        emit({ phase: 'waiting', sent, total });
+        bumpIdle();
+    });
+});
+
 const postUpload = (ip, filePath, onProgress, destPathArg, extraMeta = {}) => {
     if (!isIpv4(ip)) {
         return Promise.resolve({ success: false, error: 'Invalid device IP' });
@@ -300,131 +442,15 @@ const postUpload = (ip, filePath, onProgress, destPathArg, extraMeta = {}) => {
         });
     };
 
-    const sendTo = (host) => new Promise((resolve, reject) => {
-        const boundary = `----whip${Date.now().toString(16)}`;
-        const header = Buffer.from(
-            `--${boundary}\r\n` +
-            `Content-Disposition: form-data; name="path"\r\n\r\n` +
-            `${destPath}\r\n` +
-            `--${boundary}\r\n` +
-            `Content-Disposition: form-data; name="file"; filename="${path.basename(destPath)}"\r\n` +
-            `Content-Type: application/octet-stream\r\n\r\n`
-        );
-        const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
-        const total = header.length + stat.size + footer.length;
-        let sent = 0;
-        let settled = false;
-        const budgetMs = uploadBudgetMs(stat.size);
-
-        const finish = (fn) => {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            clearTimeout(budgetTimer);
-            fn();
-        };
-
-        const timeoutError = () => new Error(
-            `Upload timed out after ${formatUploadElapsed(Date.now() - startedAt)} — sent ${formatUploadBytes(sent)} of ${formatUploadBytes(total)}`
-        );
-
-        const bumpIdle = () => {
-            if (req.socket) {
-                req.socket.setTimeout(UPLOAD_IDLE_MS);
-            } else {
-                req.setTimeout(UPLOAD_IDLE_MS);
-            }
-        };
-
-        emit({ phase: 'connecting', sent: 0, total });
-
-        const req = http.request({
-            host,
-            port: 80,
-            path: `/upload?path=${encodeURIComponent(destPath)}`,
-            method: 'POST',
-            headers: {
-                'Content-Type': `multipart/form-data; boundary=${boundary}`,
-                'Content-Length': total
-            }
-        }, (res) => {
-            bumpIdle();
-            let data = '';
-            res.on('data', (chunk) => {
-                bumpIdle();
-                data += chunk;
-            });
-            res.on('end', () => {
-                let json = {};
-                if (data) {
-                    try {
-                        json = JSON.parse(data);
-                    } catch (err) {
-                        finish(() => reject(new Error('Invalid JSON from node')));
-                        return;
-                    }
-                }
-                finish(() => resolve({ statusCode: res.statusCode, json, sent, total }));
-            });
-        });
-
-        let stream = null;
-        const abort = () => {
-            if (stream) {
-                stream.destroy();
-            }
-            req.destroy();
-        };
-
-        const budgetTimer = setTimeout(() => {
-            abort();
-            finish(() => reject(timeoutError()));
-        }, budgetMs);
-
-        req.setTimeout(UPLOAD_IDLE_MS);
-        req.on('socket', (socket) => {
-            socket.setTimeout(UPLOAD_IDLE_MS);
-        });
-        req.on('timeout', () => {
-            abort();
-            finish(() => reject(timeoutError()));
-        });
-        req.on('error', (err) => {
-            if (stream) {
-                stream.destroy();
-            }
-            finish(() => reject(err));
-        });
-
-        req.write(header);
-        sent = header.length;
-        emit({ phase: 'sending', sent, total });
-        bumpIdle();
-
-        stream = fs.createReadStream(filePath);
-        stream.on('error', (err) => {
-            req.destroy();
-            finish(() => reject(err));
-        });
-        stream.on('data', (chunk) => {
-            sent += chunk.length;
-            emit({ phase: 'sending', sent, total });
-            bumpIdle();
-            if (!req.write(chunk)) {
-                stream.pause();
-                req.once('drain', () => {
-                    bumpIdle();
-                    stream.resume();
-                });
-            }
-        });
-        stream.on('end', () => {
-            req.end(footer);
-            sent = total;
-            emit({ phase: 'waiting', sent, total });
-            bumpIdle();
-        });
+    const sendTo = (host) => sendMultipart(host, {
+        urlPath: `/upload?path=${encodeURIComponent(destPath)}`,
+        filePath,
+        size: stat.size,
+        fields: { path: destPath },
+        fileField: 'file',
+        fileName: path.basename(destPath),
+        startedAt,
+        emit
     });
 
     const mapResult = (result) => {
@@ -496,6 +522,104 @@ const postUpload = (ip, filePath, onProgress, destPathArg, extraMeta = {}) => {
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const OTA_ERRORS = {
+    busy: 'The node is busy (playing, live or updating others).',
+    'too large': 'The image is bigger than the node\'s update slot. Flash it once over USB (Flash tab).',
+    'no ota slot': 'The node\'s flash layout has no update slot. Flash it once over USB (Flash tab).',
+    'other board': 'That image is for a different board.',
+    'not a whip image': 'That file is not DMX whIP firmware.',
+    'not firmware': 'That file is not a firmware image.',
+    'verify failed': 'The image did not verify on the node. Nothing changed.'
+};
+
+const OTA_VERIFY_MS = 150000;
+const OTA_POLL_MS = 3000;
+
+// POST the image to /ota, then wait for the node to reboot and report the
+// target version as its own (kept after its health check), or a rollback.
+// onProgress({ phase: connecting|sending|waiting|rebooting|checking|done|error, sent, total, message }).
+const postFirmware = async (ip, imagePath, onProgress, { force = false, targetVersion = '' } = {}) => {
+    if (!isIpv4(ip)) {
+        return { success: false, error: 'Invalid device IP' };
+    }
+    let size = 0;
+    try {
+        size = fs.statSync(imagePath).size;
+    } catch (err) {
+        return { success: false, error: 'Firmware image not found' };
+    }
+    const report = (payload) => {
+        if (typeof onProgress === 'function') {
+            onProgress(payload);
+        }
+    };
+    let lastEmit = 0;
+    const emit = (payload) => {
+        const now = Date.now();
+        if (payload.phase === 'sending' && now - lastEmit < 150) {
+            return;
+        }
+        lastEmit = now;
+        report(payload);
+    };
+    let result;
+    try {
+        result = await sendMultipart(ip, {
+            urlPath: `/ota?force=${force ? 1 : 0}`,
+            filePath: imagePath,
+            size,
+            fileField: 'firmware',
+            fileName: 'firmware.bin',
+            emit
+        });
+    } catch (err) {
+        const failed = uploadFail(err, 0, size);
+        report({ phase: 'error', message: failed.error });
+        return failed;
+    }
+    if (result.statusCode < 200 || result.statusCode >= 300) {
+        const code = result.json && result.json.error;
+        const error = OTA_ERRORS[code] || (code ? String(code) : `HTTP ${result.statusCode}`);
+        report({ phase: 'error', message: error });
+        return { success: false, error, code };
+    }
+    report({ phase: 'rebooting', sent: result.total, total: result.total });
+    const deadline = Date.now() + OTA_VERIFY_MS;
+    let sawTarget = false;
+    while (Date.now() < deadline) {
+        await sleep(OTA_POLL_MS);
+        const status = await fetchStatus(ip);
+        if (!status || !status.success || !status.status) {
+            continue;
+        }
+        const st = status.status;
+        const ota = st.ota || {};
+        if (targetVersion && st.ver === targetVersion) {
+            sawTarget = true;
+            if (!ota.pending) {
+                report({ phase: 'done', message: `Updated to v${st.ver}` });
+                return { success: true, version: st.ver };
+            }
+            report({ phase: 'checking', message: 'Checking itself' });
+            continue;
+        }
+        if (ota.rolled_back && (sawTarget || Date.now() > deadline - OTA_VERIFY_MS + 20000)) {
+            const error = `Rolled back to v${st.ver}: the new firmware did not come up healthy`;
+            report({ phase: 'error', message: error });
+            return { success: false, error, rolledBack: true };
+        }
+        if (!targetVersion && st.ver) {
+            report({ phase: 'done', message: `Running v${st.ver}` });
+            return { success: true, version: st.ver };
+        }
+    }
+    const error = sawTarget
+        ? 'Updated, but it stopped answering before finishing its health check'
+        : 'No reply after the update; check the node';
+    report({ phase: 'error', message: error });
+    return { success: false, error };
+};
 
 const getJson = async (ip, requestPath, timeoutMs = 2500) => withHosts(ip, async (host) => {
     const result = await requestJson('GET', host, requestPath, { timeoutMs });
@@ -643,6 +767,7 @@ module.exports = {
     fetchStatus,
     getJson,
     postForm,
+    postFirmware,
     postIdentify,
     postMeta,
     postReboot,

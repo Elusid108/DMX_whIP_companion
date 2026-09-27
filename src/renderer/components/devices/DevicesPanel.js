@@ -5,6 +5,7 @@ const ipcRenderer = require('../../ipc');
 const DeviceList = require('./DeviceList');
 const DeviceInspector = require('./DeviceInspector');
 const ShowSyncPanel = require('./ShowSyncPanel');
+const FirmwareUpdateDialog = require('./FirmwareUpdateDialog');
 const NetworkSelect = require('../controls/NetworkSelect');
 
 const showSortName = (sdPath) => String(sdPath || '')
@@ -48,6 +49,7 @@ const DevicesPanel = ({
     const [pullPath, setPullPath] = useState('');
     const [busy, setBusy] = useState(false);
     const [nodeName, setNodeName] = useState('');
+    const [otaIds, setOtaIds] = useState(null);
 
     const focusRef = useRef(focusDeviceId || null);
     const selectedRef = useRef(null);
@@ -207,6 +209,8 @@ const DevicesPanel = ({
         ipcRenderer.send('devices-scan');
     };
 
+    const outdated = devices.filter((device) => device.update && device.update.verdict === 'update').length;
+
     const rail = React.createElement(React.Fragment, null,
         React.createElement('div', {
             className: 'flex-none p-2 border-b border-line flex flex-col gap-1.5'
@@ -228,7 +232,12 @@ const DevicesPanel = ({
                     'aria-pressed': mode === 'sync',
                     onClick: () => setMode(mode === 'sync' ? 'node' : 'sync')
                 }, 'Show sync')
-            )
+            ),
+            React.createElement('button', {
+                type: 'button',
+                className: `btn-quiet w-full justify-center ${outdated ? 'is-active' : ''}`,
+                onClick: () => setOtaIds([])
+            }, outdated ? `Update firmware (${outdated})` : 'Update firmware')
         ),
         React.createElement('div', {
             className: 'flex-1 min-h-0 overflow-y-auto p-2'
@@ -267,7 +276,13 @@ const DevicesPanel = ({
             busy,
             onPullPathChange: setPullPath,
             onPullShow: handlePullShow,
-            onReboot: handleReboot
+            onReboot: handleReboot,
+            onUpdateFirmware: () => selected && setOtaIds([selected.id])
+        }),
+        React.createElement(FirmwareUpdateDialog, {
+            open: otaIds !== null,
+            initialIds: otaIds,
+            onClose: () => setOtaIds(null)
         })
     );
     if (!railHost) {

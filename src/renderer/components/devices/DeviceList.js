@@ -1,5 +1,22 @@
 const React = require('react');
-const { EmptyState, IconButton, Icons } = require('../ui');
+const { EmptyState, IconButton, Icons, StatusPill } = require('../ui');
+
+// Only what needs attention: an update, or one that needs USB.
+const updatePill = (device) => {
+    const update = device.update;
+    if (!update || (update.verdict !== 'update' && update.verdict !== 'needs-usb' && update.verdict !== 'busy')) {
+        return null;
+    }
+    if (update.verdict === 'busy' && !update.target) {
+        return null;
+    }
+    return React.createElement(StatusPill, {
+        tone: update.verdict === 'needs-usb' ? 'danger' : 'warn',
+        dot: false,
+        className: 'flex-none',
+        title: update.verdict === 'busy' ? `v${update.target} available · ${update.label}` : update.label
+    }, update.verdict === 'needs-usb' ? 'USB' : `v${update.target}`);
+};
 
 const DeviceList = ({ devices, selectedId, onSelect, onOpenPortal }) => {
     if (!devices.length) {
@@ -27,8 +44,9 @@ const DeviceList = ({ devices, selectedId, onSelect, onOpenPortal }) => {
                     }, device.longName || device.shortName || device.ip),
                     React.createElement('div', {
                         className: 'text-xs text-muted truncate'
-                    }, `${device.ip}${device.stale ? ' · stale' : ''}`)
+                    }, [device.ip, device.ver ? `v${device.ver}` : '', device.stale ? 'stale' : ''].filter(Boolean).join(' · '))
                 ),
+                updatePill(device),
                 React.createElement(IconButton, {
                     label: 'Open portal',
                     icon: Icons.Popout,

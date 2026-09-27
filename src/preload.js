@@ -40,6 +40,8 @@ const INVOKE = new Set([
     'device-status',
     'device-identify',
     'device-reboot',
+    'device-ota-plan',
+    'device-ota-run',
     'device-list',
     'device-push-analyze',
     'device-push-show',
@@ -108,6 +110,7 @@ const RECEIVE = new Set([
     'library-updated',
     'devices-update',
     'device-push-progress',
+    'device-ota-progress',
     'flash-progress',
     'flash-log',
     'cuebus-update'

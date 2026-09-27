@@ -70,7 +70,8 @@ const DeviceInspector = ({
     busy,
     onPullPathChange,
     onPullShow,
-    onReboot
+    onReboot,
+    onUpdateFirmware
 }) => {
     const pageRef = useRef('/');
     const tabRef = useRef('tabLive');
@@ -177,6 +178,9 @@ const DeviceInspector = ({
             status && apiTooOld(status) && React.createElement('p', {
                 className: 'text-xs text-amber-500'
             }, `Firmware API ${statusApi(status)} is below companion minimum ${MIN_FIRMWARE_API}. Update the node from the Flash tab.`),
+            status && status.ota && status.ota.rolled_back && React.createElement('p', {
+                className: 'text-xs text-amber-500'
+            }, `The last update did not come up cleanly, so this node went back to v${status.ver}.`),
             statusError && React.createElement('div', {
                 className: 'text-sm text-danger'
             }, statusError)
@@ -240,7 +244,14 @@ const DeviceInspector = ({
                     className: 'btn-quiet flex-none',
                     disabled: !canReboot,
                     onClick: onReboot
-                }, 'Reboot')
+                }, 'Reboot'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: `btn-quiet flex-none ${device.update && device.update.verdict === 'update' ? 'is-active' : ''}`,
+                    disabled: !device.ip || device.stale,
+                    title: device.update ? device.update.label : 'Update firmware over Wi-Fi',
+                    onClick: onUpdateFirmware
+                }, 'Update firmware')
             )
         )
     );

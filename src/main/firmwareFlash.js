@@ -527,6 +527,15 @@ function setupFirmwareFlashHandlers(mainWindow) {
                             { data: readBin(artifacts.files.bootloader), address: Number(flash.bootloader) || 0 },
                             { data: readBin(artifacts.files.partitions), address: Number(flash.partitions) || 0x8000 }
                         ];
+                        // Blank otadata so the node boots the app written below
+                        // (app0), even if an earlier OTA left it on app1.
+                        if (flash.otadata) {
+                            fileArray.push({
+                                data: new Uint8Array(Number(flash.otadataSize) || 0x2000).fill(0xff),
+                                address: Number(flash.otadata)
+                            });
+                            logPort(portPath, 'Resetting the OTA boot slot');
+                        }
                         if (writeNvs) {
                             const nvsSize = Number(flash.nvsSize) || 20480;
                             const nvsAddr = Number(flash.nvs) || 0x9000;
@@ -709,3 +718,5 @@ function setupFirmwareFlashHandlers(mainWindow) {
 }
 
 module.exports = setupFirmwareFlashHandlers;
+module.exports.loadCatalog = loadCatalog;
+module.exports.repoRoot = repoRoot;
