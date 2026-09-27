@@ -6,6 +6,7 @@ const DeviceList = require('./DeviceList');
 const DeviceInspector = require('./DeviceInspector');
 const ShowSyncPanel = require('./ShowSyncPanel');
 const FirmwareUpdateDialog = require('./FirmwareUpdateDialog');
+const AdvancedPatch = require('./AdvancedPatch');
 const NetworkSelect = require('../controls/NetworkSelect');
 
 const showSortName = (sdPath) => String(sdPath || '')
@@ -50,6 +51,7 @@ const DevicesPanel = ({
     const [busy, setBusy] = useState(false);
     const [nodeName, setNodeName] = useState('');
     const [otaIds, setOtaIds] = useState(null);
+    const [advancedFor, setAdvancedFor] = useState(null);
 
     const focusRef = useRef(focusDeviceId || null);
     const selectedRef = useRef(null);
@@ -277,7 +279,13 @@ const DevicesPanel = ({
             onPullPathChange: setPullPath,
             onPullShow: handlePullShow,
             onReboot: handleReboot,
-            onUpdateFirmware: () => selected && setOtaIds([selected.id])
+            onUpdateFirmware: () => selected && setOtaIds([selected.id]),
+            onAdvancedPatch: () => selected && setAdvancedFor(selected)
+        }),
+        React.createElement(AdvancedPatch, {
+            open: advancedFor !== null,
+            device: advancedFor,
+            onClose: () => setAdvancedFor(null)
         }),
         React.createElement(FirmwareUpdateDialog, {
             open: otaIds !== null,

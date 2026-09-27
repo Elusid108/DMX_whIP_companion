@@ -16,6 +16,7 @@ const {
     destUploadPath,
     downloadFile,
     fetchStatus,
+    getJson,
     isIpv4,
     postForm,
     postFirmware,
@@ -443,6 +444,74 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     });
 
     ipcMain.handle('device-list', () => snapshotDevices());
+
+    // Advanced patch (firmware 0.45+): GET/POST /fixture and pixel names.
+    const FIXTURE_NAMES_CHUNK = 128;
+
+    ipcMain.handle('device-fixture-get', async (event, { ip } = {}) => {
+        try {
+            const status = await fetchStatus(ip);
+            if (!status || !status.success) {
+                return { success: false, error: (status && status.error) || 'Unable to read /status' };
+            }
+            if (!status.status.fixture) {
+                return { success: false, error: 'This node needs firmware 0.45 or newer for the advanced patch.' };
+            }
+            const fixture = await getJson(ip, '/fixture');
+            if (!fixture || !fixture.success) {
+                return { success: false, error: (fixture && fixture.error) || 'Unable to read /fixture' };
+            }
+            const count = Number(fixture.result && fixture.result.pixels) || 0;
+            const names = [];
+            for (let from = 0; from < count; from += FIXTURE_NAMES_CHUNK) {
+                const chunk = await getJson(ip, `/fixture/names?from=${from}&n=${FIXTURE_NAMES_CHUNK}`);
+                if (!chunk || !chunk.success) {
+                    return { success: false, error: (chunk && chunk.error) || 'Unable to read pixel names' };
+                }
+                ((chunk.result && chunk.result.names) || []).forEach((name, i) => {
+                    names[from + i] = String(name || '');
+                });
+            }
+            return {
+                success: true,
+                fixture: fixture.result,
+                outputs: status.status.outputs || [],
+                names
+            };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('device-fixture-set', async (event, { ip, fields, names } = {}) => {
+        try {
+            const saved = await postForm(ip, '/fixture', fields || {}, 6000);
+            if (!saved || !saved.success) {
+                return { success: false, error: (saved && saved.error) || 'Save failed' };
+            }
+            if (Array.isArray(names)) {
+                for (let from = 0; from < names.length; from += FIXTURE_NAMES_CHUNK) {
+                    const chunk = names.slice(from, from + FIXTURE_NAMES_CHUNK)
+                        .map((name) => String(name || '').replace(/[\r\n]/g, ' '));
+                    const result = await postForm(ip, '/fixture/names', { from, names: chunk.join('\n') }, 6000);
+                    if (!result || !result.success) {
+                        return {
+                            success: false,
+                            fixture: saved.result,
+                            error: `Patch saved, pixel names not: ${(result && result.error) || 'no reply'}`
+                        };
+                    }
+                }
+            }
+            return { success: true, fixture: saved.result };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('device-fixture-locate', async (event, { ip, px, ms = 10000 } = {}) => (
+        postForm(ip, '/fixture/locate', { px: String(px || ''), ms })
+    ));
 
     // Over-the-air firmware: what each node would get, then the update run.
     ipcMain.handle('device-ota-plan', async (event, { ids } = {}) => {
@@ -1019,6 +1088,9 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('device-reboot');
         ipcMain.removeHandler('device-list');
         ipcMain.removeHandler('device-ota-plan');
+        ipcMain.removeHandler('device-fixture-get');
+        ipcMain.removeHandler('device-fixture-set');
+        ipcMain.removeHandler('device-fixture-locate');
         ipcMain.removeHandler('device-ota-run');
         ipcMain.removeHandler('device-push-analyze');
         ipcMain.removeHandler('device-push-show');

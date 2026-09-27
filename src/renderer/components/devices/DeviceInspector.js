@@ -71,7 +71,8 @@ const DeviceInspector = ({
     onPullPathChange,
     onPullShow,
     onReboot,
-    onUpdateFirmware
+    onUpdateFirmware,
+    onAdvancedPatch
 }) => {
     const pageRef = useRef('/');
     const tabRef = useRef('tabLive');
@@ -251,7 +252,16 @@ const DeviceInspector = ({
                     disabled: !device.ip || device.stale,
                     title: device.update ? device.update.label : 'Update firmware over Wi-Fi',
                     onClick: onUpdateFirmware
-                }, 'Update firmware')
+                }, 'Update firmware'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet flex-none',
+                    disabled: !httpUp || !status || !status.fixture,
+                    title: status && !status.fixture
+                        ? 'Needs firmware 0.45 or newer'
+                        : 'Fixture patch, sub-fixtures and pixel names',
+                    onClick: onAdvancedPatch
+                }, 'Advanced patch')
             )
         )
     );
