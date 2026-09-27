@@ -1,17 +1,43 @@
-const { useState, useEffect, useRef } = require('react');
+const { useState, useEffect, useRef, useCallback } = require('react');
 const ipcRenderer = require('../ipc');
 
 const emptyGrid = () => new Array(512).fill(null);
+
+// Monitor preferences, saved in settings.json (settings.js normalizeMonitor).
+const DEFAULT_PREFS = {
+    displayFormat: 'decimal',
+    gridDimensions: 'auto',
+    showAnimations: true,
+    showNodes: true,
+    colorBars: true,
+    groupMode: {}
+};
 
 const useDmxMonitor = (selectedUniverse, selectedProtocol, { monitorVisible } = {}) => {
     const [dmxData, setDmxData] = useState(emptyGrid());
     const [networkInterfaces, setNetworkInterfaces] = useState([]);
     const [selectedNic, setSelectedNic] = useState('0.0.0.0');
-    const [displayFormat, setDisplayFormat] = useState('decimal');
-    const [gridDimensions, setGridDimensions] = useState('32x16');
-    const [showAnimations, setShowAnimations] = useState(true);
+    const [prefs, setPrefs] = useState(DEFAULT_PREFS);
     const visibleRef = useRef(true);
     visibleRef.current = monitorVisible !== false;
+
+    useEffect(() => {
+        let alive = true;
+        ipcRenderer.invoke('get-settings').then((result) => {
+            const saved = result && result.settings && result.settings.monitor;
+            if (alive && saved) {
+                setPrefs({ ...DEFAULT_PREFS, ...saved });
+            }
+        }).catch(() => {});
+        return () => {
+            alive = false;
+        };
+    }, []);
+
+    const updatePrefs = useCallback((patch) => {
+        setPrefs((prev) => ({ ...prev, ...patch }));
+        ipcRenderer.invoke('set-ui-settings', { section: 'monitor', patch }).catch(() => {});
+    }, []);
 
     useEffect(() => {
         const loadNetworkInterfaces = async () => {
@@ -59,29 +85,47 @@ const useDmxMonitor = (selectedUniverse, selectedProtocol, { monitorVisible } = 
         setSelectedNic(nicIp);
     };
 
-    const handleDisplayFormatChange = (format) => {
-        setDisplayFormat(format);
-    };
+    const handleDisplayFormatChange = (format) => updatePrefs({ displayFormat: format });
+    const handleGridDimensionsChange = (dimensions) => updatePrefs({ gridDimensions: dimensions });
+    const toggleAnimations = () => updatePrefs({ showAnimations: !prefs.showAnimations });
+    const toggleNodes = () => updatePrefs({ showNodes: !prefs.showNodes });
+    const toggleColorBars = () => updatePrefs({ colorBars: !prefs.colorBars });
 
-    const handleGridDimensionsChange = (dimensions) => {
-        setGridDimensions(dimensions);
-    };
-
-    const toggleAnimations = () => {
-        setShowAnimations(prev => !prev);
+    // Grouping is per universe; 'auto' is the default and is not stored.
+    const universeKey = selectedUniverse !== null && selectedUniverse !== undefined
+        ? `${selectedProtocol}:${selectedUniverse}`
+        : '';
+    const groupMode = (universeKey && prefs.groupMode[universeKey]) || 'auto';
+    const handleGroupModeChange = (mode) => {
+        if (!universeKey) {
+            return;
+        }
+        const next = { ...prefs.groupMode };
+        if (mode === 'auto') {
+            delete next[universeKey];
+        } else {
+            next[universeKey] = mode;
+        }
+        updatePrefs({ groupMode: next });
     };
 
     return {
         dmxData,
         networkInterfaces,
         selectedNic,
-        displayFormat,
-        gridDimensions,
-        showAnimations,
+        displayFormat: prefs.displayFormat,
+        gridDimensions: prefs.gridDimensions,
+        showAnimations: prefs.showAnimations,
+        showNodes: prefs.showNodes,
+        colorBars: prefs.colorBars,
+        groupMode,
         handleNetworkChange,
         handleDisplayFormatChange,
         handleGridDimensionsChange,
-        toggleAnimations
+        handleGroupModeChange,
+        toggleAnimations,
+        toggleNodes,
+        toggleColorBars
     };
 };
 

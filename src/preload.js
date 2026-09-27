@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const INVOKE = new Set([
     'get-network-interfaces',
     'get-settings',
+    'set-ui-settings',
     'set-theme',
     'open-external-url',
     'library-list',

@@ -5,6 +5,8 @@ const TimelineClips = require('./TimelineClips');
 const TimelineAudio = require('./TimelineAudio');
 const ClipInspector = require('./ClipInspector');
 const TransportButtons = require('../controls/TransportButtons');
+const usePinchZoom = require('../../hooks/usePinchZoom');
+const { TIMELINE } = require('./timelineMetrics');
 
 const HEADER_WIDTH = 220;
 const MIN_PPS = 4;
@@ -245,6 +247,8 @@ const ShowTimeline = ({
         }
     }, [pixelsPerSecond]);
 
+    usePinchZoom(scrollRef, zoomBy);
+
     const seekFromClientX = (clientX) => {
         if (!canSeek || !scrollRef.current) {
             return;
@@ -257,6 +261,10 @@ const ShowTimeline = ({
 
     const onPointerDown = (event) => {
         if (!canSeek || event.button !== 0) {
+            return;
+        }
+        // Fingers scrub on the ruler only, so a swipe over the tracks scrolls.
+        if (event.pointerType === 'touch' && !event.target.closest('.timeline-ruler')) {
             return;
         }
         dragRef.current = true;
@@ -415,7 +423,7 @@ const ShowTimeline = ({
                             const rect = node.getBoundingClientRect();
                             const next = Math.max(
                                 0,
-                                Math.min(lightingTracks - 1, Math.floor((event.clientY - rect.top) / 28))
+                                Math.min(lightingTracks - 1, Math.floor((event.clientY - rect.top) / TIMELINE.rowH))
                             );
                             drag.over = next;
                             setDropTrack(next);
@@ -510,7 +518,7 @@ const ShowTimeline = ({
             ),
             React.createElement('div', {
                 ref: scrollRef,
-                className: 'relative flex-1 min-w-0 overflow-x-auto overflow-y-hidden',
+                className: 'relative flex-1 min-w-0 overflow-x-auto overflow-y-hidden touch-pan',
                 onScroll: (event) => setScrollLeft(event.currentTarget.scrollLeft)
             },
                 React.createElement('div', {

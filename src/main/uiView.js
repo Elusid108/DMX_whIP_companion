@@ -35,7 +35,7 @@ const onUiViewChange = (listener) => {
 const studioVisible = () => view === 'studio';
 
 const devicesUiWanted = () => (
-    !recording && (view === 'devices' || view === 'flash' || view === 'library')
+    !recording && (view === 'devices' || view === 'flash' || view === 'library' || view === 'monitor')
 );
 
 module.exports = {

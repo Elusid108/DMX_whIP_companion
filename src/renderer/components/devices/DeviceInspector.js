@@ -165,7 +165,7 @@ const DeviceInspector = ({
     const pullDisabled = busy || !httpUp || !pullPath;
 
     return React.createElement('div', {
-        className: 'flex-1 flex flex-col max-w-xl mx-auto w-full min-h-[40rem]'
+        className: 'flex-1 flex flex-col w-full min-h-0'
     },
         React.createElement('div', {
             className: 'status-strip flex-none'
@@ -187,7 +187,7 @@ const DeviceInspector = ({
             }, statusError)
         ),
         React.createElement('div', {
-            className: 'relative flex-1 min-h-[28rem] rounded-md border border-line overflow-hidden bg-zinc-950'
+            className: 'relative flex-1 min-h-[20rem] rounded-md border border-line overflow-hidden bg-zinc-950'
         },
             showPortal
                 ? React.createElement('webview', {
@@ -219,10 +219,10 @@ const DeviceInspector = ({
                 className: 'label-micro'
             }, 'Pull to library'),
             React.createElement('div', {
-                className: 'flex items-center gap-1.5'
+                className: 'flex flex-wrap items-center gap-1.5'
             },
                 React.createElement('select', {
-                    className: 'field',
+                    className: 'field flex-1 min-w-[12rem] w-auto',
                     value: pullPath,
                     disabled: busy || !httpUp || fileList.length === 0,
                     onChange: (event) => onPullPathChange(event.target.value)

@@ -1,5 +1,6 @@
 const React = require('react');
-const { useEffect, useState } = React;
+const { useEffect, useMemo, useState } = React;
+const { Popover } = require('../ui');
 
 const { formatDuration: formatMs, protocolList } = require('../../../services/shared/format');
 
@@ -22,15 +23,9 @@ const ClipInspector = ({ info, x, y, onClose, onApply }) => {
         setFadeCurve(info.fadeCurve || 'linear');
     }, [info]);
 
-    useEffect(() => {
-        const onKey = (event) => {
-            if (event.key === 'Escape') {
-                onClose();
-            }
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [onClose]);
+    // Opens at the click / long-press point; Popover flips and clamps it
+    // inside the window and closes it on Escape or an outside press.
+    const point = useMemo(() => ({ x, y }), [x, y]);
 
     const apply = () => {
         const channel = Math.max(1, Math.min(512, Math.round(Number(startChannel) || 1)));
@@ -46,10 +41,13 @@ const ClipInspector = ({ info, x, y, onClose, onApply }) => {
         });
     };
 
-    return React.createElement('div', {
-        className: 'timeline-inspector',
-        style: { left: `${Math.max(8, x)}px`, top: `${Math.max(8, y)}px` },
-        onPointerDown: (event) => event.stopPropagation()
+    return React.createElement(Popover, {
+        open: true,
+        point,
+        onClose,
+        placement: 'bottom-start',
+        label: 'Clip',
+        className: 'timeline-inspector'
     },
         React.createElement('div', { className: 'flex items-center justify-between gap-3 mb-2' },
             React.createElement('span', { className: 'text-xs font-semibold uppercase tracking-wide text-muted' }, 'Clip'),

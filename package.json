@@ -1,6 +1,6 @@
 {
   "name": "dmx-whip-companion",
-  "version": "0.46.0",
+  "version": "0.48.0",
   "description": "Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN)",
   "main": "src/main/main.js",
   "scripts": {
@@ -14,7 +14,7 @@
     "rebuild": "electron-rebuild -f -w serialport",
     "start": "electron .",
     "dev": "electron .",
-    "test": "node --test src/services/shared/scanRecording.test.js src/services/shared/pushFit.test.js src/services/shared/recordTriggers.test.js src/services/shared/playbackFrames.test.js src/services/sacn/sacnPacket.test.js src/services/cuebus/protocol.test.js src/services/cuebus/cueBus.test.js src/services/shared/format.test.js src/services/shared/firmwareCompat.test.js src/services/shared/fixture.test.js"
+    "test": "node --test src/services/shared/scanRecording.test.js src/services/shared/pushFit.test.js src/services/shared/recordTriggers.test.js src/services/shared/playbackFrames.test.js src/services/sacn/sacnPacket.test.js src/services/cuebus/protocol.test.js src/services/cuebus/cueBus.test.js src/services/shared/format.test.js src/services/shared/firmwareCompat.test.js src/services/shared/fixture.test.js src/services/shared/monitorOverlay.test.js"
   },
   "keywords": [
     "dmx",

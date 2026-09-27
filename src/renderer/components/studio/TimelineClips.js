@@ -1,6 +1,7 @@
 const React = require('react');
 const { useEffect, useRef, useState } = React;
 const { findGapOnTrack, SNAP_GAP_MS } = require('../../../services/shared/compilationEdl');
+const { TIMELINE } = require('./timelineMetrics');
 
 const ClipNameInput = ({ value, onCommit }) => {
     const ref = useRef(null);
@@ -40,7 +41,13 @@ const ClipNameInput = ({ value, onCommit }) => {
 
 const EDGE = 7;
 const FADE_EDGE = 10;
-const ROW_H = 28;
+// Fingers get wider trim / fade grips.
+const TOUCH_EDGE = 14;
+const TOUCH_FADE_EDGE = 16;
+const ROW_H = TIMELINE.rowH;
+// Touch and hold on a clip opens its inspector (right-click with a mouse).
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_SLOP = 8;
 
 const TimelineClips = ({
     clips,
@@ -85,6 +92,16 @@ const TimelineClips = ({
     };
 
     const displayClips = preview && preview.clips ? preview.clips : (clips || []);
+    const pressRef = useRef(null);
+
+    const cancelPress = () => {
+        if (pressRef.current) {
+            clearTimeout(pressRef.current.timer);
+            pressRef.current = null;
+        }
+    };
+
+    useEffect(() => cancelPress, []);
 
     const onPointerDown = (event, clip, edge, fadeEdge) => {
         if (event.button !== 0 || clip.live) {
@@ -100,6 +117,21 @@ const TimelineClips = ({
             return;
         }
         onSelect(clip.id);
+        if (event.pointerType !== 'mouse' && onInspect) {
+            const x = event.clientX;
+            const y = event.clientY;
+            cancelPress();
+            pressRef.current = {
+                x,
+                y,
+                timer: setTimeout(() => {
+                    pressRef.current = null;
+                    dragRef.current = null;
+                    setPreview(null);
+                    onInspect(clip, { x, y });
+                }, LONG_PRESS_MS)
+            };
+        }
         if (fadeEdge && onFade) {
             dragRef.current = {
                 kind: 'fade',
@@ -135,6 +167,10 @@ const TimelineClips = ({
     };
 
     const onPointerMove = (event) => {
+        const press = pressRef.current;
+        if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > LONG_PRESS_SLOP) {
+            cancelPress();
+        }
         const drag = dragRef.current;
         if (!drag) {
             const t = timeFromClientX(event.clientX);
@@ -201,6 +237,7 @@ const TimelineClips = ({
     };
 
     const onPointerUp = (event) => {
+        cancelPress();
         const drag = dragRef.current;
         if (!drag) {
             return;
@@ -245,6 +282,16 @@ const TimelineClips = ({
         onPointerMove,
         onPointerUp,
         onPointerCancel: onPointerUp,
+        // No hover on touch: a tap in an empty stretch shows its close-gap
+        // button.
+        onPointerDown: (event) => {
+            if (event.pointerType === 'mouse' || dragRef.current) {
+                return;
+            }
+            const t = timeFromClientX(event.clientX);
+            const trackId = trackFromClientY(event.clientY, 0);
+            setGap(findGapOnTrack(clips, trackId, t));
+        },
         onPointerLeave: () => {
             if (!dragRef.current) {
                 setGap(null);
@@ -306,10 +353,14 @@ const TimelineClips = ({
                 onPointerDown: (event) => {
                     const rect = event.currentTarget.getBoundingClientRect();
                     const x = event.clientX - rect.left;
-                    const edge = x <= EDGE ? 'in' : (x >= rect.width - EDGE ? 'out' : null);
-                    const fadeEdge = !edge && x <= EDGE + FADE_EDGE
+                    const touch = event.pointerType !== 'mouse';
+                    // Never let the grips eat a short clip whole.
+                    const grip = Math.min(touch ? TOUCH_EDGE : EDGE, rect.width / 4);
+                    const fade = Math.min(touch ? TOUCH_FADE_EDGE : FADE_EDGE, rect.width / 4);
+                    const edge = x <= grip ? 'in' : (x >= rect.width - grip ? 'out' : null);
+                    const fadeEdge = !edge && x <= grip + fade
                         ? 'in'
-                        : (!edge && x >= rect.width - EDGE - FADE_EDGE ? 'out' : null);
+                        : (!edge && x >= rect.width - grip - fade ? 'out' : null);
                     onPointerDown(event, clip, edge, fadeEdge);
                 }
             },

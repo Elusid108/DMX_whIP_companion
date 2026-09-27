@@ -9,6 +9,15 @@
  * html.dark overrides. Component classes below and new markup use the token
  * names (bg-surface, border-line, text-muted, ...) instead of zinc/cyan pairs.
  */
+/* Inter (SIL OFL 1.1, fonts/Inter-LICENSE.txt), bundled so the app needs no network. */
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('../fonts/inter-latin-wght-normal.woff2') format('woff2-variations');
+}
+
 @layer base {
   :root {
     --c-app: 244 244 245;
@@ -84,7 +93,8 @@
   }
 
   html,
-  body {
+  body,
+  #root {
     height: 100%;
   }
 
@@ -303,8 +313,16 @@
     @apply pt-3 mt-3 border-t border-line;
   }
 
+  /* Docked left column at lg; a slide-in drawer below. */
   .app-sidebar {
-    @apply w-64 flex flex-col min-h-0 border-r border-line;
+    @apply fixed inset-y-0 left-0 z-40 w-80 max-w-[85vw] flex flex-col min-h-0 border-r border-line bg-surface
+      -translate-x-full transition-transform duration-200
+      lg:static lg:z-auto lg:w-64 lg:max-w-none lg:translate-x-0 lg:bg-transparent lg:transition-none;
+  }
+
+  .app-sidebar.is-open {
+    @apply translate-x-0;
+    box-shadow: var(--shadow-pop);
   }
 
   .app-toolbar {
@@ -312,7 +330,8 @@
   }
 
   .timeline-corner {
-    @apply flex items-center gap-1 px-2 h-8 flex-none border-b border-r border-line bg-panel;
+    @apply flex items-center gap-1 px-2 flex-none border-b border-r border-line bg-panel;
+    height: var(--tl-ruler, 32px);
   }
 
   .transport-bar {
@@ -365,8 +384,9 @@
   }
 
   .timeline-header {
-    @apply flex flex-col justify-center gap-0.5 px-2.5 h-14 flex-none border-b border-r
+    @apply flex flex-col justify-center gap-0.5 px-2.5 flex-none border-b border-r
       border-line bg-surface text-left min-w-0;
+    height: var(--tl-lane, 56px);
   }
 
   .timeline-header.is-active {
@@ -375,11 +395,13 @@
   }
 
   .timeline-ruler {
-    @apply relative h-8 flex-none border-b border-line bg-panel;
+    @apply relative flex-none border-b border-line bg-panel;
+    height: var(--tl-ruler, 32px);
   }
 
   .timeline-clips {
-    @apply relative h-7 flex-none border-b border-line bg-panel;
+    @apply relative flex-none border-b border-line bg-panel;
+    height: var(--tl-row, 28px);
   }
 
   .timeline-clips.is-ghost,
@@ -392,9 +414,10 @@
   }
 
   .timeline-header-sm {
-    @apply flex items-center px-2.5 h-7 flex-none border-b border-r
+    @apply flex items-center px-2.5 flex-none border-b border-r
       border-line bg-surface text-left
       text-[11px] text-fg-soft cursor-pointer select-none;
+    height: var(--tl-row, 28px);
   }
 
   .timeline-header-sm.is-active {
@@ -407,33 +430,36 @@
   }
 
   .timeline-header-sm input {
-    @apply field !h-5 !py-0 !px-1 !text-[11px] w-full;
+    @apply field !h-5 !min-h-0 !py-0 !px-1 !text-[11px] w-full;
   }
 
   .timeline-header-audio {
-    @apply flex items-center px-2.5 h-10 flex-none border-b border-r
+    @apply flex items-center px-2.5 flex-none border-b border-r
       border-line bg-surface text-left
       text-[11px] text-fg-soft;
+    height: var(--tl-audio-row, 40px);
   }
 
   .timeline-corner-spacer {
-    @apply h-8 flex-none border-b border-line bg-panel;
+    @apply flex-none border-b border-line bg-panel;
+    height: var(--tl-ruler, 32px);
   }
 
   .timeline-audio-stack {
     @apply relative flex-none;
-    height: 80px;
+    height: calc(var(--tl-audio-row, 40px) * 2);
   }
 
   .timeline-audio-row {
-    @apply relative h-10 flex-none border-b border-line bg-sunken;
+    @apply relative flex-none border-b border-line bg-sunken;
+    height: var(--tl-audio-row, 40px);
   }
 
   .timeline-audio-block {
     @apply absolute top-1 bottom-1 flex items-center rounded-sm
       bg-amber-400/15 border border-amber-400/40 text-amber-900 dark:text-amber-100
       overflow-hidden cursor-grab select-none z-[1];
-    height: 72px;
+    height: calc(var(--tl-audio-row, 40px) * 2 - 8px);
     top: 4px;
   }
 
@@ -442,8 +468,7 @@
   }
 
   .timeline-inspector {
-    @apply fixed z-20 w-72 rounded-md border border-line bg-surface p-3 text-xs;
-    box-shadow: var(--shadow-pop);
+    @apply w-72 p-3 text-xs;
   }
 
   .timeline-inspector-field {
@@ -477,11 +502,81 @@
   }
 
   .timeline-block input {
-    @apply field !h-5 !py-0 !px-1 !text-[10px] w-full mx-1;
+    @apply field !h-5 !min-h-0 !py-0 !px-1 !text-[10px] w-full mx-1;
   }
 
   .timeline-block.is-moving {
     opacity: 0.65;
+  }
+
+  /* Drags and scrubs belong to the app, not the page's touch panning. */
+  .timeline-block,
+  .timeline-audio-block,
+  .timeline-ruler,
+  .timeline-fade-handle,
+  .slider {
+    touch-action: none;
+  }
+
+  .touch-pan {
+    touch-action: pan-x pan-y;
+  }
+
+  /* Touch screens: 44 px targets. */
+  @media (pointer: coarse) {
+    .btn-quiet,
+    .btn-primary,
+    .btn-danger {
+      min-height: 44px;
+      @apply px-3;
+    }
+
+    .btn-ghost {
+      min-width: 40px;
+      min-height: 40px;
+    }
+
+    .field {
+      min-height: 44px;
+    }
+
+    .transport-btn {
+      @apply h-11 w-11;
+    }
+
+    .tab-btn {
+      @apply py-3;
+    }
+
+    .check {
+      @apply h-5 w-5;
+    }
+
+    .switch {
+      @apply h-6 w-11;
+    }
+
+    .switch::after {
+      @apply h-4 w-4 left-1;
+    }
+
+    .switch.is-on::after {
+      transform: translateX(1.25rem);
+    }
+
+    .slider {
+      @apply h-8;
+    }
+
+    .slider::-webkit-slider-thumb {
+      width: 1.25rem;
+      height: 1.25rem;
+      margin-top: -0.25rem;
+    }
+
+    .kv-row {
+      min-height: 44px;
+    }
   }
 
   .timeline-block-edge {
@@ -501,7 +596,8 @@
   }
 
   .timeline-track {
-    @apply relative h-14 flex-none border-b border-line bg-sunken;
+    @apply relative flex-none border-b border-line bg-sunken;
+    height: var(--tl-lane, 56px);
   }
 
   .timeline-clip {

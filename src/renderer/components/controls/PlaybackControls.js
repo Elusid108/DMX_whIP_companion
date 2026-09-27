@@ -101,7 +101,7 @@ const PlaybackControls = ({
                         onClick: () => onSelect(index)
                     }, item.name),
                     React.createElement('div', {
-                        className: 'flex-none hidden group-hover:flex items-center'
+                        className: 'flex-none hidden group-hover:flex group-focus-within:flex [@media(pointer:coarse)]:flex items-center'
                     },
                         React.createElement(RowAction, {
                             label: 'Move up',

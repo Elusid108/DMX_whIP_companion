@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net } = require('electron');
+const { app, BrowserWindow, protocol, net, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -23,6 +23,32 @@ const { setupLibraryHandlers } = require('./ipc/library');
 const setupSettingsHandlers = require('./ipc/settings');
 const setupFirmwareFlashHandlers = require('./firmwareFlash');
 const { stopFileTasks } = require('./fileTasks');
+const { loadSettings, saveSettings } = require('./settings');
+
+// Saved bounds only if they still land on a connected display.
+const restoredBounds = () => {
+    let saved = null;
+    try {
+        saved = loadSettings().windowBounds;
+    } catch (err) {
+        saved = null;
+    }
+    if (!saved) {
+        return null;
+    }
+    const area = screen.getDisplayMatching(saved).workArea;
+    const visible = saved.x < area.x + area.width - 80 && saved.x + saved.width > area.x + 80
+        && saved.y < area.y + area.height - 40 && saved.y >= area.y - 20;
+    return visible ? saved : null;
+};
+
+const themeBackground = () => {
+    try {
+        return loadSettings().theme === 'light' ? '#f4f4f5' : '#09090b';
+    } catch (err) {
+        return '#09090b';
+    }
+};
 
 const IPV4 = /^(\d{1,3}\.){3}\d{1,3}$/;
 
@@ -71,9 +97,15 @@ app.on('web-contents-created', (_event, contents) => {
 });
 
 function createWindow() {
+    const bounds = restoredBounds();
     mainWindow = new BrowserWindow({
-        width: 1280,
-        height: 800,
+        width: bounds ? bounds.width : 1280,
+        height: bounds ? bounds.height : 800,
+        ...(bounds ? { x: bounds.x, y: bounds.y } : {}),
+        minWidth: 360,
+        minHeight: 480,
+        show: false,
+        backgroundColor: themeBackground(),
         title: 'DMX whIP Companion',
         webPreferences: {
             preload: path.join(__dirname, '../preload.js'),
@@ -96,6 +128,32 @@ function createWindow() {
     mainWindow.on('page-title-updated', (event) => {
         event.preventDefault();
     });
+
+    mainWindow.once('ready-to-show', () => {
+        if (bounds && bounds.maximized) {
+            mainWindow.maximize();
+        }
+        mainWindow.show();
+    });
+
+    // Remember where the window was (normal bounds, plus maximized).
+    let boundsTimer = null;
+    const rememberBounds = () => {
+        clearTimeout(boundsTimer);
+        boundsTimer = setTimeout(() => {
+            if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) {
+                return;
+            }
+            try {
+                saveSettings({
+                    windowBounds: { ...mainWindow.getNormalBounds(), maximized: mainWindow.isMaximized() }
+                });
+            } catch (err) {
+                // Bounds are a convenience; never block the window on them.
+            }
+        }, 500);
+    };
+    ['resize', 'move', 'maximize', 'unmaximize'].forEach((name) => mainWindow.on(name, rememberBounds));
 
     // The app page holds the full window.dmx bridge (flash, delete, reboot):
     // it never navigates away or opens windows.

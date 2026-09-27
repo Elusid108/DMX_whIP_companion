@@ -37,6 +37,14 @@ const FOLDER = ['M3 7h6l2 2h10v10H3z', 'M3 7V5h6l2 2'];
 
 const Chevron = strokeIcon(path('M9 6l6 6-6 6'));
 const ChevronDown = strokeIcon(path('M6 9l6 6 6-6'));
+const ChevronUp = strokeIcon(path('M6 15l6-6 6 6'));
+const PanelLeft = strokeIcon(h('rect', { x: 3, y: 4, width: 18, height: 16, rx: 2 }), path('M9 4v16'));
+// Main views.
+const ViewMonitor = strokeIcon(h('rect', { x: 4, y: 4, width: 6, height: 6, rx: 1 }), h('rect', { x: 14, y: 4, width: 6, height: 6, rx: 1 }), h('rect', { x: 4, y: 14, width: 6, height: 6, rx: 1 }), h('rect', { x: 14, y: 14, width: 6, height: 6, rx: 1 }));
+const ViewStudio = strokeIcon(path('M4 7h10'), path('M4 12h16'), path('M4 17h7'), path('M17 4v16'));
+const ViewLibrary = strokeIcon(path('M9 6h11'), path('M9 12h11'), path('M9 18h11'), path('M4.5 6h.01'), path('M4.5 12h.01'), path('M4.5 18h.01'));
+const ViewDevices = strokeIcon(h('rect', { x: 3, y: 14, width: 18, height: 6, rx: 1.5 }), path('M7 17h.01'), path('M12 14V10'), path('M9 8.5a4.2 4.2 0 0 1 6 0'), path('M6.5 6a7.8 7.8 0 0 1 11 0'));
+const ViewFlash = strokeIcon(path('M13 2L4 14h7l-1 8 9-12h-7z'));
 const Close = strokeIcon(path('M6 6l12 12'), path('M18 6L6 18'));
 const Plus = strokeIcon(path('M12 5v14'), path('M5 12h14'));
 const Check = strokeIcon(path('M5 12.5l4.5 4.5L19 7.5'));
@@ -82,6 +90,7 @@ module.exports = {
     Check,
     Chevron,
     ChevronDown,
+    ChevronUp,
     Close,
     Cog,
     Eye,
@@ -90,10 +99,16 @@ module.exports = {
     FolderPlus,
     Menu,
     More,
+    PanelLeft,
     Play,
     Plus,
     Popout,
     PushSd,
     Repeat,
-    Trash
+    Trash,
+    ViewDevices,
+    ViewFlash,
+    ViewLibrary,
+    ViewMonitor,
+    ViewStudio
 };

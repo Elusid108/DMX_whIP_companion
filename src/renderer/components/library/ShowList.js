@@ -378,7 +378,7 @@ const ShowList = ({
                             node.type === 'show' && node.show && node.show.filePath
                                 && React.createElement('button', {
                                     type: 'button',
-                                    className: 'flex-none p-0.5 rounded text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-cyan-500',
+                                    className: 'flex-none p-0.5 rounded text-zinc-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100 hover:text-cyan-500',
                                     title: 'Play',
                                     'aria-label': 'Play',
                                     disabled: busy,
@@ -417,7 +417,7 @@ const ShowList = ({
                                 || (node.type === 'folder' && collectLooks(node).length > 0))
                                 && React.createElement('button', {
                                     type: 'button',
-                                    className: 'flex-none px-1 rounded text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-cyan-500 text-sm font-medium',
+                                    className: 'flex-none px-1 rounded text-zinc-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100 hover:text-cyan-500 text-sm font-medium',
                                     title: 'Add to queue',
                                     'aria-label': 'Add to queue',
                                     disabled: busy,

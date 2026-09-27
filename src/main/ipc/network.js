@@ -28,6 +28,7 @@ const {
 } = require('../deviceHttp');
 const { listImages } = require('../firmwareImages');
 const { otaVerdict } = require('../../services/shared/firmwareCompat');
+const { patchFromStatus } = require('../../services/shared/monitorOverlay');
 
 const ORDER_PREFIX = /^(\d{2})_/;
 
@@ -43,8 +44,8 @@ let setupGeneration = 0;
 const POLL_MS = 2500;
 const PUSH_PARALLEL = 3;
 const OTA_PARALLEL = 3;
-// Firmware facts (/status) for the list: every 4th ArtPoll tick while the
-// Devices view is open.
+// Firmware facts and the pixel patch (/status) for the list: every 4th
+// ArtPoll tick while the Devices or Monitor view is open.
 const FW_REFRESH_TICKS = 4;
 const REPORT_VERSION = /\bv(\d+\.\d+\.\d+)\b/;
 
@@ -226,6 +227,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         devices.set(id, {
             id,
             fw: prev ? prev.fw : null,
+            patch: prev ? prev.patch : null,
             ver: reported ? reported[1] : (prev && prev.ver) || '',
             ip: reply.ip,
             sourceIp: reply.sourceIp,
@@ -241,6 +243,9 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
             stale: false
         });
         emitDevices();
+        if (!prev) {
+            fetchOne(id);
+        }
     };
 
     const setFw = (id, status) => {
@@ -248,12 +253,38 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         if (node && status) {
             node.fw = fwFacts(status);
             node.ver = node.fw.ver || node.ver;
+            node.patch = patchFromStatus(status);
+        }
+    };
+
+    const statusWanted = () => {
+        const view = getUiView().view;
+        return (view === 'devices' || view === 'monitor') && !quietRecord();
+    };
+
+    // A node seen for the first time gets its /status now rather than at the
+    // next refresh, so the Monitor overlay appears straight away.
+    const fetching = new Set();
+    const fetchOne = async (id) => {
+        const node = devices.get(id);
+        if (!node || !node.ip || fetching.has(id) || !statusWanted()) {
+            return;
+        }
+        fetching.add(id);
+        try {
+            const result = await fetchStatus(node.ip);
+            if (result && result.success) {
+                setFw(id, result.status);
+                emitDevices();
+            }
+        } finally {
+            fetching.delete(id);
         }
     };
 
     let fwRefreshing = false;
     const refreshFirmware = async () => {
-        if (fwRefreshing || getUiView().view !== 'devices' || quietRecord()) {
+        if (fwRefreshing || !statusWanted()) {
             return;
         }
         fwRefreshing = true;

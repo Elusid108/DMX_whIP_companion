@@ -31,11 +31,48 @@ const normalizeSdPins = (raw = {}) => ({
 
 let cache = null;
 
+// Last window position and size; null until the window has been moved.
+const normalizeBounds = (raw) => {
+    if (!raw || typeof raw !== 'object') {
+        return null;
+    }
+    const n = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v)) : null);
+    const bounds = { x: n(raw.x), y: n(raw.y), width: n(raw.width), height: n(raw.height) };
+    if (Object.values(bounds).some((v) => v == null) || bounds.width < 360 || bounds.height < 480) {
+        return null;
+    }
+    return { ...bounds, maximized: Boolean(raw.maximized) };
+};
+
+// Monitor view toggles. groupMode is per universe ('artnet:0' -> 'auto' |
+// 'off' | '1'..'5'); only overrides are kept.
+const GROUP_MODES = new Set(['off', '1', '2', '3', '4', '5']);
+const normalizeMonitor = (raw) => {
+    const m = raw && typeof raw === 'object' ? raw : {};
+    const groupMode = {};
+    if (m.groupMode && typeof m.groupMode === 'object') {
+        Object.entries(m.groupMode).slice(0, 256).forEach(([key, value]) => {
+            if (/^(artnet|sacn):\d{1,5}$/.test(key) && GROUP_MODES.has(String(value))) {
+                groupMode[key] = String(value);
+            }
+        });
+    }
+    return {
+        displayFormat: ['decimal', 'percent', 'hex'].includes(m.displayFormat) ? m.displayFormat : 'decimal',
+        gridDimensions: ['auto', '8x64', '16x32', '32x16'].includes(m.gridDimensions) ? m.gridDimensions : 'auto',
+        showAnimations: m.showAnimations !== false,
+        showNodes: m.showNodes !== false,
+        colorBars: m.colorBars !== false,
+        groupMode
+    };
+};
+
 const normalize = (raw = {}) => ({
     libraryDir: typeof raw.libraryDir === 'string' && raw.libraryDir.trim()
         ? raw.libraryDir.trim()
         : defaultLibraryDir(),
     theme: raw.theme === 'light' ? 'light' : 'dark',
+    windowBounds: normalizeBounds(raw.windowBounds),
     flashPort: typeof raw.flashPort === 'string' ? raw.flashPort : '',
     flashBoardId: typeof raw.flashBoardId === 'string' && raw.flashBoardId.trim()
         ? raw.flashBoardId.trim()
@@ -53,7 +90,8 @@ const normalize = (raw = {}) => ({
     flashShowRole: ['host', 'member'].includes(raw.flashShowRole) ? raw.flashShowRole : 'standalone',
     flashShowSsid: typeof raw.flashShowSsid === 'string' ? raw.flashShowSsid : '',
     flashShowPass: typeof raw.flashShowPass === 'string' ? raw.flashShowPass : '',
-    flashShowCh: clampInt(raw.flashShowCh, 1, 13, 6)
+    flashShowCh: clampInt(raw.flashShowCh, 1, 13, 6),
+    monitor: normalizeMonitor(raw.monitor)
 });
 
 const loadSettings = () => {
