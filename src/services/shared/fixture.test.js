@@ -97,3 +97,43 @@ test('fixture JSON <-> form fields', () => {
         s1px: '4,6'
     });
 });
+
+test('channel map: header rows with value meanings', () => {
+    const rows = fx.channelMap({ mode: 'dim', uni: 2, ch: 101, subs: [] }, outputs, []);
+    assert.equal(rows.length, 10);
+    assert.deepEqual([rows[0].channels, rows[0].name], ['101', 'Master dimmer']);
+    assert.match(rows[3].values, /0 none/);
+    assert.equal(rows[9].channels, '110');
+    assert.match(rows[9].values, /0 normal playback/);
+});
+
+test('channel map: one row per sub-fixture in Dim and RGB', () => {
+    const subOf = new Array(96).fill(-1);
+    subOf[0] = 0;
+    subOf[1] = 0;
+    subOf[5] = 1;
+    const subs = [{ name: 'Left' }, { name: '' }];
+    const dim = fx.channelMap({ mode: 'dim', uni: 0, ch: 1, subs }, outputs, subOf);
+    assert.deepEqual(dim.slice(10).map((r) => [r.channels, r.name, r.values]), [
+        ['11-12', 'Left', 'Dim, Strobe · 2 px'],
+        ['13-14', 'Sub 2', 'Dim, Strobe · 1 px']
+    ]);
+    const rgb = fx.channelMap({ mode: 'rgb', uni: 0, ch: 1, subs }, outputs, subOf);
+    assert.deepEqual(rgb.slice(10).map((r) => r.channels), ['11-15', '16-20']);
+});
+
+test('channel map: Full rows per segment across a universe', () => {
+    // 64 px + 32 px at 3 ch from ch 1: header 1-10, seg 1 11-202, seg 2
+    // 203-298. 200 px from ch 400: header 400-409, seg 1 410-511 (34 px)
+    // then U+1 from ch 1.
+    const rows = fx.channelMap({ mode: 'full', uni: 4, ch: 1, subs: [] }, [{ segs: [{ count: 64, ch_px: 3, order: 'grb' }, { count: 32, ch_px: 3 }] }]);
+    assert.deepEqual(rows.slice(10).map((r) => [r.channels, r.name, r.values]), [
+        ['11-202', 'Out 1 Seg 1', 'px 0-63 · 3 ch each (G, R, B)'],
+        ['203-298', 'Out 1 Seg 2', 'px 64-95 · 3 ch each (R, G, B)']
+    ]);
+    const wide = fx.channelMap({ mode: 'full', uni: 4, ch: 400, subs: [] }, [{ segs: [{ count: 200, ch_px: 4, white: true, order: 'grbw' }] }]);
+    // 102 slots after the header: 25 px (to 509) in U4, 128 px fill U5,
+    // the last 47 px end at U6 ch 188.
+    assert.equal(wide[10].channels, 'U4: 410 - U6: 188');
+    assert.match(wide[10].values, /4 ch each \(G, R, B, W\)/);
+});

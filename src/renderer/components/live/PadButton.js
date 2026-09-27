@@ -4,7 +4,7 @@ const { cx } = require('../ui');
 
 // One pad: Flash is lit while held, Toggle flips on each press. Pointer
 // capture per pad keeps several held pads independent on a touch screen.
-const PadButton = ({ index, control, lit, editing, onPress, onEdit, address }) => {
+const PadButton = ({ index, control, lit, editing, armed, mapped, onPress, onEdit, address }) => {
     const rootRef = useRef(null);
     const heldRef = useRef(null);
     const label = control.name || `P${index + 1}`;
@@ -57,7 +57,7 @@ const PadButton = ({ index, control, lit, editing, onPress, onEdit, address }) =
     return React.createElement('button', {
         ref: rootRef,
         type: 'button',
-        className: cx('live-pad', lit && 'is-lit', editing && 'is-editing'),
+        className: cx('live-pad', lit && 'is-lit', editing && 'is-editing', armed && 'is-armed'),
         'aria-pressed': lit,
         'aria-label': `${label}, ${control.mode === 'flash' ? 'flash' : 'toggle'}, ${address}`,
         onPointerDown,
@@ -67,6 +67,7 @@ const PadButton = ({ index, control, lit, editing, onPress, onEdit, address }) =
         onKeyUp,
         onContextMenu: (event) => event.preventDefault()
     },
+        mapped && React.createElement('span', { className: 'live-midi-badge', title: 'Mapped to MIDI' }, 'MIDI'),
         React.createElement('span', { className: 'live-pad-name' }, label),
         React.createElement('span', { className: 'live-pad-meta' }, address),
         React.createElement('span', { className: 'live-pad-meta' }, control.mode === 'flash' ? 'Flash' : 'Toggle')

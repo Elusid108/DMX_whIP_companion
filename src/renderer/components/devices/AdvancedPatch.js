@@ -2,13 +2,14 @@ const React = require('react');
 const { useEffect, useMemo, useState } = React;
 const ipcRenderer = require('../../ipc');
 const {
+    GENERAL_NOTE,
     MAX_SUBS,
     MODES,
     NAME_MAX,
+    channelMap,
     channelText,
     formatRanges,
     fromFixture,
-    headerChannels,
     layout,
     pixelChannels,
     pixelsFromOutputs,
@@ -34,12 +35,6 @@ const {
 const ROW_H = 36;
 const LIST_H = 360;
 const OVERSCAN = 8;
-
-const MODE_HINT = {
-    dim: 'Dimmer + strobe per sub-fixture over the recorded look (SD or the live stream). Needs its own universe.',
-    rgb: 'Dimmer, strobe and colour per sub-fixture from the console. Ungrouped pixels stay dark.',
-    full: 'Every LED from the console, after the header.'
-};
 
 const footText = (fx, lay, pixelCount) => {
     const math = fx.mode === 'full'
@@ -383,13 +378,32 @@ const AdvancedPatch = ({ open, device, onClose }) => {
                         onChange: (event) => edit({ ch: Math.min(512, Math.max(1, parseInt(event.target.value, 10) || 1)) })
                     }))
             ),
-            React.createElement('p', { className: 'text-xs text-muted' }, MODE_HINT[fx.mode]),
+            React.createElement('p', { className: 'text-xs text-fg-soft' }, MODES[fx.mode].description),
+            React.createElement('p', { className: 'text-xs text-muted mt-1' }, GENERAL_NOTE),
             React.createElement('p', { className: 'readout' }, footText(fx, lay, pixels.length)),
             (problem || serverErr) && React.createElement('p', { className: 'text-xs text-danger mt-1' }, problem || serverErr),
-            React.createElement('details', { className: 'mt-1 mb-2' },
-                React.createElement('summary', { className: 'label-micro cursor-pointer' }, 'Header channels'),
-                React.createElement('p', { className: 'readout' },
-                    headerChannels(fx).map((h) => `${h.channel} ${h.name}`).join(' · '))),
+            React.createElement('details', { className: 'mt-2 mb-2', open: true },
+                React.createElement('summary', { className: 'label-micro cursor-pointer' },
+                    `Channel map · ${fx.proto === 'sacn' ? 'sACN' : 'Art-Net'} universe ${fx.uni}`),
+                React.createElement('div', {
+                    className: 'mt-1 max-h-64 overflow-y-auto rounded-md border border-line',
+                    role: 'table',
+                    'aria-label': 'Channel map'
+                },
+                    React.createElement('div', {
+                        className: 'grid grid-cols-[minmax(5.5rem,auto)_minmax(7rem,auto)_1fr] text-xs'
+                    },
+                        ['Channel', 'Function', 'Values'].map((h) => React.createElement('div', {
+                            key: h,
+                            role: 'columnheader',
+                            className: 'sticky top-0 bg-panel px-2 py-1 font-medium text-muted border-b border-line'
+                        }, h)),
+                        channelMap(fx, outputs, subOf).map((row, i) => [
+                            React.createElement('div', { key: `c${i}`, role: 'cell', className: 'px-2 py-1 border-b border-line tabular-nums text-fg-soft whitespace-nowrap' }, row.channels),
+                            React.createElement('div', { key: `n${i}`, role: 'cell', className: 'px-2 py-1 border-b border-line truncate' }, row.name),
+                            React.createElement('div', { key: `v${i}`, role: 'cell', className: 'px-2 py-1 border-b border-line text-muted' }, row.values)
+                        ])
+                    ))),
             React.createElement('div', { className: 'grid gap-3 md:grid-cols-[17rem_1fr]' },
                 React.createElement('div', { className: 'min-w-0' },
                     React.createElement('div', { className: 'label-micro mb-1' }, `Sub-fixtures · ${fx.subs.length}`),

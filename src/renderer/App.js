@@ -11,6 +11,7 @@ const MiniPlayer = require('./components/controls/MiniPlayer');
 const Gallery = require('./components/ui/Gallery');
 const { LivePanel, LiveRail } = require('./components/live/LivePanel');
 const liveStore = require('./liveStore');
+const midiStore = require('./midiStore');
 const { Dialog, IconButton, Icons, Select, Tabs, ToastProvider, cx } = require('./components/ui');
 const useMediaQuery = require('./hooks/useMediaQuery');
 const { applyTheme } = require('./theme');
@@ -112,7 +113,7 @@ const App = () => {
     // Live layout loads at start (not on first visit) so its levels are in
     // step with the main process from the outset.
     React.useEffect(() => {
-        liveStore.load();
+        liveStore.load().then(() => midiStore.start());
     }, []);
     const [libraryRail, setLibraryRail] = React.useState(null);
     const [devicesRail, setDevicesRail] = React.useState(null);

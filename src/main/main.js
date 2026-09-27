@@ -126,6 +126,22 @@ function createWindow() {
         }
     });
 
+    // Web MIDI (Live tab) for the app page only, never for an embedded node
+    // portal. Chromium asks for "midiSysex" for any MIDI access, even
+    // without sysex, so both names are allowed here. Other permissions keep
+    // Electron's default.
+    const MIDI_PERMISSIONS = new Set(['midi', 'midiSysex']);
+    const midiAllowed = (webContents) => (
+        Boolean(mainWindow) && !mainWindow.isDestroyed() && webContents === mainWindow.webContents
+    );
+    const ses = mainWindow.webContents.session;
+    ses.setPermissionRequestHandler((webContents, permission, callback) => {
+        callback(MIDI_PERMISSIONS.has(permission) ? midiAllowed(webContents) : true);
+    });
+    ses.setPermissionCheckHandler((webContents, permission) => (
+        MIDI_PERMISSIONS.has(permission) ? midiAllowed(webContents) : true
+    ));
+
     mainWindow.on('page-title-updated', (event) => {
         event.preventDefault();
     });

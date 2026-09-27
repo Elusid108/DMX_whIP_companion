@@ -14,23 +14,45 @@ const MAX_RANGES = 256;
 const MAX_UNIVERSES = 6;
 const NAME_MAX = 23;
 
-const HEADER_NAMES = [
-    'Master dimmer',
-    'Strobe',
-    'Hue shift',
-    'Filter red',
-    'Filter green',
-    'Filter blue',
-    'Add red',
-    'Add green',
-    'Add blue',
-    'Clip select'
+// The header in every mode, with what the values do. 0 is "no effect" on
+// every channel (firmware 0.48+), so channels a console leaves unpatched are
+// ignored; dimmers stay open until the console first raises them.
+const HEADER_INFO = [
+    { name: 'Master dimmer', values: '0-255 · open until first raised' },
+    { name: 'Strobe', values: '0-9 open · 10-255 = 1-25 Hz' },
+    { name: 'Hue shift', values: '0 none · 1-255 round the colour wheel' },
+    { name: 'Filter red', values: 'Red removed · 0 none' },
+    { name: 'Filter green', values: 'Green removed · 0 none' },
+    { name: 'Filter blue', values: 'Blue removed · 0 none' },
+    { name: 'Add red', values: 'Red added · 0 none' },
+    { name: 'Add green', values: 'Green added · 0 none' },
+    { name: 'Add blue', values: 'Blue added · 0 none' },
+    { name: 'Clip select', values: '0 normal playback · n = n-th look on the SD' }
 ];
 
+const HEADER_NAMES = HEADER_INFO.map((h) => h.name);
+
+const GENERAL_NOTE = 'A channel left at 0 has no effect, so channels your console doesn’t patch are ignored. Dimmers stay open until the console first raises them.';
+
 const MODES = {
-    dim: { label: 'Dim + FX', per: 2, fields: ['Dim', 'Strobe'] },
-    rgb: { label: 'RGB + FX', per: 5, fields: ['Dim', 'Strobe', 'Red', 'Green', 'Blue'] },
-    full: { label: 'Full', per: 0, fields: [] }
+    dim: {
+        label: 'Dim + FX',
+        per: 2,
+        fields: ['Dim', 'Strobe'],
+        description: 'Overlays what the node already plays: its SD show, a synced group, or the live stream on its main patch. The console adds the header effects and a dimmer + strobe per sub-fixture (2 ch each); with no sub-fixtures it is a pure overlay. It uses its own universe, which never takes over playback; with no console the show plays untouched.'
+    },
+    rgb: {
+        label: 'RGB + FX',
+        per: 5,
+        fields: ['Dim', 'Strobe', 'Red', 'Green', 'Blue'],
+        description: 'The console colours each sub-fixture (dim, strobe, red, green, blue, 5 ch each). The node’s own show is not used, and pixels in no sub-fixture stay dark.'
+    },
+    full: {
+        label: 'Full',
+        per: 0,
+        fields: [],
+        description: 'The console drives every LED directly after the 10 header channels, in each strip’s colour order. It continues into the next universes without splitting a pixel (up to 6).'
+    }
 };
 
 const perSub = (mode) => (MODES[mode] ? MODES[mode].per : 0);
@@ -45,6 +67,8 @@ const segmentsFromOutputs = (outputs) => {
     (Array.isArray(outputs) ? outputs : []).forEach((out, outIndex) => {
         (out.segs || []).forEach((seg, segIndex) => {
             const count = Math.max(0, Number(seg.count) || 0);
+            const cpp = cppOf(seg);
+            const order = String(seg.order || '').toLowerCase();
             segs.push({
                 out: outIndex,
                 seg: segIndex,
@@ -52,7 +76,8 @@ const segmentsFromOutputs = (outputs) => {
                 parts: (out.segs || []).length,
                 g0,
                 count,
-                cpp: cppOf(seg)
+                cpp,
+                order: order.length === cpp ? order : 'rgbwc'.slice(0, cpp)
             });
             g0 += count;
         });
@@ -205,6 +230,67 @@ const pixelsOf = (subOf, k) => {
     return out;
 };
 
+// Channel span as text: "21-25", "7", or "U3: 1-40" / "U2: 500 - U3: 20"
+// when it lies in a later universe than the fixture's own.
+const spanText = (fx, rel0, rel1) => {
+    const at = (rel) => {
+        const u = Math.floor(rel / UNIVERSE);
+        return { u, ch: (rel % UNIVERSE) + 1, tag: u > 0 ? `U${(Number(fx.uni) || 0) + u}: ` : '' };
+    };
+    const a = at(rel0);
+    const b = at(rel1);
+    if (rel0 === rel1) {
+        return `${a.tag}${a.ch}`;
+    }
+    if (a.u === b.u) {
+        return `${a.tag}${a.ch}-${b.ch}`;
+    }
+    return `${a.tag || `U${Number(fx.uni) || 0}: `}${a.ch} - ${b.tag}${b.ch}`;
+};
+
+const LETTERS = { r: 'R', g: 'G', b: 'B', w: 'W', c: 'WW' };
+
+// Every channel's function for the readout: the 10 header rows, then one row
+// per sub-fixture (Dim / RGB) or per segment (Full).
+// Rows: { channels, name, values }.
+const channelMap = (fx, outputs, subOf = []) => {
+    const base = Math.max(0, (Number(fx.ch) || 1) - 1);
+    const rows = HEADER_INFO.map((h, i) => ({
+        channels: spanText(fx, base + i, base + i),
+        name: h.name,
+        values: h.values
+    }));
+    if (fx.mode === 'full') {
+        const segs = segmentsFromOutputs(outputs);
+        const pixels = pixelsFromOutputs(outputs);
+        const lay = layout(fx, pixels);
+        segs.forEach((seg) => {
+            if (!seg.count || !lay.addr) {
+                return;
+            }
+            const first = lay.addr[seg.g0];
+            const last = lay.addr[seg.g0 + seg.count - 1] + seg.cpp - 1;
+            rows.push({
+                channels: spanText(fx, first, last),
+                name: `Out ${seg.out + 1} Seg ${seg.seg + 1}`,
+                values: `px ${seg.g0}-${seg.g0 + seg.count - 1} · ${seg.cpp} ch each (${seg.order.split('').map((l) => LETTERS[l] || l.toUpperCase()).join(', ')})`
+            });
+        });
+        return rows;
+    }
+    const mode = MODES[fx.mode];
+    (fx.subs || []).forEach((sub, k) => {
+        const rel = base + HEADER + (mode.per * k);
+        const count = pixelsOf(subOf, k).length;
+        rows.push({
+            channels: spanText(fx, rel, rel + mode.per - 1),
+            name: sub.name || `Sub ${k + 1}`,
+            values: `${mode.fields.join(', ')} · ${count} px`
+        });
+    });
+    return rows;
+};
+
 // Everything the firmware would reject that can be checked here.
 const validate = (fx, subOf, pixels) => {
     const ch = Number(fx.ch);
@@ -277,12 +363,15 @@ const toFields = (fx, subOf) => {
 };
 
 module.exports = {
+    GENERAL_NOTE,
     HEADER,
+    HEADER_INFO,
     HEADER_NAMES,
     MAX_SUBS,
     MAX_UNIVERSES,
     MODES,
     NAME_MAX,
+    channelMap,
     channelText,
     formatRanges,
     fromFixture,

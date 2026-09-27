@@ -607,6 +607,26 @@
     @apply w-full truncate text-center text-[9px] opacity-75 tabular-nums;
   }
 
+  /* MIDI learn: the armed control pulses until a message is captured. */
+  .live-fader,
+  .live-pad {
+    @apply relative;
+  }
+
+  .live-fader.is-armed,
+  .live-pad.is-armed {
+    @apply outline outline-2 outline-accent animate-pulse;
+  }
+
+  .live-midi-badge {
+    @apply absolute top-0 right-0 rounded-sm px-0.5 text-[8px] font-semibold leading-3
+      bg-accent/20 text-accent pointer-events-none;
+  }
+
+  .live-pad.is-lit .live-midi-badge {
+    @apply bg-on-accent/25 text-on-accent;
+  }
+
   /* Touch screens: 44 px targets. */
   @media (pointer: coarse) {
     .live-fader-track {

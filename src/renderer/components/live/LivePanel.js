@@ -1,19 +1,59 @@
 const React = require('react');
 const { useEffect, useMemo, useRef, useState, useSyncExternalStore } = React;
-const { Button, Field, Popover, Select, TextInput } = require('../ui');
+const { Button, Field, Popover, Select, TextInput, Toggle, cx } = require('../ui');
 const Fader = require('./Fader');
 const PadButton = require('./PadButton');
 const ControlEditor = require('./ControlEditor');
 const liveStore = require('../../liveStore');
+const midiStore = require('../../midiStore');
 const {
     FADERS,
     PADS,
     MAX_UNI,
     MIN_UNI,
-    addressLabel
+    addressLabel,
+    targetInfo,
+    targetOf
 } = require('../../../services/shared/liveControl');
 
 const useLive = () => useSyncExternalStore(liveStore.subscribe, liveStore.getSnapshot);
+const useMidi = () => useSyncExternalStore(midiStore.subscribe, midiStore.getSnapshot);
+
+const targetName = (layout, target) => {
+    const info = targetInfo(target);
+    if (!info) {
+        return target;
+    }
+    const c = layout[info.kind][info.index];
+    const short = `${info.kind === 'faders' ? 'F' : 'P'}${info.index + 1}`;
+    return c && c.name ? `${c.name} (${short})` : short;
+};
+
+// Learn mode strip: what is listening, what was just captured.
+const LearnBar = ({ layout, midi }) => {
+    const mapped = midi.armed ? midi.maps.filter((m) => m.target === midi.armed) : [];
+    let text;
+    if (midi.status === 'unsupported' || midi.status === 'denied') {
+        text = 'MIDI is not available in this window.';
+    } else if (midi.armed) {
+        text = `Listening for ${targetName(layout, midi.armed)}: move or press a control on your MIDI device.`;
+    } else if (midi.captured) {
+        text = `${targetName(layout, midi.captured.target)} \u2190 ${midi.captured.device} \u00b7 ${midi.captured.label}. Click the next fader or pad, or Done.`;
+    } else {
+        text = 'Click a fader or pad, then move or press a control on your MIDI device. Esc or Done to finish.';
+    }
+    return React.createElement('div', {
+        className: 'flex flex-wrap items-center gap-2 px-3 py-2 text-xs border-b border-line bg-selected',
+        role: 'status'
+    },
+        React.createElement('span', { className: cx('flex-1 min-w-[12rem]', midi.armed ? 'text-accent font-medium' : 'text-fg-soft') }, text),
+        midi.heard && React.createElement('span', { className: 'text-muted' }, `Heard: ${midi.heard.device} \u00b7 ${midi.heard.label}`),
+        midi.armed && mapped.length > 0 && React.createElement(Button, {
+            onClick: () => midiStore.clearTarget(midi.armed)
+        }, 'Clear mapping'),
+        midi.armed && React.createElement(Button, { onClick: midiStore.disarm }, 'Cancel')
+    );
+};
 
 const BANK = 16;
 
@@ -86,6 +126,10 @@ const PatchPopover = ({ anchorRef, onClose }) => {
 
 const LivePanel = ({ outputNicLabel }) => {
     const { layout, state } = useLive();
+    const midi = useMidi();
+    const learning = midi.learning;
+    const learningRef = useRef(false);
+    learningRef.current = learning;
     const [editing, setEditing] = useState(false);
     const [editor, setEditor] = useState(null);
     const [patchOpen, setPatchOpen] = useState(false);
@@ -99,17 +143,51 @@ const LivePanel = ({ outputNicLabel }) => {
             setEditor(null);
         }
     }, [editing]);
+    // Leaving the tab ends Learn.
+    useEffect(() => () => midiStore.setLearning(false), []);
+    useEffect(() => {
+        if (!learning) {
+            return undefined;
+        }
+        const onKey = (event) => {
+            if (event.key !== 'Escape') {
+                return;
+            }
+            if (midiStore.getSnapshot().armed) {
+                midiStore.disarm();
+            } else {
+                midiStore.setLearning(false);
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [learning]);
+
+    const toggleLearn = () => {
+        setEditing(false);
+        midiStore.setLearning(!learning);
+    };
+    const toggleEdit = () => {
+        midiStore.setLearning(false);
+        setEditing((v) => !v);
+    };
+    const mappedTargets = useMemo(() => new Set(midi.maps.map((m) => m.target)), [midi.maps]);
 
     // Stable per-control handlers so memoised controls only redraw on their
     // own change.
     const handlers = useMemo(() => ({
+        // In Learn, a press arms the control; in Edit it opens the editor.
         fader: Array.from({ length: FADERS }, (_, i) => ({
             change: (v) => liveStore.setFader(i, v),
-            edit: (ref) => setEditor({ kind: 'faders', index: i, ref })
+            edit: (ref) => (learningRef.current
+                ? midiStore.arm(targetOf('faders', i))
+                : setEditor({ kind: 'faders', index: i, ref }))
         })),
         pad: Array.from({ length: PADS }, (_, i) => ({
             press: (down) => liveStore.pressPad(i, down),
-            edit: (ref) => setEditor({ kind: 'pads', index: i, ref })
+            edit: (ref) => (learningRef.current
+                ? midiStore.arm(targetOf('pads', i))
+                : setEditor({ kind: 'pads', index: i, ref }))
         }))
     }), []);
 
@@ -119,7 +197,9 @@ const LivePanel = ({ outputNicLabel }) => {
         control: layout.faders[i],
         address: addressLabel(layout.faders[i]),
         value: state.faders[i],
-        editing,
+        editing: editing || learning,
+        armed: midi.armed === targetOf('faders', i),
+        mapped: mappedTargets.has(targetOf('faders', i)),
         onChange: handlers.fader[i].change,
         onEdit: handlers.fader[i].edit
     });
@@ -136,8 +216,14 @@ const LivePanel = ({ outputNicLabel }) => {
             React.createElement(Button, {
                 active: editing,
                 'aria-pressed': editing,
-                onClick: () => setEditing((v) => !v)
+                onClick: toggleEdit
             }, editing ? 'Done' : 'Edit'),
+            React.createElement(Button, {
+                active: learning,
+                'aria-pressed': learning,
+                title: 'Map faders and pads to a MIDI controller',
+                onClick: toggleLearn
+            }, learning ? 'Done' : 'Learn MIDI'),
             React.createElement('button', {
                 ref: patchRef,
                 type: 'button',
@@ -157,6 +243,7 @@ const LivePanel = ({ outputNicLabel }) => {
         editing && React.createElement('p', { className: 'px-3 pt-2 text-xs text-muted' },
             'Press a fader or pad to set its name and address.'
         ),
+        learning && React.createElement(LearnBar, { layout, midi }),
         React.createElement('div', { className: 'live-surface' },
             React.createElement('section', { className: 'live-faders', 'aria-label': 'Faders' },
                 bank(0),
@@ -169,7 +256,9 @@ const LivePanel = ({ outputNicLabel }) => {
                     control: pad,
                     address: addressLabel(pad),
                     lit: state.pads[i],
-                    editing,
+                    editing: editing || learning,
+                    armed: midi.armed === targetOf('pads', i),
+                    mapped: mappedTargets.has(targetOf('pads', i)),
                     onPress: handlers.pad[i].press,
                     onEdit: handlers.pad[i].edit
                 }))
@@ -179,6 +268,8 @@ const LivePanel = ({ outputNicLabel }) => {
             key: `${editor.kind}${editor.index}`,
             target: editor,
             control: layout[editor.kind][editor.index],
+            midiMaps: midi.maps.filter((m) => m.target === targetOf(editor.kind, editor.index)),
+            onClearMidi: () => midiStore.clearTarget(targetOf(editor.kind, editor.index)),
             anchorRef: editor.ref,
             onChange: (patch) => liveStore.updateControl(editor.kind, editor.index, patch),
             onClose: () => setEditor(null)
@@ -191,6 +282,101 @@ const LivePanel = ({ outputNicLabel }) => {
 };
 
 // Left rail on the Live view: where the output goes.
+// Light-on value per controller: Auto follows its profile.
+const OnValue = ({ device }) => {
+    const [text, setText] = useState(device.on ? String(device.on) : '');
+    useEffect(() => {
+        setText(device.on ? String(device.on) : '');
+    }, [device.on]);
+    const commit = () => {
+        const n = Number(text);
+        const on = text.trim() === '' ? 0 : (Number.isInteger(n) && n >= 1 && n <= 127 ? n : device.on);
+        setText(on ? String(on) : '');
+        midiStore.setDeviceOption(device.key, { on });
+    };
+    return React.createElement('label', { className: 'flex items-center gap-1.5 text-xs text-muted' },
+        'Light on',
+        React.createElement(TextInput, {
+            className: 'w-16 py-0.5 text-xs',
+            inputMode: 'numeric',
+            value: text,
+            placeholder: 'Auto',
+            'aria-label': `${device.key} light-on value, 1-127, empty for Auto`,
+            onChange: (event) => setText(event.target.value),
+            onBlur: commit,
+            onKeyDown: (event) => {
+                if (event.key === 'Enter') {
+                    commit();
+                }
+            }
+        })
+    );
+};
+
+const MidiDevices = () => {
+    const midi = useMidi();
+    let note = '';
+    if (midi.status === 'unsupported') {
+        note = 'MIDI is not available in this window.';
+    } else if (midi.status === 'denied') {
+        note = 'MIDI access was refused. Rescan to ask again.';
+    } else if (midi.status === 'idle') {
+        note = 'Starting MIDI\u2026';
+    } else if (!midi.devices.length) {
+        note = 'No MIDI devices found. Plug one in (it appears by itself) or Rescan.';
+    }
+    return React.createElement('div', { className: 'flex flex-col gap-2' },
+        React.createElement('div', { className: 'flex items-center gap-2' },
+            React.createElement('div', { className: 'label-micro flex-1' }, 'MIDI devices'),
+            React.createElement(Button, { className: 'py-0.5', onClick: midiStore.rescan }, 'Rescan')
+        ),
+        note && React.createElement('p', { className: 'text-xs text-muted' }, note),
+        midi.devices.map((d) => React.createElement('div', { key: d.key, className: 'kv-row flex-col items-stretch gap-1.5 py-2 px-2' },
+            React.createElement('div', { className: 'flex items-center gap-2 min-w-0' },
+                React.createElement('span', {
+                    className: cx('w-2 h-2 rounded-full flex-none transition-colors',
+                        d.active ? 'bg-accent' : (d.busy ? 'bg-warn' : (d.online ? 'bg-ok' : 'bg-faint'))),
+                    role: 'img',
+                    'aria-label': d.busy ? 'In use by another program' : (d.online ? 'Connected' : 'Not connected')
+                }),
+                React.createElement('div', { className: 'flex flex-col min-w-0 flex-1' },
+                    React.createElement('span', { className: 'text-sm truncate', title: d.key }, d.key),
+                    React.createElement('span', { className: 'text-[11px] text-muted truncate' },
+                        d.online || d.output
+                            ? `${d.profile || 'Generic MIDI'} \u00b7 ${d.maps} mapped`
+                            : `Not connected \u00b7 ${d.maps} mapped`)
+                )
+            ),
+            d.busy && React.createElement('p', { className: 'text-xs text-warn' },
+                'In use by another program. Close it (or its editor) and Rescan.'),
+            React.createElement('div', { className: 'flex flex-wrap items-center gap-x-3 gap-y-1.5' },
+                React.createElement(Toggle, {
+                    label: 'Feedback',
+                    checked: d.feedback,
+                    disabled: !d.output,
+                    onChange: (on) => midiStore.setDeviceOption(d.key, { feedback: on })
+                }),
+                React.createElement(OnValue, { device: d })
+            ),
+            React.createElement('div', { className: 'flex items-center gap-2' },
+                React.createElement(Button, {
+                    className: 'py-0.5',
+                    disabled: !d.output || !d.maps,
+                    title: 'Light every mapped pad on this controller for a moment',
+                    onClick: () => midiStore.testLights(d.key)
+                }, 'Test lights'),
+                React.createElement(Button, {
+                    className: 'ml-auto py-0.5',
+                    disabled: !d.maps,
+                    onClick: () => midiStore.clearDevice(d.key)
+                }, 'Clear')
+            )
+        )),
+        React.createElement('p', { className: 'text-xs text-muted' },
+            'Every connected controller is listed; the dot flashes when it sends. Learn MIDI, click a fader or pad, then move or press a control. Feedback lights pads and moves motor faders; Akai APC and Behringer controllers are recognised. For other gear, set Light on to the value that lights its pads.')
+    );
+};
+
 const LiveRail = ({ outputNicLabel }) => {
     const { layout } = useLive();
     const [dest, setDest] = useState(layout.dest);
@@ -224,7 +410,8 @@ const LiveRail = ({ outputNicLabel }) => {
                     }
                 }
             })
-        )
+        ),
+        React.createElement(MidiDevices)
     );
 };
 

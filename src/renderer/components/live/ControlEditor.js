@@ -1,7 +1,7 @@
 const React = require('react');
 const { useEffect, useState } = React;
-const { Field, Popover, Select, TextInput } = require('../ui');
-const { MAX_UNI, MIN_UNI, NAME_MAX } = require('../../../services/shared/liveControl');
+const { Button, Field, Popover, Select, TextInput } = require('../ui');
+const { MAX_UNI, MIN_UNI, NAME_MAX, midiLabel } = require('../../../services/shared/liveControl');
 
 // Number field that applies while the text is a valid value and shows the
 // range otherwise (typing "1" on the way to "12" must not snap back).
@@ -31,7 +31,7 @@ const NumberField = ({ label, value, min, max, onApply }) => {
 
 // Edit one fader or pad: name, protocol, universe, channel (and for pads the
 // mode and on level). Changes apply at once and are saved.
-const ControlEditor = ({ target, control, anchorRef, onChange, onClose }) => {
+const ControlEditor = ({ target, control, midiMaps = [], onClearMidi, anchorRef, onChange, onClose }) => {
     const isPad = target.kind === 'pads';
     const proto = control.proto;
     return React.createElement(Popover, {
@@ -95,7 +95,14 @@ const ControlEditor = ({ target, control, anchorRef, onChange, onClose }) => {
                     max: 255,
                     onApply: (on) => onChange({ on })
                 })
-            )
+            ),
+            React.createElement(Field, { label: 'MIDI' },
+                midiMaps.length
+                    ? React.createElement('div', { className: 'flex items-center gap-2' },
+                        React.createElement('span', { className: 'text-xs text-fg-soft flex-1 min-w-0' },
+                            midiMaps.map((m) => `${m.device} \u00b7 ${midiLabel(m)}`).join(', ')),
+                        React.createElement(Button, { className: 'py-0.5', onClick: onClearMidi }, 'Clear'))
+                    : React.createElement('span', { className: 'text-xs text-muted' }, 'Not mapped. Use Learn MIDI.'))
         )
     );
 };

@@ -5,7 +5,7 @@ const { cx } = require('../ui');
 // Vertical 0-255 fader. Pointer capture per fader, so several fingers can
 // move several faders at once; the track takes the level under the pointer.
 // In edit mode a press opens the editor instead of moving the level.
-const Fader = ({ index, control, value, editing, onChange, onEdit, address }) => {
+const Fader = ({ index, control, value, editing, armed, mapped, onChange, onEdit, address }) => {
     const trackRef = useRef(null);
     const rootRef = useRef(null);
     const dragRef = useRef(null);
@@ -72,8 +72,9 @@ const Fader = ({ index, control, value, editing, onChange, onEdit, address }) =>
 
     return React.createElement('div', {
         ref: rootRef,
-        className: cx('live-fader', editing && 'is-editing')
+        className: cx('live-fader', editing && 'is-editing', armed && 'is-armed')
     },
+        mapped && React.createElement('span', { className: 'live-midi-badge', title: 'Mapped to MIDI' }, 'MIDI'),
         React.createElement('div', { className: 'live-fader-value' }, value),
         React.createElement('div', {
             ref: trackRef,

@@ -48,7 +48,7 @@ const queueFlush = () => {
 const queueSave = () => {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-        ipcRenderer.invoke('live-save', { faders: layout.faders, pads: layout.pads, dest: layout.dest })
+        ipcRenderer.invoke('live-save', { faders: layout.faders, pads: layout.pads, dest: layout.dest, midi: layout.midi })
             .catch(() => {});
     }, SAVE_MS);
 };
@@ -135,6 +135,11 @@ const liveStore = {
 
     setDest: (dest) => {
         setLayout({ dest });
+    },
+
+    // MIDI mappings and per-device options (normalized with the layout).
+    setMidi: (midi) => {
+        setLayout({ midi: { ...layout.midi, ...midi } });
     }
 };
 
