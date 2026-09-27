@@ -69,8 +69,8 @@
         }
       },
       "flash": {
-        "mode": "qio",
-        "freq": "80m",
+        "mode": "dio",
+        "freq": "40m",
         "size": "8MB",
         "bootloader": 8192,
         "partitions": 32768,
