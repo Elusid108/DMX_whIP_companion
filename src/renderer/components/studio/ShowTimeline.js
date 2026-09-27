@@ -22,7 +22,7 @@ const parseUniverseKey = (key) => {
     };
 };
 
-const protocolLabel = (protocol) => (protocol === 'sacn' ? 'sACN' : 'Art-Net');
+const { protocolName: protocolLabel } = require('../../../services/shared/format');
 
 const formatTick = (seconds, step) => {
     const total = Math.max(0, seconds);
@@ -320,10 +320,10 @@ const ShowTimeline = ({
     }, [pixelsPerSecond, scrollLeft, viewWidth]);
 
     return React.createElement('div', {
-        className: 'flex flex-1 min-h-0 flex-col bg-white dark:bg-zinc-900 relative'
+        className: 'flex flex-1 min-h-0 flex-col bg-surface relative'
     },
         loadError && React.createElement('p', {
-            className: 'px-3 pt-2 text-sm text-red-500'
+            className: 'px-3 pt-2 text-sm text-danger'
         }, loadError),
         React.createElement('div', {
             className: 'flex flex-1 min-h-0 overflow-y-auto'
@@ -351,7 +351,7 @@ const ShowTimeline = ({
                     className: 'timeline-corner justify-between'
                 },
                     React.createElement('span', {
-                        className: 'text-[10px] uppercase tracking-wide text-zinc-500'
+                        className: 'text-[10px] uppercase tracking-wide text-muted'
                     }, 'Clips'),
                     React.createElement('div', {
                         className: 'flex items-center gap-1'
@@ -484,7 +484,7 @@ const ShowTimeline = ({
                     },
                         React.createElement('span', {
                             className: `h-1.5 w-1.5 rounded-full flex-none ${
-                                track.armed ? 'bg-red-500' : 'bg-zinc-400 dark:bg-zinc-600'
+                                track.armed ? 'bg-red-500' : 'bg-faint'
                             }`
                         }),
                         React.createElement('span', {
@@ -492,11 +492,11 @@ const ShowTimeline = ({
                         }, protocolLabel(track.protocol))
                     ),
                     React.createElement('span', {
-                        className: 'text-[10px] text-zinc-500'
+                        className: 'text-[10px] text-muted'
                     }, track.wokenChannels > 0 ? `${track.wokenChannels} ch` : (track.ghost ? 'Armed' : '—'))
                 )),
                 tracks.length === 0 && React.createElement('div', {
-                    className: 'timeline-header text-xs text-zinc-500'
+                    className: 'timeline-header text-xs text-muted'
                 }, 'No layers'),
                 (isFileLoaded || isRecording) && React.createElement(React.Fragment, null,
                     React.createElement('div', { className: 'timeline-header-audio' }, 'Audio L'),
@@ -524,7 +524,7 @@ const ShowTimeline = ({
                     React.createElement('div', { className: 'timeline-ruler' },
                         ticks.list.map((time) => React.createElement('span', {
                             key: Math.round(time * 1000),
-                            className: 'absolute top-0 text-[10px] text-zinc-500 tabular-nums',
+                            className: 'absolute top-0 text-[10px] text-muted tabular-nums',
                             style: { left: `${time * pixelsPerSecond}px` }
                         }, formatTick(time, ticks.step)))
                     ),
@@ -595,10 +595,10 @@ const ShowTimeline = ({
                         style: { left: `${playheadX}px` }
                     }),
                     isArmed && React.createElement('p', {
-                        className: 'absolute inset-x-6 top-12 text-sm text-zinc-500 pointer-events-none'
+                        className: 'absolute inset-x-6 top-12 text-sm text-muted pointer-events-none'
                     }, 'Waiting for start trigger'),
                     isIdle && !isArmed && React.createElement('p', {
-                        className: 'absolute inset-x-6 top-12 text-sm text-zinc-500 pointer-events-none'
+                        className: 'absolute inset-x-6 top-12 text-sm text-muted pointer-events-none'
                     }, 'Select universes, then Record from the playhead, or load a look from Library.')
                 )
             )

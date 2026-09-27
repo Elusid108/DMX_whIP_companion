@@ -152,7 +152,7 @@ const DeviceInspector = ({
 
     if (!device) {
         return React.createElement('div', {
-            className: 'text-sm text-zinc-500 italic p-2'
+            className: 'text-sm text-muted italic p-2'
         }, 'Select a node to see details.');
     }
 
@@ -178,11 +178,11 @@ const DeviceInspector = ({
                 className: 'text-xs text-amber-500'
             }, `Firmware API ${statusApi(status)} is below companion minimum ${MIN_FIRMWARE_API}. Update the node from the Flash tab.`),
             statusError && React.createElement('div', {
-                className: 'text-sm text-red-500'
+                className: 'text-sm text-danger'
             }, statusError)
         ),
         React.createElement('div', {
-            className: 'relative flex-1 min-h-[28rem] rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden bg-zinc-950'
+            className: 'relative flex-1 min-h-[28rem] rounded-md border border-line overflow-hidden bg-zinc-950'
         },
             showPortal
                 ? React.createElement('webview', {
@@ -197,7 +197,7 @@ const DeviceInspector = ({
                     }
                 })
                 : React.createElement('div', {
-                    className: 'absolute inset-0 flex items-center justify-center text-sm text-zinc-500 italic p-4 text-center'
+                    className: 'absolute inset-0 flex items-center justify-center text-sm text-muted italic p-4 text-center'
                 }, device.stale
                     ? 'Node is stale — waiting for ArtPollReply.'
                     : 'Waiting for node HTTP…'),

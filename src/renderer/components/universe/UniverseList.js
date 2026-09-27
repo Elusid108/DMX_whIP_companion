@@ -18,11 +18,11 @@ const UniverseList = ({
     );
 
     return React.createElement('div', {
-        className: 'flex-none p-2 border-b border-zinc-200 dark:border-zinc-800'
+        className: 'flex-none p-2 border-b border-line'
     },
         React.createElement('div', { className: 'mb-1.5' },
             React.createElement('h3', {
-                className: 'text-sm font-semibold text-cyan-600 dark:text-cyan-400'
+                className: 'text-sm font-semibold text-accent'
             }, protocolName),
             React.createElement('div', {
                 className: 'flex items-center gap-2 mt-1'
@@ -31,10 +31,10 @@ const UniverseList = ({
                     type: 'checkbox',
                     checked: allSelected,
                     onChange: () => onSelectAll(protocol),
-                    className: 'h-3.5 w-3.5 accent-cyan-400'
+                    className: 'check'
                 }),
                 React.createElement('span', {
-                    className: 'text-xs text-zinc-500'
+                    className: 'text-xs text-muted'
                 }, 'Select All')
             )
         ),
@@ -55,7 +55,7 @@ const UniverseList = ({
                 })
             ) :
             React.createElement('div', {
-                className: 'text-zinc-500 text-xs italic'
+                className: 'text-muted text-xs italic'
             }, `No ${protocolName} universes detected`)
     );
 };

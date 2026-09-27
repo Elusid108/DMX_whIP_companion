@@ -1,13 +1,12 @@
 const React = require('react');
 const { useEffect, useRef, useState } = React;
 const { useUniverseLevels } = require('../../hooks/useUniverseLevels');
+const { tokenColor, tokenRgb } = require('../../theme');
 
 const COLS = 32;
 const ROWS = 16;
 const CSS_W = 96;
 const CSS_H = 48;
-const ARTNET_RGB = [34, 211, 238];
-const SACN_RGB = [45, 212, 191];
 const NEAR_MARGIN = '120px 0px';
 const FAR_MARGIN = '240px 0px';
 
@@ -46,8 +45,8 @@ const UniverseActivityCanvas = ({ protocol, universeId }) => {
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             ctx.clearRect(0, 0, CSS_W, CSS_H);
 
-            const isDark = document.documentElement.classList.contains('dark');
-            const rgb = protocol === 'sacn' ? SACN_RGB : ARTNET_RGB;
+            const rgb = tokenRgb(protocol === 'sacn' ? 'sacn' : 'artnet');
+            const offFill = tokenColor('ink', 0.06);
             const levels = bufferRef.current;
             const cellW = CSS_W / COLS;
             const cellH = CSS_H / ROWS;
@@ -61,7 +60,7 @@ const UniverseActivityCanvas = ({ protocol, universeId }) => {
                     const x = col * cellW;
                     const y = row * cellH;
                     if (value <= 0) {
-                        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+                        ctx.fillStyle = offFill;
                         ctx.fillRect(x, y, fillW, fillH);
                         continue;
                     }

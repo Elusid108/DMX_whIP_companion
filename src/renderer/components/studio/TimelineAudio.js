@@ -2,6 +2,7 @@ const React = require('react');
 const { useCallback, useRef, useState } = React;
 const { findGapOnTrack, SNAP_GAP_MS } = require('../../../services/shared/compilationEdl');
 const TiledCanvas = require('./TiledCanvas');
+const { tokenColor } = require('../../theme');
 
 const EDGE = 7;
 
@@ -24,8 +25,8 @@ const WaveRow = ({ clips, audioMedia, channel, pixelsPerSecond, durationMs }) =>
     const width = (endMs / 1000) * pixelsPerSecond;
 
     // Row background is CSS; tiles draw only the peaks inside [x0, x1).
-    const draw = useCallback((ctx, { x0, x1, height, isDark }) => {
-        ctx.fillStyle = isDark ? 'rgba(34,211,238,0.85)' : 'rgba(8,145,178,0.8)';
+    const draw = useCallback((ctx, { x0, x1, height }) => {
+        ctx.fillStyle = tokenColor('accent', 0.85);
         const mid = height / 2;
         for (const clip of clips || []) {
             const media = audioMedia && audioMedia[clip.mediaId];

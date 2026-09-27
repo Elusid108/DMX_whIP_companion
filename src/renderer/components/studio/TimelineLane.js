@@ -1,9 +1,7 @@
 const React = require('react');
 const { useCallback } = React;
 const TiledCanvas = require('./TiledCanvas');
-
-const ARTNET_RGB = [34, 211, 238];
-const SACN_RGB = [45, 212, 191];
+const { tokenColor, tokenRgb } = require('../../theme');
 
 const TimelineLane = ({
     protocol,
@@ -22,11 +20,11 @@ const TimelineLane = ({
     );
 
     // Paints only the columns inside the tile being drawn.
-    const draw = useCallback((ctx, { x0, x1, height, isDark }) => {
-        ctx.fillStyle = isDark ? '#09090b' : '#f4f4f5';
+    const draw = useCallback((ctx, { x0, x1, height }) => {
+        ctx.fillStyle = tokenColor('sunken');
         ctx.fillRect(x0, 0, x1 - x0, height);
 
-        const rgb = protocol === 'sacn' ? SACN_RGB : ARTNET_RGB;
+        const rgb = tokenRgb(protocol === 'sacn' ? 'sacn' : 'artnet');
         const rows = Math.max(1, bandsPerBucket || 8);
         const cols = Math.max(1, bucketCount);
         const bandH = height / rows;

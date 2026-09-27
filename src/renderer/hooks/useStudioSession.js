@@ -24,15 +24,7 @@ const neighborStarts = (clips, audioClips, timeMs) => {
     return { back, next };
 };
 
-const formatDuration = (ms) => {
-    if (!ms && ms !== 0) {
-        return '00:00:00';
-    }
-    const minutes = Math.floor(ms / 60000);
-    const seconds = Math.floor((ms % 60000) / 1000);
-    const hundredths = Math.floor((ms % 1000) / 10);
-    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}:${hundredths.toString().padStart(2, '0')}`;
-};
+const { formatDuration } = require('../../services/shared/format');
 
 const fileNameFromPath = (filePath) => {
     if (!filePath) {

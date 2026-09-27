@@ -1,20 +1,7 @@
 const React = require('react');
 const { useEffect, useState } = React;
 
-const formatMs = (ms) => {
-    const value = Math.max(0, Number(ms) || 0);
-    const minutes = Math.floor(value / 60000);
-    const seconds = Math.floor((value % 60000) / 1000);
-    const hundredths = Math.floor((value % 1000) / 10);
-    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(hundredths).padStart(2, '0')}`;
-};
-
-const protocolLabel = (protocols = []) => {
-    if (!protocols.length) {
-        return '—';
-    }
-    return protocols.map((item) => (item === 'sacn' ? 'sACN' : 'Art-Net')).join(' + ');
-};
+const { formatDuration: formatMs, protocolList } = require('../../../services/shared/format');
 
 const ClipInspector = ({ info, x, y, onClose, onApply }) => {
     const [name, setName] = useState(info.name || '');
@@ -65,7 +52,7 @@ const ClipInspector = ({ info, x, y, onClose, onApply }) => {
         onPointerDown: (event) => event.stopPropagation()
     },
         React.createElement('div', { className: 'flex items-center justify-between gap-3 mb-2' },
-            React.createElement('span', { className: 'text-xs font-semibold uppercase tracking-wide text-zinc-500' }, 'Clip'),
+            React.createElement('span', { className: 'text-xs font-semibold uppercase tracking-wide text-muted' }, 'Clip'),
             React.createElement('button', { type: 'button', className: 'btn-quiet !px-1.5 !py-0.5', onClick: onClose }, 'Close')
         ),
         React.createElement('label', { className: 'timeline-inspector-field' },
@@ -138,7 +125,7 @@ const ClipInspector = ({ info, x, y, onClose, onApply }) => {
         ),
         React.createElement('dl', { className: 'timeline-inspector-meta' },
             React.createElement('dt', null, 'Protocols'),
-            React.createElement('dd', null, protocolLabel(info.protocols)),
+            React.createElement('dd', null, protocolList(info.protocols, ' + ')),
             React.createElement('dt', null, 'Universe span'),
             React.createElement('dd', null, info.universeCount
                 ? `${info.startUniverse + (info.universeOffset || 0)}–${info.endUniverse + (info.universeOffset || 0)}`

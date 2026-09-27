@@ -46,12 +46,7 @@ const Tile = ({ x0, width, draw, theme }) => {
             ctx.clearRect(0, 0, pxW, pxH);
             // Row coordinates in, tile pixels out.
             ctx.setTransform(dpr, 0, 0, dpr, -x0 * dpr, 0);
-            draw(ctx, {
-                x0,
-                x1: x0 + width,
-                height,
-                isDark: document.documentElement.classList.contains('dark')
-            });
+            draw(ctx, { x0, x1: x0 + width, height });
         };
         paint();
         const observer = new ResizeObserver(paint);
@@ -71,8 +66,9 @@ const Tile = ({ x0, width, draw, theme }) => {
     );
 };
 
-// draw(ctx, { x0, x1, height, isDark }) paints row coordinates; it only
-// needs to cover [x0, x1). Pass a memoized draw so tiles repaint on change.
+// draw(ctx, { x0, x1, height }) paints row coordinates; it only needs to
+// cover [x0, x1). Pass a memoized draw so tiles repaint on change; tiles also
+// repaint on a theme switch, so draw can read colours from theme.js.
 const TiledCanvas = ({ width, draw }) => {
     const [theme, setTheme] = useState(0);
 

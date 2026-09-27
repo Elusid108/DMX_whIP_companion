@@ -1,31 +1,6 @@
 const React = require('react');
 const { useEffect, useState } = React;
-
-const formatDuration = (ms) => {
-    const value = Number(ms) || 0;
-    const minutes = Math.floor(value / 60000);
-    const seconds = Math.floor((value % 60000) / 1000);
-    const hundredths = Math.floor((value % 1000) / 10);
-    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}:${hundredths.toString().padStart(2, '0')}`;
-};
-
-const formatBytes = (bytes) => {
-    const value = Number(bytes) || 0;
-    if (value < 1024) {
-        return `${value} B`;
-    }
-    if (value < 1024 * 1024) {
-        return `${(value / 1024).toFixed(1)} KB`;
-    }
-    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-};
-
-const formatDate = (ms) => {
-    if (!ms) {
-        return '—';
-    }
-    return new Date(ms).toLocaleString();
-};
+const { formatBytes, formatDate, formatDuration, protocolList } = require('../../../services/shared/format');
 
 const formatRate = (rate) => {
     if (!rate) {
@@ -34,17 +9,10 @@ const formatRate = (rate) => {
     return Number(rate).toFixed(1);
 };
 
-const protocolLabel = (protocols) => {
-    if (!protocols || protocols.length === 0) {
-        return '—';
-    }
-    return protocols.map((protocol) => (protocol === 'artnet' ? 'Art-Net' : 'sACN')).join(', ');
-};
-
 const Kv = ({ label, value }) => React.createElement('div', {
     className: 'kv-row text-sm'
 },
-    React.createElement('span', { className: 'text-xs text-zinc-500 w-24 flex-none' }, label),
+    React.createElement('span', { className: 'text-xs text-muted w-24 flex-none' }, label),
     React.createElement('span', { className: 'truncate' }, value)
 );
 
@@ -73,7 +41,7 @@ const ClickToEdit = ({
     if (!editing) {
         return React.createElement('button', {
             type: 'button',
-            className: `text-left w-full min-h-[1.75rem] ${className || ''} ${value ? '' : 'text-zinc-500 italic'}`,
+            className: `text-left w-full min-h-[1.75rem] ${className || ''} ${value ? '' : 'text-muted italic'}`,
             disabled,
             onClick: () => setEditing(true)
         }, value || placeholder);
@@ -122,10 +90,10 @@ const StackCard = ({ look }) => React.createElement('div', {
         className: 'font-medium text-sm truncate'
     }, look.displayName || look.filename || 'Untitled'),
     React.createElement('div', {
-        className: 'text-xs text-zinc-500'
+        className: 'text-xs text-muted'
     }, look.error
         ? look.error
-        : `${formatDuration(look.duration)} · ${protocolLabel(look.protocols)} · ${(look.universes || []).length} univ`)
+        : `${formatDuration(look.duration)} · ${protocolList(look.protocols)} · ${(look.universes || []).length} univ`)
 );
 
 const ShowInspector = ({
@@ -147,7 +115,7 @@ const ShowInspector = ({
 }) => {
     if (!selection) {
         return React.createElement('div', {
-            className: 'text-sm text-zinc-500 italic p-2'
+            className: 'text-sm text-muted italic p-2'
         }, 'Select a look or folder.');
     }
 
@@ -175,7 +143,7 @@ const ShowInspector = ({
                     ? '1 clip · editable stack'
                     : `${(compilation && compilation.clipCount) || 0} clips · editable stack`),
                 React.createElement('p', {
-                    className: 'text-xs text-zinc-500'
+                    className: 'text-xs text-muted'
                 }, 'Import to Studio appends this stack onto the selected Studio track. Push needs a flattened .dmx export.'),
                 React.createElement('button', {
                     type: 'button',
@@ -214,7 +182,7 @@ const ShowInspector = ({
                     className: 'flex flex-col gap-1.5'
                 },
                     rows.length === 0 && React.createElement('p', {
-                        className: 'text-sm text-zinc-500 italic'
+                        className: 'text-sm text-muted italic'
                     }, 'This folder is empty.'),
                     rows.map((row) => {
                         if (row.kind === 'heading') {
@@ -247,7 +215,7 @@ const ShowInspector = ({
 
     if (!show) {
         return React.createElement('div', {
-            className: 'text-sm text-zinc-500 italic p-2'
+            className: 'text-sm text-muted italic p-2'
         }, 'Select a look to see details.');
     }
 
@@ -278,22 +246,22 @@ const ShowInspector = ({
                 React.createElement(Kv, { label: 'Size', value: formatBytes(show.size) }),
                 React.createElement(Kv, { label: 'Frames', value: String(show.frameCount || 0) }),
                 React.createElement(Kv, { label: 'Packet rate', value: `${formatRate(show.packetRate)} /s` }),
-                React.createElement(Kv, { label: 'Protocol', value: protocolLabel(show.protocols) }),
+                React.createElement(Kv, { label: 'Protocol', value: protocolList(show.protocols) }),
                 React.createElement(Kv, { label: 'Created', value: formatDate(show.created) }),
                 React.createElement(Kv, { label: 'Modified', value: formatDate(show.modified) })
             ),
             show.error && React.createElement('div', {
-                className: 'text-sm text-red-500'
+                className: 'text-sm text-danger'
             }, show.error),
             show.perUniverse && show.perUniverse.length > 0 && React.createElement('div', {
-                className: 'overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800'
+                className: 'overflow-x-auto rounded-lg border border-line'
             },
                 React.createElement('table', {
                     className: 'w-full text-xs text-left'
                 },
                     React.createElement('thead', null,
                         React.createElement('tr', {
-                            className: 'text-zinc-500'
+                            className: 'text-muted'
                         },
                             React.createElement('th', { className: 'py-1.5 px-2' }, 'Universe'),
                             React.createElement('th', { className: 'py-1.5 px-2' }, 'Protocol'),
@@ -305,7 +273,7 @@ const ShowInspector = ({
                     React.createElement('tbody', null,
                         show.perUniverse.map((row) => React.createElement('tr', {
                             key: `${row.protocol}-${row.id}`,
-                            className: 'border-t border-zinc-200 dark:border-zinc-800'
+                            className: 'border-t border-line'
                         },
                             React.createElement('td', { className: 'py-1.5 px-2' }, row.id),
                             React.createElement('td', { className: 'py-1.5 px-2' }, row.protocol === 'artnet' ? 'Art-Net' : 'sACN'),

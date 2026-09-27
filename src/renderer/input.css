@@ -2,7 +2,87 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens. Colours are space-separated RGB channels so Tailwind can add
+ * alpha (bg-accent/20); tailwind.config.js maps each one to a colour name.
+ * Canvases read the same variables through theme.js. Light is the base;
+ * html.dark overrides. Component classes below and new markup use the token
+ * names (bg-surface, border-line, text-muted, ...) instead of zinc/cyan pairs.
+ */
 @layer base {
+  :root {
+    --c-app: 244 244 245;
+    --c-panel: 250 250 250;
+    --c-surface: 255 255 255;
+    --c-sunken: 244 244 245;
+    --c-well: 250 250 250;
+    --c-input: 255 255 255;
+    --c-hover: 228 228 231;
+    --c-selected: 236 254 255;
+    --c-selected-line: 8 145 178;
+    --c-line: 228 228 231;
+    --c-edge: 212 212 216;
+    --c-edge-hover: 113 113 122;
+    --c-thumb: 212 212 216;
+    --c-thumb-hover: 161 161 170;
+    --c-fg: 24 24 27;
+    --c-fg-strong: 24 24 27;
+    --c-fg-soft: 63 63 70;
+    --c-muted: 113 113 122;
+    --c-faint: 161 161 170;
+    --c-accent: 8 145 178;
+    --c-accent-hover: 6 182 212;
+    --c-on-accent: 255 255 255;
+    --c-mark: 34 211 238;
+    --c-danger: 239 68 68;
+    --c-ok: 5 150 105;
+    --c-warn: 217 119 6;
+    --c-artnet: 34 211 238;
+    --c-sacn: 45 212 191;
+    --c-ink: 0 0 0;
+
+    --radius-sm: 0.25rem;
+    --radius: 0.5rem;
+    --radius-lg: 0.75rem;
+    --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --shadow-pop: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  }
+
+  html.dark {
+    color-scheme: dark;
+    --c-app: 9 9 11;
+    --c-panel: 24 24 27;
+    --c-surface: 24 24 27;
+    --c-sunken: 9 9 11;
+    --c-well: 9 9 11;
+    --c-input: 9 9 11;
+    --c-hover: 39 39 42;
+    --c-selected: 39 39 42;
+    --c-selected-line: 37 108 120;
+    --c-line: 39 39 42;
+    --c-edge: 39 39 42;
+    --c-edge-hover: 82 82 91;
+    --c-thumb: 63 63 70;
+    --c-thumb-hover: 82 82 91;
+    --c-fg: 228 228 231;
+    --c-fg-strong: 255 255 255;
+    --c-fg-soft: 212 212 216;
+    --c-muted: 113 113 122;
+    --c-faint: 113 113 122;
+    --c-accent: 34 211 238;
+    --c-accent-hover: 103 232 249;
+    --c-on-accent: 9 9 11;
+    --c-ok: 52 211 153;
+    --c-warn: 251 191 36;
+    --c-ink: 255 255 255;
+    --shadow-pop: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.5);
+  }
+
+  html.light {
+    color-scheme: light;
+  }
+
   html,
   body {
     height: 100%;
@@ -10,20 +90,14 @@
 
   body {
     margin: 0;
-    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-sans);
+    background: rgb(var(--c-app));
+    color: rgb(var(--c-fg));
   }
 
-  html.dark {
-    color-scheme: dark;
-  }
-
-  html.light {
-    color-scheme: light;
-  }
-
-  html.dark select option {
-    background-color: #18181b;
-    color: #e4e4e7;
+  select option {
+    background-color: rgb(var(--c-input));
+    color: rgb(var(--c-fg));
   }
 
   ::-webkit-scrollbar {
@@ -32,115 +106,213 @@
   }
 
   ::-webkit-scrollbar-track {
-    background: #f4f4f5;
-  }
-
-  html.dark ::-webkit-scrollbar-track {
-    background: #09090b;
+    background: rgb(var(--c-sunken));
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #d4d4d8;
+    background: rgb(var(--c-thumb));
     border-radius: 4px;
   }
 
-  html.dark ::-webkit-scrollbar-thumb {
-    background: #3f3f46;
-  }
-
   ::-webkit-scrollbar-thumb:hover {
-    background: #a1a1aa;
+    background: rgb(var(--c-thumb-hover));
   }
 
-  html.dark ::-webkit-scrollbar-thumb:hover {
-    background: #52525b;
+  :focus-visible {
+    outline: 2px solid rgb(var(--c-accent));
+    outline-offset: 1px;
   }
 }
 
 @layer components {
   .field {
-    @apply w-full rounded-lg border px-2.5 py-1.5 text-sm outline-none
-      bg-white border-zinc-300 text-zinc-900
-      dark:bg-zinc-950 dark:border-zinc-800 dark:text-zinc-200
-      focus:border-cyan-600 dark:focus:border-cyan-400
+    @apply w-full rounded-ui border px-2.5 py-1.5 text-sm outline-none
+      bg-input border-edge text-fg
+      focus:border-accent
       disabled:opacity-50;
   }
 
+  .field:focus-visible {
+    outline: none;
+  }
+
+  .field-compact {
+    @apply w-auto min-w-[7rem] py-1;
+  }
+
   .btn-quiet {
-    @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg
-      bg-white border border-zinc-300 text-zinc-700
-      dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300
-      hover:border-zinc-500 hover:text-zinc-900
-      dark:hover:border-zinc-600 dark:hover:text-white
+    @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-ui
+      bg-surface border border-edge text-fg-soft
+      hover:border-edge-hover hover:text-fg-strong
       disabled:opacity-50 disabled:pointer-events-none;
   }
 
   .btn-quiet.is-active {
-    @apply border-cyan-500 text-cyan-700 dark:border-cyan-400 dark:text-cyan-300;
+    @apply border-accent text-accent;
   }
 
   .btn-primary {
-    @apply inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg
-      bg-cyan-600 text-white
-      dark:bg-cyan-400 dark:text-zinc-950
-      hover:bg-cyan-500 dark:hover:bg-cyan-300
+    @apply inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-ui
+      bg-accent text-on-accent
+      hover:bg-accent-hover
       disabled:opacity-50 disabled:pointer-events-none;
   }
 
   .btn-danger {
-    @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg
+    @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-ui
       bg-red-600 text-white
       hover:bg-red-500
       disabled:opacity-50 disabled:pointer-events-none;
   }
 
+  /* Borderless icon action (queue rows, list rows). */
+  .btn-ghost {
+    @apply inline-flex items-center justify-center flex-none p-0.5 rounded-ui-sm
+      text-faint hover:text-fg-strong
+      disabled:opacity-30 disabled:pointer-events-none;
+  }
+
+  .btn-ghost.is-active {
+    @apply text-accent;
+  }
+
+  .check {
+    @apply h-3.5 w-3.5 flex-none;
+    accent-color: rgb(var(--c-mark));
+  }
+
+  .switch {
+    @apply relative inline-flex h-4 w-7 flex-none items-center rounded-full border border-edge bg-hover
+      transition-colors disabled:opacity-50;
+  }
+
+  .switch::after {
+    content: '';
+    @apply absolute left-0.5 h-2.5 w-2.5 rounded-full bg-muted transition-transform;
+  }
+
+  .switch.is-on {
+    @apply border-accent bg-accent/25;
+  }
+
+  .switch.is-on::after {
+    @apply bg-accent;
+    transform: translateX(0.75rem);
+  }
+
+  /* Native range input: keyboard, drag and slider role come for free. */
+  .slider {
+    @apply w-full h-3 bg-transparent cursor-pointer disabled:opacity-50 disabled:cursor-default;
+    -webkit-appearance: none;
+    appearance: none;
+    --fill: 0%;
+  }
+
+  .slider::-webkit-slider-runnable-track {
+    height: 0.75rem;
+    border-radius: 9999px;
+    background:
+      linear-gradient(rgb(var(--c-accent)), rgb(var(--c-accent))) 0 50% / var(--fill) 2px no-repeat,
+      rgb(var(--c-hover));
+  }
+
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-top: 0.125rem;
+    border-radius: 9999px;
+    background: rgb(var(--c-accent));
+  }
+
+  .slider:focus-visible {
+    outline-offset: 2px;
+  }
+
   .kv-row {
-    @apply flex items-center gap-3 w-full text-left px-3 py-2 rounded-lg border
-      border-zinc-200 bg-white
-      dark:border-zinc-800 dark:bg-zinc-900;
+    @apply flex items-center gap-3 w-full text-left px-3 py-2 rounded-ui border
+      border-line bg-surface;
   }
 
   .kv-row.is-active {
-    @apply border-cyan-600 bg-cyan-50 dark:border-cyan-400/40 dark:bg-zinc-800;
-    box-shadow: inset 2px 0 0 #22d3ee;
+    @apply border-selected-line bg-selected;
+    box-shadow: inset 2px 0 0 rgb(var(--c-mark));
   }
 
   .tab-btn {
-    @apply px-3 py-2 text-sm font-medium border-b-2 border-transparent text-zinc-500;
+    @apply px-3 py-2 text-sm font-medium border-b-2 border-transparent text-muted whitespace-nowrap;
   }
 
   .tab-btn.is-active {
-    @apply text-cyan-600 border-cyan-600 dark:text-cyan-400 dark:border-cyan-400;
+    @apply text-accent border-accent;
   }
 
   .label-micro {
-    @apply text-[10px] font-medium uppercase tracking-wider text-zinc-500;
+    @apply text-[10px] font-medium uppercase tracking-wider text-muted;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
   }
 
   .readout {
     font-variant-numeric: tabular-nums;
-    @apply font-mono text-[11px] text-zinc-500;
+    @apply font-mono text-[11px] text-muted;
+  }
+
+  .pop-panel {
+    @apply rounded-ui border border-line bg-surface p-2 text-fg;
+    box-shadow: var(--shadow-pop);
+  }
+
+  .dialog-backdrop {
+    @apply fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4;
+  }
+
+  .dialog-panel {
+    @apply w-full rounded-ui border border-line bg-surface p-3 text-fg max-h-[90vh] overflow-y-auto;
+    box-shadow: var(--shadow-pop);
+  }
+
+  /* Phones: dialogs become bottom sheets. */
+  @media (max-width: 639px) {
+    .dialog-backdrop {
+      @apply items-end p-0;
+    }
+
+    .dialog-panel {
+      @apply max-w-none border-x-0 border-b-0;
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      max-height: 92vh;
+    }
+  }
+
+  .status-pill {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap;
   }
 
   .status-strip {
-    @apply flex flex-col gap-1.5 pb-2 mb-2 border-b border-zinc-200 dark:border-zinc-800;
+    @apply flex flex-col gap-1.5 pb-2 mb-2 border-b border-line;
   }
 
   .module-rule {
-    @apply pt-3 mt-3 border-t border-zinc-200 dark:border-zinc-800;
+    @apply pt-3 mt-3 border-t border-line;
   }
 
   .app-sidebar {
-    @apply w-64 flex flex-col min-h-0 border-r border-zinc-200 dark:border-zinc-800;
+    @apply w-64 flex flex-col min-h-0 border-r border-line;
   }
 
   .app-toolbar {
-    @apply flex items-center flex-wrap gap-x-3 gap-y-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800;
+    @apply flex items-center flex-wrap gap-x-3 gap-y-2 px-3 py-1.5 border-b border-line;
   }
 
   .timeline-corner {
-    @apply flex items-center gap-1 px-2 h-8 flex-none border-b border-r border-zinc-200 dark:border-zinc-800
-      bg-zinc-50 dark:bg-zinc-900;
+    @apply flex items-center gap-1 px-2 h-8 flex-none border-b border-r border-line bg-panel;
   }
 
   .transport-bar {
@@ -149,17 +321,16 @@
 
   .transport-btn {
     @apply inline-flex items-center justify-center h-7 w-7 rounded-full
-      text-zinc-600 dark:text-zinc-200
-      hover:bg-zinc-200/70 dark:hover:bg-zinc-800
+      text-fg-soft hover:bg-hover
       disabled:opacity-40 disabled:pointer-events-none;
   }
 
   .transport-btn.is-play {
-    @apply text-cyan-500 dark:text-cyan-400;
+    @apply text-accent;
   }
 
   .transport-btn.is-record {
-    @apply text-cyan-400;
+    @apply text-mark;
   }
 
   .transport-glyph {
@@ -170,7 +341,7 @@
 
   .timeline-snap {
     @apply absolute top-1 bottom-1 z-[2] flex items-center justify-center
-      rounded-full border border-cyan-400/70 bg-cyan-400/15 text-cyan-700
+      rounded-full border border-mark/70 bg-mark/15 text-cyan-700
       dark:text-cyan-100 cursor-pointer pointer-events-auto;
   }
 
@@ -190,32 +361,30 @@
 
   .timeline-fade-handle {
     @apply absolute top-0 bottom-0 w-1 cursor-ew-resize z-[1];
-    background: rgb(34 211 238 / 0.55);
+    background: rgb(var(--c-mark) / 0.55);
   }
 
   .timeline-header {
     @apply flex flex-col justify-center gap-0.5 px-2.5 h-14 flex-none border-b border-r
-      border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-left min-w-0;
+      border-line bg-surface text-left min-w-0;
   }
 
   .timeline-header.is-active {
-    @apply bg-cyan-50 dark:bg-zinc-800;
-    box-shadow: inset 2px 0 0 #22d3ee;
+    @apply bg-selected;
+    box-shadow: inset 2px 0 0 rgb(var(--c-mark));
   }
 
   .timeline-ruler {
-    @apply relative h-8 flex-none border-b border-zinc-200 dark:border-zinc-800
-      bg-zinc-50 dark:bg-zinc-900;
+    @apply relative h-8 flex-none border-b border-line bg-panel;
   }
 
   .timeline-clips {
-    @apply relative h-7 flex-none border-b border-zinc-200 dark:border-zinc-800
-      bg-zinc-50 dark:bg-zinc-900;
+    @apply relative h-7 flex-none border-b border-line bg-panel;
   }
 
   .timeline-clips.is-ghost,
   .timeline-header-sm.is-ghost {
-    @apply text-[11px] text-zinc-400 dark:text-zinc-500;
+    @apply text-[11px] text-faint;
   }
 
   .timeline-clip-stack {
@@ -224,13 +393,13 @@
 
   .timeline-header-sm {
     @apply flex items-center px-2.5 h-7 flex-none border-b border-r
-      border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-left
-      text-[11px] text-zinc-600 dark:text-zinc-300 cursor-pointer select-none;
+      border-line bg-surface text-left
+      text-[11px] text-fg-soft cursor-pointer select-none;
   }
 
   .timeline-header-sm.is-active {
-    @apply bg-cyan-50 dark:bg-zinc-800;
-    box-shadow: inset 2px 0 0 #22d3ee;
+    @apply bg-selected;
+    box-shadow: inset 2px 0 0 rgb(var(--c-mark));
   }
 
   .timeline-header-sm.is-drop {
@@ -243,13 +412,12 @@
 
   .timeline-header-audio {
     @apply flex items-center px-2.5 h-10 flex-none border-b border-r
-      border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-left
-      text-[11px] text-zinc-600 dark:text-zinc-300;
+      border-line bg-surface text-left
+      text-[11px] text-fg-soft;
   }
 
   .timeline-corner-spacer {
-    @apply h-8 flex-none border-b border-zinc-200 dark:border-zinc-800
-      bg-zinc-50 dark:bg-zinc-900;
+    @apply h-8 flex-none border-b border-line bg-panel;
   }
 
   .timeline-audio-stack {
@@ -258,8 +426,7 @@
   }
 
   .timeline-audio-row {
-    @apply relative h-10 flex-none border-b border-zinc-200 dark:border-zinc-800
-      bg-zinc-100 dark:bg-zinc-950;
+    @apply relative h-10 flex-none border-b border-line bg-sunken;
   }
 
   .timeline-audio-block {
@@ -275,16 +442,16 @@
   }
 
   .timeline-inspector {
-    @apply fixed z-20 w-72 rounded-md border border-zinc-200 dark:border-zinc-700
-      bg-white dark:bg-zinc-900 p-3 shadow-lg text-xs;
+    @apply fixed z-20 w-72 rounded-md border border-line bg-surface p-3 text-xs;
+    box-shadow: var(--shadow-pop);
   }
 
   .timeline-inspector-field {
-    @apply flex flex-col gap-0.5 mb-2 text-[10px] uppercase tracking-wide text-zinc-500;
+    @apply flex flex-col gap-0.5 mb-2 text-[10px] uppercase tracking-wide text-muted;
   }
 
   .timeline-inspector-meta {
-    @apply grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[11px] text-zinc-500 mb-1;
+    @apply grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[11px] text-muted mb-1;
   }
 
   .timeline-inspector-meta dt {
@@ -292,7 +459,7 @@
   }
 
   .timeline-inspector-meta dd {
-    @apply text-zinc-700 dark:text-zinc-200 text-right;
+    @apply text-fg-soft text-right;
   }
 
   .timeline-block {
@@ -302,7 +469,7 @@
   }
 
   .timeline-block.is-active {
-    @apply bg-cyan-400/30 border-cyan-400;
+    @apply bg-mark/30 border-mark;
   }
 
   .timeline-block.is-live {
@@ -330,12 +497,11 @@
   }
 
   .timeline-range {
-    @apply absolute top-0 bottom-0 bg-cyan-400/15 pointer-events-none;
+    @apply absolute top-0 bottom-0 bg-mark/15 pointer-events-none;
   }
 
   .timeline-track {
-    @apply relative h-14 flex-none border-b border-zinc-200 dark:border-zinc-800
-      bg-zinc-100 dark:bg-zinc-950;
+    @apply relative h-14 flex-none border-b border-line bg-sunken;
   }
 
   .timeline-clip {
@@ -343,11 +509,11 @@
   }
 
   .timeline-clip.is-artnet {
-    background: rgba(34, 211, 238, 0.22);
+    background: rgb(var(--c-artnet) / 0.22);
   }
 
   .timeline-clip.is-sacn {
-    background: rgba(45, 212, 191, 0.22);
+    background: rgb(var(--c-sacn) / 0.22);
   }
 
   .timeline-playhead {
@@ -355,7 +521,7 @@
     top: 0;
     bottom: 0;
     width: 1px;
-    background: #22d3ee;
+    background: rgb(var(--c-mark));
     pointer-events: none;
     z-index: 3;
   }
@@ -367,21 +533,20 @@
     left: -4px;
     border-left: 4px solid transparent;
     border-right: 4px solid transparent;
-    border-top: 7px solid #22d3ee;
+    border-top: 7px solid rgb(var(--c-mark));
   }
 
   .timeline-loop {
     position: absolute;
     top: 0;
     height: 3px;
-    background: rgba(34, 211, 238, 0.45);
+    background: rgb(var(--c-mark) / 0.45);
     pointer-events: none;
     z-index: 2;
   }
 
   .timeline-footer {
     @apply flex items-center flex-wrap gap-x-4 gap-y-1 px-3 py-1.5 flex-none
-      border-t border-zinc-200 dark:border-zinc-800
-      bg-zinc-50 dark:bg-zinc-900 text-xs text-zinc-500;
+      border-t border-line bg-panel text-xs text-muted;
   }
 }

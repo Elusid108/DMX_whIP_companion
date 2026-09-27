@@ -19,32 +19,7 @@ const {
 const FLASH_CONCURRENCY = 4;
 const ARTPOLL_WAIT_MS = 30000;
 
-const Field = ({ label, children }) => React.createElement('div', {
-    className: 'flex flex-col gap-1'
-},
-    React.createElement('label', {
-        className: 'label-micro'
-    }, label),
-    children
-);
-
-const EyeIcon = ({ off }) => React.createElement('svg', {
-    xmlns: 'http://www.w3.org/2000/svg',
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 2,
-    strokeLinecap: 'round',
-    strokeLinejoin: 'round',
-    className: 'w-3.5 h-3.5',
-    'aria-hidden': true
-},
-    React.createElement('path', {
-        d: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z'
-    }),
-    React.createElement('circle', { cx: 12, cy: 12, r: 3 }),
-    off && React.createElement('path', { d: 'M3 3l18 18' })
-);
+const { Field, IconButton, Icons, ProgressBar } = require('../ui');
 
 const pinValue = (value) => {
     const n = Number(value);
@@ -715,7 +690,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
         className: railHost ? 'h-full min-h-0 flex flex-col overflow-hidden' : 'app-sidebar overflow-hidden'
     },
             React.createElement('div', {
-                className: 'flex-none flex flex-col gap-1.5 p-2 border-b border-zinc-200 dark:border-zinc-800'
+                className: 'flex-none flex flex-col gap-1.5 p-2 border-b border-line'
             },
                 React.createElement('div', {
                     className: 'flex items-center gap-2'
@@ -725,10 +700,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                         checked: allSelected,
                         disabled: busy || !rows.length,
                         onChange: (event) => toggleAll(event.target.checked),
-                        className: 'h-3.5 w-3.5 accent-cyan-400'
+                        className: 'check'
                     }),
                     React.createElement('span', {
-                        className: 'text-xs text-zinc-500'
+                        className: 'text-xs text-muted'
                     }, 'Select all')
                 ),
                 React.createElement('button', {
@@ -760,7 +735,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 className: 'flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-1'
             },
                 !rows.length && React.createElement('div', {
-                    className: 'text-zinc-500 text-xs italic p-2'
+                    className: 'text-muted text-xs italic p-2'
                 }, 'No serial ports. Plug in a board and Refresh.'),
                 rows.map((row, index) => {
                     const preview = row.name || previewName(row, index);
@@ -793,14 +768,11 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                             React.createElement('div', {
                                 className: 'readout truncate'
                             }, preview ? (addr ? `${preview} · ${addr}` : preview) : '—'),
-                            React.createElement('div', {
-                                className: 'h-1.5 mt-1 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden'
-                            },
-                                React.createElement('div', {
-                                    className: 'h-full bg-cyan-600 dark:bg-cyan-400',
-                                    style: { width: `${Math.max(0, Math.min(100, row.percent || 0))}%` }
-                                })
-                            ),
+                            React.createElement(ProgressBar, {
+                                className: 'mt-1',
+                                value: row.percent || 0,
+                                label: `Flash ${row.path}`
+                            }),
                             row.label && React.createElement('div', {
                                 className: 'readout mt-1'
                             }, `${row.label}${row.percent ? ` ${row.percent}%` : ''}`),
@@ -810,10 +782,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                                 onClick: () => onOpenDevice && onOpenDevice(row.deviceId)
                             }, 'Open in Devices'),
                             row.error && React.createElement('p', {
-                                className: 'text-xs text-red-500 mt-1'
+                                className: 'text-xs text-danger mt-1'
                             }, row.error),
                             row.downloadMode && React.createElement('p', {
-                                className: 'text-xs text-amber-600 dark:text-amber-400 mt-1'
+                                className: 'text-xs text-warn mt-1'
                             }, 'Hold BOOT, tap RESET, release BOOT.'),
                             !row.error && row.lastLog && React.createElement('p', {
                                 className: 'readout truncate mt-1'
@@ -823,7 +795,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 })
             ),
             React.createElement('div', {
-                className: 'flex-none flex flex-col gap-1 p-2 border-t border-zinc-200 dark:border-zinc-800'
+                className: 'flex-none flex flex-col gap-1 p-2 border-t border-line'
             },
                 React.createElement('button', {
                     type: 'button',
@@ -833,17 +805,17 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 }, buildBusy ? 'Building…' : 'Build firmware'),
                 buildStatus && React.createElement('p', {
                     className: buildOk
-                        ? 'text-xs text-emerald-600 dark:text-emerald-400'
-                        : 'text-xs text-red-500'
+                        ? 'text-xs text-ok'
+                        : 'text-xs text-danger'
                 }, buildStatus)
             ),
             React.createElement('pre', {
                 ref: logRef,
-                className: 'flex-none h-[12.5%] overflow-auto border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-2 readout whitespace-pre-wrap'
+                className: 'flex-none h-[12.5%] overflow-auto border-t border-line bg-surface p-2 readout whitespace-pre-wrap'
             }, log.join('\n') || 'Log output appears here. Passwords are not printed.')
     );
     const main = React.createElement('div', {
-        className: 'flex-1 min-h-0 overflow-y-auto p-3 bg-zinc-50 dark:bg-zinc-950'
+        className: 'flex-1 min-h-0 overflow-y-auto p-3 bg-well'
     },
         React.createElement('div', {
             className: 'max-w-xl mx-auto w-full flex flex-col gap-3'
@@ -855,7 +827,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                     className: 'text-sm font-medium'
                 }, 'USB flash'),
                 React.createElement('p', {
-                    className: 'text-xs text-zinc-500'
+                    className: 'text-xs text-muted'
                 }, 'Shared Wi-Fi and name apply to every selected COM port (up to 4 at once). Type the password here — this app does not read it from Windows. Close any serial monitor first. If connect fails, hold BOOT, tap RESET, release BOOT.')
             ),
             React.createElement('div', {
@@ -956,16 +928,12 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                             placeholder: 'Empty = open network',
                             onChange: (event) => handlePassword(event.target.value)
                         }),
-                        React.createElement('button', {
-                            type: 'button',
-                            className: 'btn-quiet flex-none p-1.5',
+                        React.createElement(IconButton, {
+                            label: showPassword ? 'Hide password' : 'Show password',
+                            icon: showPassword ? Icons.EyeOff : Icons.Eye,
                             disabled: busy || clearWifi,
-                            title: showPassword ? 'Hide password' : 'Show password',
-                            'aria-label': showPassword ? 'Hide password' : 'Show password',
                             onClick: () => setShowPassword((prev) => !prev)
-                        },
-                            React.createElement(EyeIcon, { off: showPassword })
-                        )
+                        })
                     )
                 )
             ),
@@ -973,10 +941,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 className: 'readout -mt-1'
             }, `PC Wi-Fi: ${wlan.current.ssid}${wlan.current.band ? ` · ${wlan.current.band}` : ''}`),
             bandWarning && React.createElement('p', {
-                className: 'text-sm text-amber-600 dark:text-amber-400'
+                className: 'text-sm text-warn'
             }, bandWarning),
             password && password.length > 0 && password.length < 8 && React.createElement('p', {
-                className: 'text-sm text-amber-600 dark:text-amber-400'
+                className: 'text-sm text-warn'
             }, 'WPA passwords are usually 8+ characters. Empty means an open network.'),
             React.createElement(Field, { label: 'Show network' },
                 React.createElement('select', {
@@ -1020,10 +988,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 }, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((ch) => React.createElement('option', { key: ch, value: ch }, ch)))
             ),
             showRole === 'host' && rows.filter((row) => row.selected).length > 1 && React.createElement('p', {
-                className: 'text-sm text-amber-600 dark:text-amber-400'
+                className: 'text-sm text-warn'
             }, 'Only one board should be the Show Host. Flash the others as Members.'),
             showRole !== 'standalone' && showPass && showPass.length < 8 && React.createElement('p', {
-                className: 'text-sm text-amber-600 dark:text-amber-400'
+                className: 'text-sm text-warn'
             }, 'The show password needs 8 or more characters.'),
             React.createElement(Field, { label: 'NVS' },
                 React.createElement('label', {
@@ -1170,16 +1138,16 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 className: 'readout'
             }, pixelsSummary(pixels)),
             pixels.bri > BRIGHTNESS_WARN && React.createElement('p', {
-                className: 'text-sm text-amber-600 dark:text-amber-400'
+                className: 'text-sm text-warn'
             }, `Brightness ${pixels.bri} is above ${BRIGHTNESS_WARN}. This panel can overheat.`),
             artifactNote && React.createElement('p', {
                 className: 'readout'
             }, `Image: ${artifactNote}`),
             artifactError && React.createElement('p', {
-                className: 'text-sm text-red-500'
+                className: 'text-sm text-danger'
             }, artifactError),
             error && React.createElement('p', {
-                className: 'text-sm text-red-500'
+                className: 'text-sm text-danger'
             }, error)
         )
     );

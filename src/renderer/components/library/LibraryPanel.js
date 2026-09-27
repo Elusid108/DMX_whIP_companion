@@ -674,10 +674,10 @@ const LibraryPanel = React.forwardRef(({
         onDeleteCompilation: handleDeleteCompilation
     });
     const main = React.createElement('div', {
-        className: 'flex-1 min-h-0 flex flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950'
+        className: 'flex-1 min-h-0 flex flex-col overflow-hidden bg-well'
     },
         error && React.createElement('div', {
-            className: 'px-3 pt-2 text-sm text-red-500'
+            className: 'px-3 pt-2 text-sm text-danger'
         }, error),
         React.createElement('div', {
             className: 'flex-1 p-3 min-h-0 overflow-hidden'

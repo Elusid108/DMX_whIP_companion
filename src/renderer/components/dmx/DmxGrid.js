@@ -39,7 +39,7 @@ const DmxGrid = React.memo(({
         : 'DMX Channels — No Universe Selected';
 
     return React.createElement('div', {
-            className: 'flex-1 p-3 overflow-auto min-h-0 bg-white dark:bg-zinc-900 border-l border-zinc-200 dark:border-zinc-800'
+            className: 'flex-1 p-3 overflow-auto min-h-0 bg-surface border-l border-line'
         },
         React.createElement('h3', { className: 'text-sm font-semibold mb-2' }, title),
         React.createElement('div', {

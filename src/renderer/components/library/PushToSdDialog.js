@@ -2,17 +2,8 @@ const React = require('react');
 const { useEffect, useMemo, useRef, useState } = React;
 const ipcRenderer = require('../../ipc');
 const { formatAddr, toAddr } = require('../../../services/shared/pushFit');
-
-const formatBytes = (bytes) => {
-    const value = Number(bytes) || 0;
-    if (value < 1024) {
-        return `${value} B`;
-    }
-    if (value < 1024 * 1024) {
-        return `${(value / 1024).toFixed(1)} KB`;
-    }
-    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-};
+const { formatBytes } = require('../../../services/shared/format');
+const { Button, Checkbox, Dialog, EmptyState, ProgressBar, Select } = require('../ui');
 
 const deviceLabel = (device) => (
     `${device.longName || device.shortName || 'dmxwhip'} (${device.ip})`
@@ -20,12 +11,12 @@ const deviceLabel = (device) => (
 
 const chipClass = (level) => {
     if (level === 'green') {
-        return 'text-emerald-600 dark:text-emerald-400';
+        return 'text-ok';
     }
     if (level === 'red') {
-        return 'text-red-500';
+        return 'text-danger';
     }
-    return 'text-amber-600 dark:text-amber-400';
+    return 'text-warn';
 };
 
 const barColor = (level) => {
@@ -76,7 +67,7 @@ const CoverageBar = ({ look }) => {
     const total = Math.max(1, max - min + 1);
 
     return React.createElement('div', {
-        className: 'relative h-6 rounded bg-zinc-200 dark:bg-zinc-800 overflow-hidden mb-1.5'
+        className: 'relative h-6 rounded bg-hover overflow-hidden mb-1.5'
     },
         ranges.map((range, index) => {
             const first = range.firstAddr + slide;
@@ -85,7 +76,7 @@ const CoverageBar = ({ look }) => {
             const width = ((last - first + 1) / total) * 100;
             return React.createElement('div', {
                 key: `file-${range.universe != null ? range.universe : index}`,
-                className: 'absolute inset-y-1 rounded-sm bg-zinc-400/50 dark:bg-zinc-600/50',
+                className: 'absolute inset-y-1 rounded-sm bg-faint/50',
                 style: { left: `${left}%`, width: `${Math.max(width, 1.5)}%` },
                 title: look.fileLabel
             });
@@ -147,19 +138,6 @@ const PushToSdDialog = ({
             targets.some((device) => device.id === id)
         )));
     }, [open, targets]);
-
-    useEffect(() => {
-        if (!open) {
-            return undefined;
-        }
-        const onKeyDown = (event) => {
-            if (event.key === 'Escape' && !pushing) {
-                onClose();
-            }
-        };
-        document.addEventListener('keydown', onKeyDown);
-        return () => document.removeEventListener('keydown', onKeyDown);
-    }, [open, pushing, onClose]);
 
     const jobsKey = (jobs || []).map((job) => `${job.filePath}:${job.dest || ''}`).join('|');
     const chosen = useMemo(
@@ -289,199 +267,171 @@ const PushToSdDialog = ({
         return (analysis && analysis.devices || []).find((item) => item.id === id) || null;
     };
 
-    return React.createElement('div', {
-        className: 'fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4',
-        onMouseDown: (event) => {
-            if (event.target === event.currentTarget && !pushing) {
-                onClose();
-            }
-        }
+    return React.createElement(Dialog, {
+        open,
+        onClose,
+        dismissible: !pushing,
+        size: 'lg',
+        title: 'Push to SD',
+        subtitle: lookName || 'Selected look'
     },
-        React.createElement('div', {
-            className: 'w-full max-w-2xl rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-900 max-h-[90vh] overflow-y-auto',
-            role: 'dialog',
-            'aria-modal': true,
-            'aria-label': 'Push to SD'
-        },
-            React.createElement('div', {
-                className: 'text-sm font-medium mb-1'
-            }, 'Push to SD'),
-            React.createElement('p', {
-                className: 'text-xs text-zinc-500 truncate mb-2',
-                title: lookName || ''
-            }, lookName || 'Selected look'),
-            targets.length === 0
-                ? React.createElement('p', {
-                    className: 'text-sm text-zinc-500 italic'
-                }, 'No idle nodes')
-                : React.createElement(React.Fragment, null,
-                    React.createElement('label', {
-                        className: 'flex items-center gap-2 text-xs text-zinc-500 mb-1.5'
-                    },
-                        React.createElement('input', {
-                            type: 'checkbox',
-                            className: 'h-3.5 w-3.5 accent-cyan-400',
-                            checked: allSelected,
-                            disabled: pushing,
-                            onChange: (event) => {
-                                setSelectedIds(event.target.checked
-                                    ? targets.map((device) => device.id)
-                                    : []);
-                            }
-                        }),
-                        'Select all'
-                    ),
-                    React.createElement('div', {
-                        className: 'max-h-52 overflow-y-auto flex flex-col gap-1 mb-2'
-                    },
-                        targets.map((device) => {
-                            const row = deviceAnalysis(device.id);
-                            const window = row && row.capacity
-                                ? row
-                                : null;
-                            return React.createElement('div', {
-                                key: device.id,
-                                className: 'flex items-start gap-2 text-sm'
-                            },
-                                React.createElement('label', {
-                                    className: 'flex items-start gap-2 min-w-0 flex-1'
-                                },
-                                    React.createElement('input', {
-                                        type: 'checkbox',
-                                        className: 'h-3.5 w-3.5 accent-cyan-400 flex-none mt-0.5',
-                                        checked: selectedIds.includes(device.id),
-                                        disabled: pushing,
-                                        onChange: () => toggle(device.id)
-                                    }),
-                                    React.createElement('span', {
-                                        className: 'min-w-0'
-                                    },
-                                        React.createElement('span', {
-                                            className: 'truncate block'
-                                        }, deviceLabel(device)),
-                                        React.createElement('span', {
-                                            className: 'text-xs text-zinc-500 block'
-                                        }, window
-                                            ? `${window.deviceProto || 'auto'} · ${formatAddr(window.startUni, window.startCh)} · ${window.count} px · ${window.chPx} ch/px`
-                                            : (analyzing ? 'Reading patch…' : 'Waiting for /status'))
-                                    )
-                                ),
-                                row && React.createElement('span', {
-                                    className: `text-xs flex-none pt-0.5 ${chipClass(row.level)}`
-                                }, row.label),
-                                React.createElement('button', {
-                                    type: 'button',
-                                    className: 'btn-quiet text-xs flex-none',
-                                    disabled: pushing,
-                                    onClick: (event) => identify(event, device.ip)
-                                }, 'Identify')
-                            );
-                        })
-                    )
-                ),
-            lookRows.map((look) => React.createElement('div', {
-                key: look.filePath,
-                className: 'mb-2 rounded-md border border-zinc-200 dark:border-zinc-800 p-2'
-            },
+        targets.length === 0
+            ? React.createElement(EmptyState, null, 'No idle nodes')
+            : React.createElement(React.Fragment, null,
+                React.createElement(Checkbox, {
+                    className: 'text-xs text-muted mb-1.5',
+                    label: 'Select all',
+                    checked: allSelected,
+                    disabled: pushing,
+                    onChange: (event) => {
+                        setSelectedIds(event.target.checked
+                            ? targets.map((device) => device.id)
+                            : []);
+                    }
+                }),
                 React.createElement('div', {
-                    className: 'text-xs font-medium truncate mb-0.5'
-                }, look.name),
-                React.createElement('div', {
-                    className: 'text-xs text-zinc-500 mb-1'
-                }, look.fileLabel),
-                React.createElement(CoverageBar, { look }),
-                React.createElement('div', {
-                    className: `text-xs ${chipClass(look.batch.level)}`
-                }, look.batch.label),
-                look.devices.some((row) => row.extraOutputs) && React.createElement('p', {
-                    className: 'text-xs text-zinc-500 mt-1'
-                }, 'SD play is output 0 only.')
-            )),
-            analyzing && !lookRows.length && React.createElement('p', {
-                className: 'text-xs text-zinc-500 mb-2'
-            }, 'Comparing files to node patches…'),
-            overall && overall.needsFirmwareSync && React.createElement('p', {
-                className: 'text-xs text-amber-600 dark:text-amber-400 mb-2'
-            }, 'Update firmware for lockstep. Files will still play, but nodes may drift.'),
-            pushing && React.createElement('div', {
-                className: 'flex flex-col gap-1 mb-2'
-            },
-                React.createElement('div', {
-                    className: 'h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden'
+                    className: 'max-h-52 overflow-y-auto flex flex-col gap-1 mb-2'
                 },
-                    React.createElement('div', {
-                        className: 'h-full bg-cyan-500',
-                        style: { width: `${percent}%` }
+                    targets.map((device) => {
+                        const row = deviceAnalysis(device.id);
+                        const window = row && row.capacity
+                            ? row
+                            : null;
+                        return React.createElement('div', {
+                            key: device.id,
+                            className: 'flex items-start gap-2 text-sm'
+                        },
+                            React.createElement('label', {
+                                className: 'flex items-start gap-2 min-w-0 flex-1'
+                            },
+                                React.createElement(Checkbox, {
+                                    inputClassName: 'mt-0.5',
+                                    checked: selectedIds.includes(device.id),
+                                    disabled: pushing,
+                                    onChange: () => toggle(device.id)
+                                }),
+                                React.createElement('span', {
+                                    className: 'min-w-0'
+                                },
+                                    React.createElement('span', {
+                                        className: 'truncate block'
+                                    }, deviceLabel(device)),
+                                    React.createElement('span', {
+                                        className: 'text-xs text-muted block'
+                                    }, window
+                                        ? `${window.deviceProto || 'auto'} · ${formatAddr(window.startUni, window.startCh)} · ${window.count} px · ${window.chPx} ch/px`
+                                        : (analyzing ? 'Reading patch…' : 'Waiting for /status'))
+                                )
+                            ),
+                            row && React.createElement('span', {
+                                className: `text-xs flex-none pt-0.5 ${chipClass(row.level)}`
+                            }, row.label),
+                            React.createElement(Button, {
+                                className: 'flex-none',
+                                disabled: pushing,
+                                onClick: (event) => identify(event, device.ip)
+                            }, 'Identify')
+                        );
                     })
-                ),
-                React.createElement('p', {
-                    className: 'readout'
-                }, [
-                    currentLabel,
-                    total > 0 ? `${percent}% · ${formatBytes(sent)} / ${formatBytes(total)}` : phaseLabel || 'Connecting…',
-                    total > 0 ? phaseLabel : null,
-                    etaLabel
-                ].filter(Boolean).join(' · '))
-            ),
-            pushError && React.createElement('div', {
-                className: `text-sm mb-2 ${pushError.startsWith('Pushed ')
-                    ? 'text-cyan-600 dark:text-cyan-400'
-                    : 'text-red-500'}`
-            }, pushError),
-            overall && mode === 'split' && React.createElement('p', {
-                className: `text-xs mb-2 ${chipClass(overall.level)}`
-            }, overall.label),
-            React.createElement('div', { className: 'flex flex-wrap items-end gap-2 mb-2' },
-                React.createElement('label', { className: 'flex flex-col gap-0.5 text-xs text-zinc-500' },
-                    'Mode',
-                    React.createElement('select', {
-                        className: 'field',
-                        value: mode,
-                        disabled: pushing,
-                        onChange: (event) => setMode(event.target.value)
-                    },
-                        React.createElement('option', { value: 'split' }, 'Split: this PC slices, every node gets its part'),
-                        React.createElement('option', { value: 'distribute' }, 'Distribute: full show to one node, it sends the parts'),
-                        React.createElement('option', { value: 'stream' }, 'Stream: full show to one node, it plays and streams the parts live')
-                    )
-                ),
-                mode !== 'split' && React.createElement('label', { className: 'flex flex-col gap-0.5 text-xs text-zinc-500' },
-                    'Holder',
-                    React.createElement('select', {
-                        className: 'field',
-                        value: holder || '',
-                        disabled: pushing || !selectedIds.length,
-                        onChange: (event) => setHolderId(event.target.value)
-                    }, targets.filter((device) => selectedIds.includes(device.id)).map((device) => React.createElement('option', {
-                        key: device.id,
-                        value: device.id
-                    }, device.longName || device.ip)))
                 )
             ),
-            mode === 'stream' && React.createElement('p', { className: 'text-xs text-zinc-500 mb-2' },
-                oneShow
-                    ? 'The holder plays the whole show and sends every node on the network the universes its patch uses, live (firmware 0.43+). The others need nothing on their SD and must not be receiving another stream.'
-                    : 'Stream plays one show at a time. Select a single look.'),
-            mode === 'distribute' && React.createElement('p', { className: 'text-xs text-zinc-500 mb-2' },
-                oneShow
-                    ? 'The holder gets the whole show, then slices it for every node on the network (firmware 0.42+) using each node\'s own patch.'
-                    : 'Distribute sends one show at a time. Select a single look.'),
+        lookRows.map((look) => React.createElement('div', {
+            key: look.filePath,
+            className: 'mb-2 rounded-md border border-line p-2'
+        },
             React.createElement('div', {
-                className: 'flex gap-1.5'
-            },
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet flex-1 justify-center',
+                className: 'text-xs font-medium truncate mb-0.5'
+            }, look.name),
+            React.createElement('div', {
+                className: 'text-xs text-muted mb-1'
+            }, look.fileLabel),
+            React.createElement(CoverageBar, { look }),
+            React.createElement('div', {
+                className: `text-xs ${chipClass(look.batch.level)}`
+            }, look.batch.label),
+            look.devices.some((row) => row.extraOutputs) && React.createElement('p', {
+                className: 'text-xs text-muted mt-1'
+            }, 'SD play is output 0 only.')
+        )),
+        analyzing && !lookRows.length && React.createElement('p', {
+            className: 'text-xs text-muted mb-2'
+        }, 'Comparing files to node patches…'),
+        overall && overall.needsFirmwareSync && React.createElement('p', {
+            className: 'text-xs text-warn mb-2'
+        }, 'Update firmware for lockstep. Files will still play, but nodes may drift.'),
+        pushing && React.createElement('div', {
+            className: 'flex flex-col gap-1 mb-2'
+        },
+            React.createElement(ProgressBar, {
+                value: total > 0 ? percent : null,
+                label: 'Push progress'
+            }),
+            React.createElement('p', {
+                className: 'readout'
+            }, [
+                currentLabel,
+                total > 0 ? `${percent}% · ${formatBytes(sent)} / ${formatBytes(total)}` : phaseLabel || 'Connecting…',
+                total > 0 ? phaseLabel : null,
+                etaLabel
+            ].filter(Boolean).join(' · '))
+        ),
+        pushError && React.createElement('div', {
+            className: `text-sm mb-2 ${pushError.startsWith('Pushed ')
+                ? 'text-accent'
+                : 'text-danger'}`
+        }, pushError),
+        overall && mode === 'split' && React.createElement('p', {
+            className: `text-xs mb-2 ${chipClass(overall.level)}`
+        }, overall.label),
+        React.createElement('div', { className: 'flex flex-wrap items-end gap-2 mb-2' },
+            React.createElement('label', { className: 'flex flex-col gap-0.5 text-xs text-muted' },
+                'Mode',
+                React.createElement(Select, {
+                    value: mode,
                     disabled: pushing,
-                    onClick: onClose
-                }, 'Cancel'),
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-primary flex-1 justify-center',
-                    disabled: pushing || !canConfirm,
-                    onClick: () => onPush(selectedIds, { mode, holderId: holder })
-                }, pushLabel)
+                    onChange: (event) => setMode(event.target.value)
+                },
+                    React.createElement('option', { value: 'split' }, 'Split: this PC slices, every node gets its part'),
+                    React.createElement('option', { value: 'distribute' }, 'Distribute: full show to one node, it sends the parts'),
+                    React.createElement('option', { value: 'stream' }, 'Stream: full show to one node, it plays and streams the parts live')
+                )
+            ),
+            mode !== 'split' && React.createElement('label', { className: 'flex flex-col gap-0.5 text-xs text-muted' },
+                'Holder',
+                React.createElement(Select, {
+                    value: holder || '',
+                    disabled: pushing || !selectedIds.length,
+                    onChange: (event) => setHolderId(event.target.value)
+                }, targets.filter((device) => selectedIds.includes(device.id)).map((device) => React.createElement('option', {
+                    key: device.id,
+                    value: device.id
+                }, device.longName || device.ip)))
             )
+        ),
+        mode === 'stream' && React.createElement('p', { className: 'text-xs text-muted mb-2' },
+            oneShow
+                ? 'The holder plays the whole show and sends every node on the network the universes its patch uses, live (firmware 0.43+). The others need nothing on their SD and must not be receiving another stream.'
+                : 'Stream plays one show at a time. Select a single look.'),
+        mode === 'distribute' && React.createElement('p', { className: 'text-xs text-muted mb-2' },
+            oneShow
+                ? 'The holder gets the whole show, then slices it for every node on the network (firmware 0.42+) using each node\'s own patch.'
+                : 'Distribute sends one show at a time. Select a single look.'),
+        React.createElement('div', {
+            className: 'flex gap-1.5'
+        },
+            React.createElement(Button, {
+                block: true,
+                className: 'flex-1',
+                disabled: pushing,
+                onClick: onClose
+            }, 'Cancel'),
+            React.createElement(Button, {
+                variant: 'primary',
+                block: true,
+                className: 'flex-1',
+                disabled: pushing || !canConfirm,
+                onClick: () => onPush(selectedIds, { mode, holderId: holder })
+            }, pushLabel)
         )
     );
 };

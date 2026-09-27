@@ -43,7 +43,7 @@ const DmxCell = React.memo(({
         className: 'flex flex-col items-center'
     },
         React.createElement('div', {
-            className: 'text-[10px] font-medium text-zinc-500 mb-0.5'
+            className: 'text-[10px] font-medium text-muted mb-0.5'
         }, index + 1),
         React.createElement('div', {
             className: 'relative w-full h-7'

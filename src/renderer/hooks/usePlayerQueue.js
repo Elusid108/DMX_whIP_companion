@@ -1,17 +1,7 @@
 const { useCallback, useEffect, useRef, useState } = require('react');
 const ipcRenderer = require('../ipc');
 
-const formatClock = (ms) => {
-    const value = Math.max(0, Math.round(Number(ms) || 0));
-    const totalSec = Math.floor(value / 1000);
-    const hours = Math.floor(totalSec / 3600);
-    const minutes = Math.floor((totalSec % 3600) / 60);
-    const seconds = totalSec % 60;
-    if (hours > 0) {
-        return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }
-    return `${minutes}:${String(seconds).padStart(2, '0')}`;
-};
+const { formatClock } = require('../../services/shared/format');
 
 const usePlayerQueue = ({ playbackNetwork, isRecording } = {}) => {
     const [queue, setQueue] = useState([]);

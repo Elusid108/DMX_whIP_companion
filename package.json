@@ -1,12 +1,12 @@
 {
   "name": "dmx-whip-companion",
-  "version": "0.43.0",
+  "version": "0.44.0",
   "description": "Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN)",
   "main": "src/main/main.js",
   "scripts": {
     "prepare:generated": "node -e \"require('fs').mkdirSync('src/renderer/generated',{recursive:true})\"",
     "build:css": "npm run prepare:generated && tailwindcss -i ./src/renderer/input.css -o ./src/renderer/generated/tailwind.css --minify",
-    "build:renderer": "npm run prepare:generated && esbuild src/renderer/bootstrap.js --bundle --outfile=src/renderer/generated/renderer.js --platform=browser",
+    "build:renderer": "npm run prepare:generated && esbuild src/renderer/bootstrap.js --bundle --outfile=src/renderer/generated/renderer.js --platform=browser --loader:.js=jsx",
     "build:ui": "npm run build:css && npm run build:renderer",
     "build:esptool": "node -e \"require('fs').mkdirSync('src/main/generated',{recursive:true})\" && esbuild node_modules/esptool-js/bundle.js --bundle --platform=node --format=cjs --outfile=src/main/generated/esptool.cjs",
     "prestart": "npm run build:ui && npm run build:esptool",
@@ -14,7 +14,7 @@
     "rebuild": "electron-rebuild -f -w serialport",
     "start": "electron .",
     "dev": "electron .",
-    "test": "node --test src/services/shared/scanRecording.test.js src/services/shared/pushFit.test.js src/services/shared/recordTriggers.test.js src/services/shared/playbackFrames.test.js src/services/sacn/sacnPacket.test.js src/services/cuebus/protocol.test.js src/services/cuebus/cueBus.test.js"
+    "test": "node --test src/services/shared/scanRecording.test.js src/services/shared/pushFit.test.js src/services/shared/recordTriggers.test.js src/services/shared/playbackFrames.test.js src/services/sacn/sacnPacket.test.js src/services/cuebus/protocol.test.js src/services/cuebus/cueBus.test.js src/services/shared/format.test.js"
   },
   "keywords": [
     "dmx",

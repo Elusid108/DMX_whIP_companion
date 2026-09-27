@@ -209,7 +209,7 @@ const DevicesPanel = ({
 
     const rail = React.createElement(React.Fragment, null,
         React.createElement('div', {
-            className: 'flex-none p-2 border-b border-zinc-200 dark:border-zinc-800 flex flex-col gap-1.5'
+            className: 'flex-none p-2 border-b border-line flex flex-col gap-1.5'
         },
             React.createElement(NetworkSelect, {
                 selectedNic,
@@ -254,7 +254,7 @@ const DevicesPanel = ({
         )
     );
     const main = React.createElement('div', {
-        className: 'flex flex-1 flex-col p-3 min-h-0 overflow-y-auto bg-zinc-50 dark:bg-zinc-950'
+        className: 'flex flex-1 flex-col p-3 min-h-0 overflow-y-auto bg-well'
     },
         mode === 'sync' ? React.createElement(ShowSyncPanel) : React.createElement(DeviceInspector, {
             device: selected,

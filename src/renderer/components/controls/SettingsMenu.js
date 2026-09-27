@@ -1,25 +1,9 @@
 const React = require('react');
-const { useEffect, useRef, useState } = React;
+const { useCallback, useEffect, useRef, useState } = React;
 const { version } = require('../../../../package.json');
 const ipcRenderer = require('../../ipc');
 const NetworkSelect = require('./NetworkSelect');
-
-const CogIcon = () => React.createElement('svg', {
-    xmlns: 'http://www.w3.org/2000/svg',
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 2,
-    strokeLinecap: 'round',
-    strokeLinejoin: 'round',
-    className: 'w-3.5 h-3.5',
-    'aria-hidden': true
-},
-    React.createElement('circle', { cx: '12', cy: '12', r: '3' }),
-    React.createElement('path', {
-        d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'
-    })
-);
+const { Button, IconButton, Icons, Popover } = require('../ui');
 
 const SettingsMenu = ({
     theme,
@@ -34,33 +18,8 @@ const SettingsMenu = ({
     const [libraryDir, setLibraryDir] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
-    const rootRef = useRef(null);
-
-    useEffect(() => {
-        if (!open) {
-            return undefined;
-        }
-        const onPointerDown = (event) => {
-            const tag = event.target && event.target.tagName;
-            if (tag === 'OPTION' || tag === 'SELECT') {
-                return;
-            }
-            if (rootRef.current && !rootRef.current.contains(event.target)) {
-                setOpen(false);
-            }
-        };
-        const onKeyDown = (event) => {
-            if (event.key === 'Escape') {
-                setOpen(false);
-            }
-        };
-        document.addEventListener('mousedown', onPointerDown);
-        document.addEventListener('keydown', onKeyDown);
-        return () => {
-            document.removeEventListener('mousedown', onPointerDown);
-            document.removeEventListener('keydown', onKeyDown);
-        };
-    }, [open]);
+    const anchorRef = useRef(null);
+    const close = useCallback(() => setOpen(false), []);
 
     useEffect(() => {
         if (!open) {
@@ -110,21 +69,22 @@ const SettingsMenu = ({
     };
 
     return React.createElement('div', {
-        ref: rootRef,
-        className: 'relative ml-auto'
+        className: 'ml-auto flex-none'
     },
-        React.createElement('button', {
-            type: 'button',
-            className: 'btn-quiet flex-none p-1.5',
-            title: 'Settings',
-            'aria-label': 'Settings',
+        React.createElement(IconButton, {
+            ref: anchorRef,
+            label: 'Settings',
+            icon: Icons.Cog,
             'aria-expanded': open,
+            'aria-haspopup': 'dialog',
             onClick: () => setOpen((current) => !current)
-        },
-            React.createElement(CogIcon)
-        ),
-        open && React.createElement('div', {
-            className: 'absolute right-0 top-full mt-1 z-30 w-80 rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-800 dark:bg-zinc-900'
+        }),
+        React.createElement(Popover, {
+            open,
+            anchorRef,
+            onClose: close,
+            label: 'Settings',
+            className: 'w-80'
         },
             React.createElement('div', {
                 className: 'flex flex-col gap-2'
@@ -143,42 +103,41 @@ const SettingsMenu = ({
                 })
             ),
             React.createElement('div', {
-                className: 'mt-2 pt-2 border-t border-zinc-200 dark:border-zinc-800'
+                className: 'mt-2 pt-2 border-t border-line'
             },
-                React.createElement('button', {
-                    type: 'button',
-                    className: 'btn-quiet w-full justify-center',
+                React.createElement(Button, {
+                    block: true,
                     onClick: onToggleTheme
                 }, theme === 'dark' ? 'Light mode' : 'Dark mode')
             ),
             React.createElement('div', {
-                className: 'mt-2 pt-2 border-t border-zinc-200 dark:border-zinc-800'
+                className: 'mt-2 pt-2 border-t border-line'
             },
                 React.createElement('div', {
                     className: 'label-micro mb-1'
                 }, 'Library'),
                 React.createElement('div', {
-                    className: 'text-xs text-zinc-500 truncate mb-1.5',
+                    className: 'text-xs text-muted truncate mb-1.5',
                     title: libraryDir
                 }, libraryDir || 'Library folder'),
                 React.createElement('div', {
                     className: 'flex gap-1.5'
                 },
-                    React.createElement('button', {
-                        type: 'button',
-                        className: 'btn-quiet flex-1 justify-center',
+                    React.createElement(Button, {
+                        block: true,
+                        className: 'flex-1',
                         disabled: busy,
                         onClick: () => runLibrary(() => ipcRenderer.invoke('library-choose-dir'))
                     }, 'Change folder'),
-                    React.createElement('button', {
-                        type: 'button',
-                        className: 'btn-quiet flex-1 justify-center',
+                    React.createElement(Button, {
+                        block: true,
+                        className: 'flex-1',
                         disabled: busy,
                         onClick: () => runLibrary(() => ipcRenderer.invoke('library-import'))
                     }, 'Import')
                 ),
                 error && React.createElement('p', {
-                    className: 'text-xs text-red-500 mt-1.5'
+                    className: 'text-xs text-danger mt-1.5'
                 }, error)
             ),
             React.createElement('div', {
@@ -186,7 +145,7 @@ const SettingsMenu = ({
             }, `v${version}`),
             React.createElement('button', {
                 type: 'button',
-                className: 'mt-1 w-full text-center text-xs text-cyan-600 dark:text-cyan-400 hover:underline',
+                className: 'mt-1 w-full text-center text-xs text-accent hover:underline',
                 onClick: () => ipcRenderer.invoke('open-external-url', { url: 'https://chrismoore.me' })
             }, 'chrismoore.me')
         )

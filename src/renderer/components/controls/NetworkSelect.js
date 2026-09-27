@@ -16,7 +16,7 @@ const NetworkSelect = ({
         className: 'flex flex-col min-w-0'
     },
         React.createElement('label', {
-            className: 'text-xs font-medium text-zinc-500 mb-0.5'
+            className: 'text-xs font-medium text-muted mb-0.5'
         }, label),
         React.createElement('select', {
             value: selectedNic,

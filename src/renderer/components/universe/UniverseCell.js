@@ -27,7 +27,7 @@ const UniverseCell = ({
                 type: 'checkbox',
                 checked: isChecked,
                 onChange: onSelect,
-                className: 'h-3.5 w-3.5 flex-none mt-0.5 accent-cyan-400'
+                className: 'check mt-0.5'
             }),
             React.createElement('div', {
                 className: 'flex flex-col min-w-0 flex-1 cursor-pointer',
@@ -43,7 +43,7 @@ const UniverseCell = ({
                             className: 'font-medium text-sm'
                         }, `Universe ${universeId}${isStale ? ' (Inactive)' : ''}`),
                         typeof fps === 'number' && React.createElement('div', {
-                            className: 'text-xs text-zinc-500'
+                            className: 'text-xs text-muted'
                         }, `FPS: ${fps}`)
                     ),
                     React.createElement(UniverseActivityGrid, {
@@ -53,13 +53,13 @@ const UniverseCell = ({
                     })
                 ),
                 React.createElement('div', {
-                    className: 'text-xs text-zinc-500'
+                    className: 'text-xs text-muted'
                 }, `Channels: ${channels}`),
                 React.createElement('div', {
-                    className: 'text-xs text-zinc-500 truncate'
+                    className: 'text-xs text-muted truncate'
                 }, `Source: ${sourceIp}`),
                 sourceName && React.createElement('div', {
-                    className: 'text-xs text-zinc-500 truncate'
+                    className: 'text-xs text-muted truncate'
                 }, `Name: ${sourceName}`)
             )
         )

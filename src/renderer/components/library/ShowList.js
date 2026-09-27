@@ -2,73 +2,19 @@ const React = require('react');
 const { useEffect, useMemo, useRef, useState } = React;
 const { collectLooks, findNode, flattenRows, folderContains } = require('../../../services/shared/libraryTree');
 
-const FolderIcon = () => React.createElement('svg', {
-    xmlns: 'http://www.w3.org/2000/svg',
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 2,
-    strokeLinecap: 'round',
-    strokeLinejoin: 'round',
-    className: 'w-3.5 h-3.5 flex-none text-zinc-500',
-    'aria-hidden': true
-},
-    React.createElement('path', { d: 'M3 7h6l2 2h10v10H3z' }),
-    React.createElement('path', { d: 'M3 7V5h6l2 2' })
-);
+const { IconButton, Icons } = require('../ui');
 
 const Chevron = ({ open, onClick }) => React.createElement('button', {
     type: 'button',
-    className: 'flex-none p-0.5 -ml-0.5 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200',
+    className: 'flex-none p-0.5 -ml-0.5 text-muted hover:text-fg-strong',
     'aria-label': open ? 'Collapse folder' : 'Expand folder',
     onClick: (event) => {
         event.stopPropagation();
         onClick();
     }
-}, React.createElement('svg', {
-    xmlns: 'http://www.w3.org/2000/svg',
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 2,
-    strokeLinecap: 'round',
-    strokeLinejoin: 'round',
-    className: `w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`,
-    'aria-hidden': true
-}, React.createElement('path', { d: 'M9 6l6 6-6 6' })));
-
-const FolderPlusIcon = () => React.createElement('svg', {
-    xmlns: 'http://www.w3.org/2000/svg',
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 2,
-    strokeLinecap: 'round',
-    strokeLinejoin: 'round',
-    className: 'w-4 h-4',
-    'aria-hidden': true
-},
-    React.createElement('path', { d: 'M3 7h6l2 2h10v10H3z' }),
-    React.createElement('path', { d: 'M3 7V5h6l2 2' }),
-    React.createElement('path', { d: 'M12 12v6M9 15h6' })
-);
-
-const PushSdIcon = () => React.createElement('svg', {
-    xmlns: 'http://www.w3.org/2000/svg',
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 2,
-    strokeLinecap: 'round',
-    strokeLinejoin: 'round',
-    className: 'w-4 h-4',
-    'aria-hidden': true
-},
-    React.createElement('path', { d: 'M3 12h8' }),
-    React.createElement('path', { d: 'M8 8l4 4-4 4' }),
-    React.createElement('path', { d: 'M13 6.5h3.2L20 10v8.5a1.5 1.5 0 0 1-1.5 1.5h-5.5A1.5 1.5 0 0 1 11.5 17V8A1.5 1.5 0 0 1 13 6.5z' }),
-    React.createElement('path', { d: 'M15 9.5v3M17.2 9.5v3' })
-);
+}, React.createElement(Icons.Chevron, {
+    className: `w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`
+}));
 
 const parseMoveIds = (raw, fallback) => {
     if (Array.isArray(fallback) && fallback.length) {
@@ -302,7 +248,7 @@ const ShowList = ({
         className: 'flex-1 min-h-0 flex flex-col'
     },
         React.createElement('div', {
-            className: 'flex-none flex items-center gap-1 pb-2 border-b border-zinc-200 dark:border-zinc-800'
+            className: 'flex-none flex items-center gap-1 pb-2 border-b border-line'
         },
             React.createElement('button', {
                 type: 'button',
@@ -310,28 +256,26 @@ const ShowList = ({
                 disabled: busy || playDisabled,
                 onClick: onPlay
             }, 'Import to Studio'),
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-quiet flex-none p-1.5',
-                title: 'Push to SD',
-                'aria-label': 'Push to SD',
+            React.createElement(IconButton, {
+                label: 'Push to SD',
+                icon: Icons.PushSd,
+                iconClassName: 'w-4 h-4',
                 disabled: busy || !canPush,
                 onClick: onOpenPush
-            }, React.createElement(PushSdIcon)),
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-quiet flex-none p-1.5',
-                title: 'New folder',
-                'aria-label': 'New folder',
+            }),
+            React.createElement(IconButton, {
+                label: 'New folder',
+                icon: Icons.FolderPlus,
+                iconClassName: 'w-4 h-4',
                 disabled: busy,
                 onClick: onCreateFolder
-            }, React.createElement(FolderPlusIcon))
+            })
         ),
         React.createElement('div', {
             className: 'flex-1 min-h-0 overflow-y-auto py-2 flex flex-col gap-0.5'
         },
             rows.length === 0 && React.createElement('div', {
-                className: 'text-sm text-zinc-500 italic p-2'
+                className: 'text-sm text-muted italic p-2'
             }, 'No looks yet. Use New File or Import.'),
             rows.map((row) => {
                 const { node, depth } = row;
@@ -361,7 +305,7 @@ const ShowList = ({
                         style: { marginLeft: `${depth}rem` }
                     },
                         depth > 0 && React.createElement('div', {
-                            className: 'w-px my-1 mr-1 flex-none bg-zinc-300 dark:bg-zinc-700',
+                            className: 'w-px my-1 mr-1 flex-none bg-edge',
                             'aria-hidden': true
                         }),
                         React.createElement('div', {
@@ -430,7 +374,7 @@ const ShowList = ({
                                     className: 'w-3.5 h-3.5 flex-none',
                                     'aria-hidden': true
                                 }),
-                            node.type === 'folder' && React.createElement(FolderIcon),
+                            node.type === 'folder' && React.createElement(Icons.Folder, { className: 'w-3.5 h-3.5 flex-none text-muted' }),
                             node.type === 'show' && node.show && node.show.filePath
                                 && React.createElement('button', {
                                     type: 'button',
@@ -447,13 +391,7 @@ const ShowList = ({
                                             });
                                         }
                                     }
-                                }, React.createElement('svg', {
-                                    xmlns: 'http://www.w3.org/2000/svg',
-                                    viewBox: '0 0 24 24',
-                                    className: 'w-3.5 h-3.5',
-                                    fill: 'currentColor',
-                                    'aria-hidden': true
-                                }, React.createElement('path', { d: 'M8 5.2v13.6L19.4 12z' }))),
+                                }, React.createElement(Icons.Play)),
                             editingId === node.id
                                 ? React.createElement('input', {
                                     className: 'field py-0.5 text-sm',
@@ -473,7 +411,7 @@ const ShowList = ({
                                     }
                                 })
                                 : React.createElement('span', {
-                                    className: `truncate text-sm flex-1 min-w-0 ${loaded ? 'text-cyan-600 dark:text-cyan-400' : ''}`
+                                    className: `truncate text-sm flex-1 min-w-0 ${loaded ? 'text-accent' : ''}`
                                 }, loaded ? `${label} · loaded` : label),
                             ((node.type === 'show' && node.show && node.show.filePath)
                                 || (node.type === 'folder' && collectLooks(node).length > 0))

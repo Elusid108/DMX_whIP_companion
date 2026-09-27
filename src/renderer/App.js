@@ -7,19 +7,22 @@ const FlashPanel = require('./components/flash/FlashPanel');
 const StudioPanel = require('./components/studio/StudioPanel');
 const SettingsMenu = require('./components/controls/SettingsMenu');
 const PlaybackControls = require('./components/controls/PlaybackControls');
+const Gallery = require('./components/ui/Gallery');
+const { Select, Tabs, ToastProvider } = require('./components/ui');
+const { applyTheme } = require('./theme');
 const useUniverseData = require('./hooks/useUniverseData');
 const useDmxMonitor = require('./hooks/useDmxMonitor');
 const useStudioSession = require('./hooks/useStudioSession');
 const usePlayerQueue = require('./hooks/usePlayerQueue');
 const ipcRenderer = require('./ipc');
 
-const applyThemeClass = (theme) => {
-    const root = document.documentElement;
-    root.classList.remove('dark', 'light');
-    root.classList.add(theme === 'light' ? 'light' : 'dark');
-};
-
-const compactSelect = 'field w-auto min-w-[7rem] py-1';
+const VIEWS = [
+    { id: 'monitor', label: 'Monitor' },
+    { id: 'studio', label: 'Studio' },
+    { id: 'library', label: 'Library' },
+    { id: 'devices', label: 'Devices' },
+    { id: 'flash', label: 'Flash' }
+];
 
 const App = () => {
     const {
@@ -70,6 +73,7 @@ const App = () => {
 
     const mainViewRef = React.useRef(mainView);
     const sessionRef = React.useRef(session);
+    const requestViewRef = React.useRef(null);
     mainViewRef.current = mainView;
     sessionRef.current = session;
 
@@ -93,6 +97,12 @@ const App = () => {
                 return;
             }
             const key = String(event.key || '').toLowerCase();
+            // Ctrl+Shift+U: hidden UI-kit gallery.
+            if (key === 'u' && event.shiftKey) {
+                event.preventDefault();
+                requestViewRef.current(mainView === 'gallery' ? 'monitor' : 'gallery');
+                return;
+            }
             if (mainView === 'library') {
                 if (key === 'c' && libraryRef.current) {
                     event.preventDefault();
@@ -153,6 +163,7 @@ const App = () => {
         }
         setMainView(next);
     };
+    requestViewRef.current = requestView;
 
     React.useEffect(() => {
         ipcRenderer.send('set-ui-view', {
@@ -169,7 +180,7 @@ const App = () => {
             }
             const next = result.settings.theme === 'light' ? 'light' : 'dark';
             setTheme(next);
-            applyThemeClass(next);
+            applyTheme(next);
         }).catch(() => {});
         return () => {
             cancelled = true;
@@ -179,7 +190,7 @@ const App = () => {
     const handleToggleTheme = async () => {
         const next = theme === 'dark' ? 'light' : 'dark';
         setTheme(next);
-        applyThemeClass(next);
+        applyTheme(next);
         try {
             await ipcRenderer.invoke('set-theme', { theme: next });
         } catch (err) {
@@ -199,37 +210,19 @@ const App = () => {
         recording: session.isRecording
     };
 
-    return React.createElement('div', {
-        className: 'h-screen flex flex-col font-sans bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-200'
+    return React.createElement(ToastProvider, null, React.createElement('div', {
+        className: 'h-screen flex flex-col font-sans bg-app text-fg'
     },
         React.createElement('div', {
-            className: 'flex-none relative z-10 flex items-center gap-1 px-3 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
+            className: 'flex-none relative z-10 flex items-center gap-1 px-3 border-b border-line bg-surface'
         },
-            React.createElement('button', {
-                type: 'button',
-                className: `tab-btn ${mainView === 'monitor' ? 'is-active' : ''}`,
-                onClick: () => requestView('monitor')
-            }, 'Monitor'),
-            React.createElement('button', {
-                type: 'button',
-                className: `tab-btn ${mainView === 'studio' ? 'is-active' : ''}`,
-                onClick: () => requestView('studio')
-            }, 'Studio'),
-            React.createElement('button', {
-                type: 'button',
-                className: `tab-btn ${mainView === 'library' ? 'is-active' : ''}`,
-                onClick: () => requestView('library')
-            }, 'Library'),
-            React.createElement('button', {
-                type: 'button',
-                className: `tab-btn ${mainView === 'devices' ? 'is-active' : ''}`,
-                onClick: () => requestView('devices')
-            }, 'Devices'),
-            React.createElement('button', {
-                type: 'button',
-                className: `tab-btn ${mainView === 'flash' ? 'is-active' : ''}`,
-                onClick: () => requestView('flash')
-            }, 'Flash'),
+            React.createElement(Tabs, {
+                label: 'Views',
+                tabs: VIEWS,
+                value: mainView,
+                onChange: requestView,
+                className: 'flex-1'
+            }),
             React.createElement(SettingsMenu, {
                 theme,
                 onToggleTheme: handleToggleTheme,
@@ -263,6 +256,7 @@ const App = () => {
                     ref: setFlashRail,
                     className: 'flex-1 min-h-0 flex flex-col'
                 }),
+                mainView === 'gallery' && React.createElement('div', { className: 'flex-1' }),
                 React.createElement(PlaybackControls, {
                     queue: player.queue,
                     currentIndex: player.currentIndex,
@@ -297,16 +291,16 @@ const App = () => {
                     className: 'flex flex-1 min-h-0 flex-col'
                 },
                     React.createElement('div', {
-                        className: 'app-toolbar items-end bg-zinc-50 dark:bg-zinc-900'
+                        className: 'app-toolbar items-end bg-panel'
                     },
                         React.createElement('div', { className: 'flex flex-col min-w-fit' },
-                            React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
+                            React.createElement('label', { className: 'text-xs font-medium text-muted mb-0.5' },
                                 'Format'
                             ),
-                            React.createElement('select', {
+                            React.createElement(Select, {
+                                compact: true,
                                 value: displayFormat,
-                                onChange: (e) => handleDisplayFormatChange(e.target.value),
-                                className: compactSelect
+                                onChange: (e) => handleDisplayFormatChange(e.target.value)
                             },
                                 React.createElement('option', { value: 'decimal' }, '0-255'),
                                 React.createElement('option', { value: 'percent' }, '0-100%'),
@@ -314,20 +308,20 @@ const App = () => {
                             )
                         ),
                         React.createElement('div', { className: 'flex flex-col min-w-fit' },
-                            React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
+                            React.createElement('label', { className: 'text-xs font-medium text-muted mb-0.5' },
                                 'Grid'
                             ),
-                            React.createElement('select', {
+                            React.createElement(Select, {
+                                compact: true,
                                 value: gridDimensions,
-                                onChange: (e) => handleGridDimensionsChange(e.target.value),
-                                className: compactSelect
+                                onChange: (e) => handleGridDimensionsChange(e.target.value)
                             },
                                 React.createElement('option', { value: '16x32' }, '16 × 32'),
                                 React.createElement('option', { value: '32x16' }, '32 × 16')
                             )
                         ),
                         React.createElement('div', { className: 'flex flex-col min-w-fit' },
-                            React.createElement('label', { className: 'text-xs font-medium text-zinc-500 mb-0.5' },
+                            React.createElement('label', { className: 'text-xs font-medium text-muted mb-0.5' },
                                 'Bars'
                             ),
                             React.createElement('button', {
@@ -376,10 +370,13 @@ const App = () => {
                         setFocusDeviceId(id);
                         setMainView('devices');
                     }
+                }),
+                mainView === 'gallery' && React.createElement(Gallery, {
+                    onToggleTheme: handleToggleTheme
                 })
             )
         )
-    );
+    ));
 };
 
 module.exports = App;

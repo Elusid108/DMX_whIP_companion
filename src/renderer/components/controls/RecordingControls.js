@@ -15,7 +15,7 @@ const STOP_OPTIONS = [
 ];
 
 const TriggerSelect = ({ label, value, options, onChange, disabled }) => React.createElement('label', {
-    className: 'flex items-center gap-1.5 text-xs text-zinc-500'
+    className: 'flex items-center gap-1.5 text-xs text-muted'
 },
     label,
     React.createElement('select', {
