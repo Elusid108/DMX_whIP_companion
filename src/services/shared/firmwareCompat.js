@@ -1,4 +1,6 @@
-const MIN_FIRMWARE_API = 1;
+// 2: cue bus v3 (shared clock, launch from any node). Older nodes still
+// answer HTTP but cannot join synced groups.
+const MIN_FIRMWARE_API = 2;
 
 const statusApi = (status) => {
     if (!status || status.api == null || status.api === '') {

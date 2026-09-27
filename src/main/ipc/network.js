@@ -531,6 +531,10 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
                         fields.sync_group = group;
                         fields.sync_members = members;
                         fields.sync_kind = syncKind;
+                        // Every member loops on the same length.
+                        if (look.durationMs) {
+                            fields.sync_dur = Math.round(look.durationMs);
+                        }
                     }
                     const meta = await postMeta(item.target.ip, fields);
                     item.dest = dest;
@@ -577,6 +581,107 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
                     // ignore
                 }
             });
+        }
+    });
+
+    // Full show to one node, then the node slices it for every peer on the
+    // cue bus and uploads the parts (firmware POST /distribute).
+    const waitForDistribute = async (holder, label) => {
+        const started = Date.now();
+        let seenRunning = false;
+        while (Date.now() - started < 30 * 60 * 1000) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            const result = await fetchStatus(holder.ip);
+            const dist = result && result.success && result.status && result.status.dist;
+            if (!dist) {
+                continue;
+            }
+            if (dist.state === 'running') {
+                seenRunning = true;
+                emitPushProgress({
+                    phase: 'sending',
+                    sent: dist.sent || 0,
+                    total: dist.total || 0,
+                    label: `${label} → ${dist.peer || '…'} (${(dist.i || 0) + 1}/${dist.n || 1})`
+                });
+                continue;
+            }
+            if (dist.state === 'done' || (dist.state === 'error' && seenRunning) || dist.state === 'error') {
+                return dist;
+            }
+        }
+        return { state: 'error', msg: 'timed out' };
+    };
+
+    // Full show to one node, which plays it and streams every peer its
+    // universes live (firmware POST /stream); members need no SD content.
+    ipcMain.handle('device-push-stream', async (event, { jobs, holder } = {}) => {
+        try {
+            const list = Array.isArray(jobs) ? jobs : [];
+            if (list.length !== 1) {
+                return { success: false, error: 'Stream plays one show at a time' };
+            }
+            if (!holder || !holder.ip) {
+                return { success: false, error: 'Pick the node that plays the full show' };
+            }
+            const job = list[0];
+            assertInLibrary(job.filePath);
+            const label = holder.longName || holder.ip;
+            const destPath = job.dest || destUploadPath(job.filePath);
+            const uploaded = await postUpload(holder.ip, job.filePath, (progress) => {
+                emitPushProgress({ ...progress, label: `${label} · full show` });
+            }, destPath, { name: job.name, titlePath: job.filePath });
+            if (!uploaded || !uploaded.success) {
+                return { success: false, error: (uploaded && uploaded.error) || 'Upload failed' };
+            }
+            const dest = (uploaded.result && uploaded.result.path) || destPath;
+            const started = await postForm(holder.ip, '/stream', { path: dest, on: 1 }, 4000);
+            if (!started || !started.success) {
+                return { success: false, error: `Upload done, stream failed: ${(started && started.error) || 'no reply'}` };
+            }
+            return { success: true, results: [{ label, dest }] };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('device-stream-stop', async (event, { ip } = {}) => postForm(ip, '/stream', { on: 0 }));
+
+    ipcMain.handle('device-push-distribute', async (event, { jobs, holder } = {}) => {
+        try {
+            const list = Array.isArray(jobs) ? jobs : [];
+            if (list.length !== 1) {
+                return { success: false, error: 'Distribute sends one show at a time' };
+            }
+            if (!holder || !holder.ip) {
+                return { success: false, error: 'Pick the node that holds the full show' };
+            }
+            const job = list[0];
+            assertInLibrary(job.filePath);
+            const label = holder.longName || holder.ip;
+            const destPath = job.dest || destUploadPath(job.filePath);
+            const uploaded = await postUpload(holder.ip, job.filePath, (progress) => {
+                emitPushProgress({ ...progress, label: `${label} · full show` });
+            }, destPath, { name: job.name, titlePath: job.filePath });
+            if (!uploaded || !uploaded.success) {
+                return { success: false, error: (uploaded && uploaded.error) || 'Upload failed' };
+            }
+            const dest = (uploaded.result && uploaded.result.path) || destPath;
+            const started = await postForm(holder.ip, '/distribute', { path: dest }, 4000);
+            if (!started || !started.success) {
+                return { success: false, error: `Upload done, distribute failed: ${(started && started.error) || 'no reply'}` };
+            }
+            const dist = await waitForDistribute(holder, label);
+            if (dist.state !== 'done') {
+                return { success: false, error: `Distribute: ${dist.msg || 'failed'}` };
+            }
+            return {
+                success: true,
+                results: [{ label, dest, note: dist.msg }],
+                failed: dist.failed || 0
+            };
+        } catch (error) {
+            return { success: false, error: error.message };
         }
     });
 
@@ -642,6 +747,15 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
 
     ipcMain.handle('device-wifi-forget', async (event, { ip } = {}) => {
         return postForm(ip, '/forget', {});
+    });
+
+    ipcMain.handle('device-set-shownet', async (event, { ip, role, ssid, pass, ch } = {}) => {
+        return postForm(ip, '/shownet', {
+            role: role || 'standalone',
+            ssid: ssid || '',
+            pass: pass || '',
+            ch: ch || 6
+        }, 4000);
     });
 
     ipcMain.handle('device-set-name', async (event, { ip, name, short } = {}) => {
@@ -754,6 +868,9 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('device-push-analyze');
         ipcMain.removeHandler('device-push-show');
         ipcMain.removeHandler('device-push-batch');
+        ipcMain.removeHandler('device-push-distribute');
+        ipcMain.removeHandler('device-push-stream');
+        ipcMain.removeHandler('device-stream-stop');
         ipcMain.removeHandler('device-play');
         ipcMain.removeHandler('device-stop');
         ipcMain.removeHandler('device-set-brightness');
@@ -762,6 +879,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('device-wifi-connect');
         ipcMain.removeHandler('device-wifi-forget');
         ipcMain.removeHandler('device-set-name');
+        ipcMain.removeHandler('device-set-shownet');
         ipcMain.removeHandler('device-rename-show');
         ipcMain.removeHandler('device-open-portal');
         ipcMain.removeHandler('device-pull-show');

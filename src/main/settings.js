@@ -49,7 +49,11 @@ const normalize = (raw = {}) => ({
     flashNameMode: raw.flashNameMode === 'seq' ? 'seq' : 'mac',
     flashNameStart: clampInt(raw.flashNameStart, 0, 999999, 1),
     flashNameDigits: clampInt(raw.flashNameDigits, 1, 6, 1),
-    flashPixels: normalizePixels(raw.flashPixels)
+    flashPixels: normalizePixels(raw.flashPixels),
+    flashShowRole: ['host', 'member'].includes(raw.flashShowRole) ? raw.flashShowRole : 'standalone',
+    flashShowSsid: typeof raw.flashShowSsid === 'string' ? raw.flashShowSsid : '',
+    flashShowPass: typeof raw.flashShowPass === 'string' ? raw.flashShowPass : '',
+    flashShowCh: clampInt(raw.flashShowCh, 1, 13, 6)
 });
 
 const loadSettings = () => {

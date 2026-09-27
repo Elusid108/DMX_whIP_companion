@@ -44,6 +44,9 @@ const INVOKE = new Set([
     'device-push-analyze',
     'device-push-show',
     'device-push-batch',
+    'device-push-distribute',
+    'device-push-stream',
+    'device-stream-stop',
     'device-play',
     'device-stop',
     'device-set-brightness',
@@ -52,6 +55,7 @@ const INVOKE = new Set([
     'device-wifi-connect',
     'device-wifi-forget',
     'device-set-name',
+    'device-set-shownet',
     'device-rename-show',
     'device-open-portal',
     'device-pull-show',
@@ -61,7 +65,14 @@ const INVOKE = new Set([
     'flash-identify',
     'flash-run',
     'flash-wlan',
-    'flash-build'
+    'flash-build',
+    'cuebus-state',
+    'cuebus-refresh',
+    'cuebus-launch',
+    'cuebus-pause',
+    'cuebus-resume',
+    'cuebus-stop',
+    'cuebus-seek'
 ]);
 
 const SEND = new Set([
@@ -98,7 +109,8 @@ const RECEIVE = new Set([
     'devices-update',
     'device-push-progress',
     'flash-progress',
-    'flash-log'
+    'flash-log',
+    'cuebus-update'
 ]);
 
 contextBridge.exposeInMainWorld('dmx', {

@@ -132,6 +132,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [clearWifi, setClearWifi] = useState(false);
+    const [showRole, setShowRole] = useState('standalone');
+    const [showSsid, setShowSsid] = useState('');
+    const [showPass, setShowPass] = useState('');
+    const [showCh, setShowCh] = useState(6);
     const [wlan, setWlan] = useState({ current: null, networks: [] });
     const [artifactNote, setArtifactNote] = useState('');
     const [artifactError, setArtifactError] = useState('');
@@ -245,6 +249,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             setNameMode(nameOpts.mode);
             setNameStart(nameOpts.start);
             setNameDigits(nameOpts.digits);
+            setShowRole(settings.flashShowRole || 'standalone');
+            setShowSsid(settings.flashShowSsid || '');
+            setShowPass(settings.flashShowPass || '');
+            setShowCh(settings.flashShowCh || 6);
             const savedSsid = settings.flashSsid || '';
             setPassword(typeof settings.flashPassword === 'string' ? settings.flashPassword : '');
             if (savedSsid) {
@@ -549,6 +557,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             flashNameDigits: nameOpts.digits,
             flashSdPins: sdPins,
             flashPixels: pixelCheck.pixels,
+            flashShowRole: showRole,
+            flashShowSsid: showSsid,
+            flashShowPass: showPass,
+            flashShowCh: showCh,
             flashBoardId: boardId
         });
         setLog([]);
@@ -578,7 +590,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 longName: names.long,
                 shortName: names.short,
                 clearWifi,
-                pixels: pixelCheck.pixels
+                pixels: pixelCheck.pixels,
+                show: showRole === 'standalone'
+                    ? null
+                    : { role: showRole, ssid: showSsid.trim(), pass: showPass, ch: showCh }
             });
             if (!result || !result.success) {
                 patchRow(row.path, {
@@ -963,6 +978,53 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             password && password.length > 0 && password.length < 8 && React.createElement('p', {
                 className: 'text-sm text-amber-600 dark:text-amber-400'
             }, 'WPA passwords are usually 8+ characters. Empty means an open network.'),
+            React.createElement(Field, { label: 'Show network' },
+                React.createElement('select', {
+                    className: 'field',
+                    value: showRole,
+                    disabled: busy,
+                    onChange: (event) => setShowRole(event.target.value)
+                },
+                    React.createElement('option', { value: 'standalone' }, 'Standalone'),
+                    React.createElement('option', { value: 'member' }, 'Member (joins the Show Host)'),
+                    React.createElement('option', { value: 'host' }, 'Show Host (runs the Wi-Fi)')
+                )
+            ),
+            showRole !== 'standalone' && React.createElement('div', { className: 'grid grid-cols-2 gap-2' },
+                React.createElement(Field, { label: 'Show SSID' },
+                    React.createElement('input', {
+                        className: 'field',
+                        value: showSsid,
+                        maxLength: 32,
+                        disabled: busy,
+                        onChange: (event) => setShowSsid(event.target.value)
+                    })
+                ),
+                React.createElement(Field, { label: 'Show password' },
+                    React.createElement('input', {
+                        className: 'field',
+                        type: 'password',
+                        value: showPass,
+                        maxLength: 63,
+                        disabled: busy,
+                        onChange: (event) => setShowPass(event.target.value)
+                    })
+                )
+            ),
+            showRole === 'host' && React.createElement(Field, { label: 'Show channel' },
+                React.createElement('select', {
+                    className: 'field',
+                    value: showCh,
+                    disabled: busy,
+                    onChange: (event) => setShowCh(Number(event.target.value))
+                }, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((ch) => React.createElement('option', { key: ch, value: ch }, ch)))
+            ),
+            showRole === 'host' && rows.filter((row) => row.selected).length > 1 && React.createElement('p', {
+                className: 'text-sm text-amber-600 dark:text-amber-400'
+            }, 'Only one board should be the Show Host. Flash the others as Members.'),
+            showRole !== 'standalone' && showPass && showPass.length < 8 && React.createElement('p', {
+                className: 'text-sm text-amber-600 dark:text-amber-400'
+            }, 'The show password needs 8 or more characters.'),
             React.createElement(Field, { label: 'NVS' },
                 React.createElement('label', {
                     className: 'flex items-center gap-2 text-sm pt-1.5'

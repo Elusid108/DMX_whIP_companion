@@ -210,6 +210,15 @@ const buildNvsImage = (opts = {}, size = 20480) => {
         }
     }
 
+    // Show network role (firmware show_net): 0 standalone, 1 host, 2 member.
+    if (opts.show && opts.show.role && opts.show.ssid) {
+        const show = addNs('show');
+        writePrimitiveU8(state, show, 'role', opts.show.role);
+        writeString(state, show, 'ssid', opts.show.ssid);
+        writeString(state, show, 'pass', opts.show.pass || '');
+        writePrimitiveU8(state, show, 'ch', opts.show.ch || 6);
+    }
+
     if (opts.led && opts.led.bri != null) {
         const led = addNs('led');
         writePrimitiveU8(state, led, 'bri', opts.led.bri);

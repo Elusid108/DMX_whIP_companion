@@ -75,6 +75,10 @@
       disabled:opacity-50 disabled:pointer-events-none;
   }
 
+  .btn-quiet.is-active {
+    @apply border-cyan-500 text-cyan-700 dark:border-cyan-400 dark:text-cyan-300;
+  }
+
   .btn-primary {
     @apply inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg
       bg-cyan-600 text-white

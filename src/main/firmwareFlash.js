@@ -432,7 +432,8 @@ function setupFirmwareFlashHandlers(mainWindow) {
         shortName,
         clearWifi,
         pixels,
-        keepNvs
+        keepNvs,
+        show
     } = {}) => {
         const portPath = String(port || '').trim();
         if (!portPath) {
@@ -561,6 +562,16 @@ function setupFirmwareFlashHandlers(mainWindow) {
                             if (names.long) {
                                 nvsOpts.node = names;
                                 logPort(portPath, `Provisioning name=${names.long}`);
+                            }
+                            const showRole = show && ({ host: 1, member: 2 })[show.role];
+                            if (showRole && show.ssid) {
+                                nvsOpts.show = {
+                                    role: showRole,
+                                    ssid: clipName(show.ssid, 32),
+                                    pass: String(show.pass || ''),
+                                    ch: Math.max(1, Math.min(13, Number(show.ch) || 6))
+                                };
+                                logPort(portPath, `Provisioning show network ${show.role} ssid=${nvsOpts.show.ssid}`);
                             }
                             logPort(
                                 portPath,

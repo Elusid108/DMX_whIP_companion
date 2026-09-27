@@ -123,6 +123,8 @@ const PushToSdDialog = ({
         [devices]
     );
     const [selectedIds, setSelectedIds] = useState([]);
+    const [mode, setMode] = useState('split');
+    const [holderId, setHolderId] = useState('');
     const [analysis, setAnalysis] = useState(null);
     const [analyzing, setAnalyzing] = useState(false);
     const openedRef = useRef(false);
@@ -248,10 +250,17 @@ const PushToSdDialog = ({
 
     const lookRows = (analysis && analysis.looks) || [];
     const overall = analysis && analysis.overall;
-    const canConfirm = selectedIds.length > 0 && !pushing;
+    const holder = selectedIds.includes(holderId) ? holderId : selectedIds[0];
+    const oneShow = (jobs || []).length === 1;
+    const canConfirm = selectedIds.length > 0 && !pushing
+        && (mode === 'split' || (oneShow && Boolean(holder)));
     const pushLabel = pushing
         ? 'Pushing…'
-        : (overall && overall.pushLabel) || 'Push';
+        : (mode === 'distribute'
+            ? 'Send & distribute'
+            : (mode === 'stream'
+                ? 'Send & stream'
+                : (overall && overall.pushLabel) || 'Push'));
 
     const toggle = (id) => {
         setSelectedIds((current) => (
@@ -419,9 +428,44 @@ const PushToSdDialog = ({
                     ? 'text-cyan-600 dark:text-cyan-400'
                     : 'text-red-500'}`
             }, pushError),
-            overall && React.createElement('p', {
+            overall && mode === 'split' && React.createElement('p', {
                 className: `text-xs mb-2 ${chipClass(overall.level)}`
             }, overall.label),
+            React.createElement('div', { className: 'flex flex-wrap items-end gap-2 mb-2' },
+                React.createElement('label', { className: 'flex flex-col gap-0.5 text-xs text-zinc-500' },
+                    'Mode',
+                    React.createElement('select', {
+                        className: 'field',
+                        value: mode,
+                        disabled: pushing,
+                        onChange: (event) => setMode(event.target.value)
+                    },
+                        React.createElement('option', { value: 'split' }, 'Split: this PC slices, every node gets its part'),
+                        React.createElement('option', { value: 'distribute' }, 'Distribute: full show to one node, it sends the parts'),
+                        React.createElement('option', { value: 'stream' }, 'Stream: full show to one node, it plays and streams the parts live')
+                    )
+                ),
+                mode !== 'split' && React.createElement('label', { className: 'flex flex-col gap-0.5 text-xs text-zinc-500' },
+                    'Holder',
+                    React.createElement('select', {
+                        className: 'field',
+                        value: holder || '',
+                        disabled: pushing || !selectedIds.length,
+                        onChange: (event) => setHolderId(event.target.value)
+                    }, targets.filter((device) => selectedIds.includes(device.id)).map((device) => React.createElement('option', {
+                        key: device.id,
+                        value: device.id
+                    }, device.longName || device.ip)))
+                )
+            ),
+            mode === 'stream' && React.createElement('p', { className: 'text-xs text-zinc-500 mb-2' },
+                oneShow
+                    ? 'The holder plays the whole show and sends every node on the network the universes its patch uses, live (firmware 0.43+). The others need nothing on their SD and must not be receiving another stream.'
+                    : 'Stream plays one show at a time. Select a single look.'),
+            mode === 'distribute' && React.createElement('p', { className: 'text-xs text-zinc-500 mb-2' },
+                oneShow
+                    ? 'The holder gets the whole show, then slices it for every node on the network (firmware 0.42+) using each node\'s own patch.'
+                    : 'Distribute sends one show at a time. Select a single look.'),
             React.createElement('div', {
                 className: 'flex gap-1.5'
             },
@@ -435,7 +479,7 @@ const PushToSdDialog = ({
                     type: 'button',
                     className: 'btn-primary flex-1 justify-center',
                     disabled: pushing || !canConfirm,
-                    onClick: () => onPush(selectedIds)
+                    onClick: () => onPush(selectedIds, { mode, holderId: holder })
                 }, pushLabel)
             )
         )

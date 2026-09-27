@@ -482,13 +482,37 @@ const LibraryPanel = React.forwardRef(({
         setPushOpen(true);
     };
 
-    const handlePush = async (ids) => {
+    const handlePush = async (ids, opts = {}) => {
         const list = (Array.isArray(ids) ? ids : []).filter(Boolean);
         const chosen = devices.filter((device) => (
             list.includes(device.id) && device.ip && !device.stale
         ));
         const jobs = collectPushJobs();
         if (!jobs.length || !chosen.length || pushing) {
+            return;
+        }
+        if (opts.mode === 'distribute' || opts.mode === 'stream') {
+            const holder = chosen.find((device) => device.id === opts.holderId) || chosen[0];
+            setPushing(true);
+            setPushError('');
+            setPushProgress({ phase: 'connecting', sent: 0, total: 0, label: holder.longName || holder.ip });
+            try {
+                const result = await ipcRenderer.invoke(opts.mode === 'stream' ? 'device-push-stream' : 'device-push-distribute', {
+                    jobs,
+                    holder: { ip: holder.ip, longName: holder.longName }
+                });
+                if (!result || !result.success) {
+                    setPushError((result && result.error) || 'Distribute failed');
+                } else if (result.failed) {
+                    setPushError(`Pushed and distributed (${result.results[0].note})`);
+                } else {
+                    setPushOpen(false);
+                }
+            } catch (err) {
+                setPushError(err.message);
+            }
+            setPushing(false);
+            setPushProgress(null);
             return;
         }
         setPushing(true);

@@ -557,6 +557,7 @@ const analyzeLook = (look, selected) => {
         filePath: look.filePath,
         name: look.name,
         dest: look.dest || null,
+        durationMs: (look.scan && look.scan.duration) || 0,
         scanError: look.scan && look.scan.error,
         proto: file.proto,
         span: file.span,
@@ -581,7 +582,7 @@ const analyzePush = (looks, deviceStates) => {
             statusError: error,
             live: liveLockedStatus(status, error),
             window: status ? deviceWindowFromStatus(status) : null,
-            supportsSync: Boolean(status && status.play && status.play.sync)
+            supportsSync: Boolean(status && Number(status.api) >= 2 && status.play && status.play.sync)
         };
     });
 

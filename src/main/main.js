@@ -16,6 +16,7 @@ protocol.registerSchemesAsPrivileged([
     }
 ]);
 const setupNetworkHandlers = require('./ipc/network');
+const setupCueBusHandlers = require('./ipc/cuebus');
 const setupRecordingHandlers = require('./ipc/recording');
 const setupPlaybackHandlers = require('./ipc/playback');
 const { setupLibraryHandlers } = require('./ipc/library');
@@ -107,6 +108,7 @@ function createWindow() {
 
     const recordingHandler = setupRecordingHandlers(mainWindow);
     const cleanupNetwork = setupNetworkHandlers(mainWindow, recordingHandler);
+    const cleanupCueBus = setupCueBusHandlers(mainWindow);
     const playback = setupPlaybackHandlers(mainWindow, recordingHandler);
     protocol.handle('compmedia', (request) => {
         try {
@@ -129,6 +131,7 @@ function createWindow() {
         protocol.unhandle('compmedia');
         if (playback && playback.close) playback.close();
         if (cleanupNetwork) cleanupNetwork();
+        if (cleanupCueBus) cleanupCueBus();
         if (cleanupLibrary) cleanupLibrary();
         if (cleanupSettings) cleanupSettings();
         if (cleanupFlash) cleanupFlash();

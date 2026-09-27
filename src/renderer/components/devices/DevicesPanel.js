@@ -4,6 +4,7 @@ const { useState, useEffect, useRef } = React;
 const ipcRenderer = require('../../ipc');
 const DeviceList = require('./DeviceList');
 const DeviceInspector = require('./DeviceInspector');
+const ShowSyncPanel = require('./ShowSyncPanel');
 const NetworkSelect = require('../controls/NetworkSelect');
 
 const showSortName = (sdPath) => String(sdPath || '')
@@ -38,6 +39,7 @@ const DevicesPanel = ({
 } = {}) => {
     const [devices, setDevices] = useState([]);
     const [selectedId, setSelectedId] = useState(null);
+    const [mode, setMode] = useState('node');
     const [status, setStatus] = useState(null);
     const [statusError, setStatusError] = useState('');
     const [liveLocked, setLiveLocked] = useState(false);
@@ -214,11 +216,19 @@ const DevicesPanel = ({
                 networkInterfaces: networkInterfaces || [],
                 onChange: onNetworkChange
             }),
-            React.createElement('button', {
-                type: 'button',
-                className: 'btn-quiet w-full justify-center',
-                onClick: handleScan
-            }, 'Scan')
+            React.createElement('div', { className: 'flex gap-1.5' },
+                React.createElement('button', {
+                    type: 'button',
+                    className: 'btn-quiet flex-1 justify-center',
+                    onClick: handleScan
+                }, 'Scan'),
+                React.createElement('button', {
+                    type: 'button',
+                    className: `btn-quiet flex-1 justify-center ${mode === 'sync' ? 'is-active' : ''}`,
+                    'aria-pressed': mode === 'sync',
+                    onClick: () => setMode(mode === 'sync' ? 'node' : 'sync')
+                }, 'Show sync')
+            )
         ),
         React.createElement('div', {
             className: 'flex-1 min-h-0 overflow-y-auto p-2'
@@ -230,7 +240,10 @@ const DevicesPanel = ({
                         : device
                 )),
                 selectedId,
-                onSelect: setSelectedId,
+                onSelect: (id) => {
+                    setSelectedId(id);
+                    setMode('node');
+                },
                 onOpenPortal: (device) => {
                     if (!device || !device.ip) {
                         return;
@@ -243,7 +256,7 @@ const DevicesPanel = ({
     const main = React.createElement('div', {
         className: 'flex flex-1 flex-col p-3 min-h-0 overflow-y-auto bg-zinc-50 dark:bg-zinc-950'
     },
-        React.createElement(DeviceInspector, {
+        mode === 'sync' ? React.createElement(ShowSyncPanel) : React.createElement(DeviceInspector, {
             device: selected,
             status,
             statusError,
