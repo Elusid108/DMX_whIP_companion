@@ -45,6 +45,8 @@ const ViewStudio = strokeIcon(path('M4 7h10'), path('M4 12h16'), path('M4 17h7')
 const ViewLibrary = strokeIcon(path('M9 6h11'), path('M9 12h11'), path('M9 18h11'), path('M4.5 6h.01'), path('M4.5 12h.01'), path('M4.5 18h.01'));
 const ViewDevices = strokeIcon(h('rect', { x: 3, y: 14, width: 18, height: 6, rx: 1.5 }), path('M7 17h.01'), path('M12 14V10'), path('M9 8.5a4.2 4.2 0 0 1 6 0'), path('M6.5 6a7.8 7.8 0 0 1 11 0'));
 const ViewFlash = strokeIcon(path('M13 2L4 14h7l-1 8 9-12h-7z'));
+// Three fader tracks with their knobs.
+const ViewLive = strokeIcon(path('M6 4v16'), path('M12 4v16'), path('M18 4v16'), h('rect', { x: 4, y: 12, width: 4, height: 3, rx: 1 }), h('rect', { x: 10, y: 6, width: 4, height: 3, rx: 1 }), h('rect', { x: 16, y: 15, width: 4, height: 3, rx: 1 }));
 const Close = strokeIcon(path('M6 6l12 12'), path('M18 6L6 18'));
 const Plus = strokeIcon(path('M12 5v14'), path('M5 12h14'));
 const Check = strokeIcon(path('M5 12.5l4.5 4.5L19 7.5'));
@@ -109,6 +111,7 @@ module.exports = {
     ViewDevices,
     ViewFlash,
     ViewLibrary,
+    ViewLive,
     ViewMonitor,
     ViewStudio
 };

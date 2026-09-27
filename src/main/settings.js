@@ -2,6 +2,7 @@ const { app } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { normalizePixels } = require('../services/shared/pixelMap');
+const { normalizeLive } = require('../services/shared/liveControl');
 
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 
@@ -91,7 +92,11 @@ const normalize = (raw = {}) => ({
     flashShowSsid: typeof raw.flashShowSsid === 'string' ? raw.flashShowSsid : '',
     flashShowPass: typeof raw.flashShowPass === 'string' ? raw.flashShowPass : '',
     flashShowCh: clampInt(raw.flashShowCh, 1, 13, 6),
-    monitor: normalizeMonitor(raw.monitor)
+    monitor: normalizeMonitor(raw.monitor),
+    // Output adapter for playback and Live (the Settings menu's Output NIC).
+    outputNic: typeof raw.outputNic === 'string' && /^[\d.]{7,15}$/.test(raw.outputNic) ? raw.outputNic : '0.0.0.0',
+    live: normalizeLive(raw.live),
+    liveCid: typeof raw.liveCid === 'string' && /^[0-9a-f]{32}$/.test(raw.liveCid) ? raw.liveCid : ''
 });
 
 const loadSettings = () => {

@@ -4,6 +4,10 @@ const INVOKE = new Set([
     'get-network-interfaces',
     'get-settings',
     'set-ui-settings',
+    'live-release-all',
+    'live-get',
+    'live-save',
+    'set-output-nic',
     'set-theme',
     'open-external-url',
     'library-list',
@@ -93,7 +97,8 @@ const SEND = new Set([
     'stop-playback',
     'seek-playback',
     'unload-recording',
-    'devices-scan'
+    'devices-scan',
+    'live-set'
 ]);
 
 const RECEIVE = new Set([

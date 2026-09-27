@@ -82,7 +82,8 @@ class SacnOutput {
         return state;
     }
 
-    send(universe, dmxData, destIp) {
+    // options: E1.31 framing options (0x40 stream terminated).
+    send(universe, dmxData, destIp, options = 0) {
         if (!this.socket) {
             return;
         }
@@ -90,7 +91,7 @@ class SacnOutput {
         state.sequence = (state.sequence + 1) & 0xff;
         const unicast = typeof destIp === 'string' && destIp.trim();
         // Each packet is its own copy: dgram may still hold the previous one.
-        const packet = Buffer.from(writeSacnDmx(state.packet, universe, state.sequence, dmxData));
+        const packet = Buffer.from(writeSacnDmx(state.packet, universe, state.sequence, dmxData, options));
         this.socket.send(packet, 5568, unicast ? destIp.trim() : state.multicast, (err) => {
             if (err) {
                 console.error('sACN send error:', err);

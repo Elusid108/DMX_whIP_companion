@@ -1,4 +1,4 @@
-const { useState, useEffect, useRef } = require('react');
+const { useState, useEffect, useRef, useCallback } = require('react');
 const ipcRenderer = require('../ipc');
 
 const neighborStarts = (clips, audioClips, timeMs) => {
@@ -107,6 +107,24 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
     useEffect(() => {
         setPlaybackNetwork((current) => current || selectedNic || '0.0.0.0');
     }, [selectedNic]);
+
+    // The Output NIC is saved (it is also the Live tab's adapter).
+    useEffect(() => {
+        let alive = true;
+        ipcRenderer.invoke('live-get').then((result) => {
+            if (alive && result && result.outputNic && result.outputNic !== '0.0.0.0') {
+                setPlaybackNetwork(result.outputNic);
+            }
+        }).catch(() => {});
+        return () => {
+            alive = false;
+        };
+    }, []);
+
+    const chooseOutputNic = useCallback((nic) => {
+        setPlaybackNetwork(nic);
+        ipcRenderer.invoke('set-output-nic', { nic }).catch(() => {});
+    }, []);
 
     useEffect(() => {
         const fetchOverview = async (filePath) => {
@@ -1099,7 +1117,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         isLoopEnabled,
         setIsLoopEnabled,
         playbackNetwork,
-        setPlaybackNetwork,
+        setPlaybackNetwork: chooseOutputNic,
         playbackStats,
         timelineOverview,
         playheadMs,

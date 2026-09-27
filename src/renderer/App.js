@@ -9,6 +9,8 @@ const SettingsMenu = require('./components/controls/SettingsMenu');
 const PlaybackControls = require('./components/controls/PlaybackControls');
 const MiniPlayer = require('./components/controls/MiniPlayer');
 const Gallery = require('./components/ui/Gallery');
+const { LivePanel, LiveRail } = require('./components/live/LivePanel');
+const liveStore = require('./liveStore');
 const { Dialog, IconButton, Icons, Select, Tabs, ToastProvider, cx } = require('./components/ui');
 const useMediaQuery = require('./hooks/useMediaQuery');
 const { applyTheme } = require('./theme');
@@ -23,6 +25,7 @@ const ipcRenderer = require('./ipc');
 // rail: what the left column holds (the drawer button's label when narrow).
 const VIEWS = [
     { id: 'monitor', label: 'Monitor', icon: Icons.ViewMonitor, rail: 'Universes' },
+    { id: 'live', label: 'Live', icon: Icons.ViewLive, rail: 'Output' },
     { id: 'studio', label: 'Studio', icon: Icons.ViewStudio, rail: 'Universes' },
     { id: 'library', label: 'Library', icon: Icons.ViewLibrary, rail: 'Shows' },
     { id: 'devices', label: 'Devices', icon: Icons.ViewDevices, rail: 'Nodes' },
@@ -31,7 +34,7 @@ const VIEWS = [
 
 // Phones: views as a bottom tab bar.
 const BottomNav = ({ value, onChange }) => React.createElement('nav', {
-    className: 'flex-none grid grid-cols-5 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)]',
+    className: 'flex-none grid grid-cols-6 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)]',
     'aria-label': 'Views'
 }, VIEWS.map((view) => React.createElement('button', {
     key: view.id,
@@ -101,7 +104,16 @@ const App = () => {
         playbackNetwork: session.playbackNetwork,
         isRecording: session.isRecording
     });
+    const outputNic = (networkInterfaces || []).find((nic) => nic.ip === session.playbackNetwork);
+    const outputNicLabel = outputNic && session.playbackNetwork !== '0.0.0.0'
+        ? `${outputNic.name} (${outputNic.ip})`
+        : 'Default adapter';
     const libraryRef = React.useRef(null);
+    // Live layout loads at start (not on first visit) so its levels are in
+    // step with the main process from the outset.
+    React.useEffect(() => {
+        liveStore.load();
+    }, []);
     const [libraryRail, setLibraryRail] = React.useState(null);
     const [devicesRail, setDevicesRail] = React.useState(null);
     const [flashRail, setFlashRail] = React.useState(null);
@@ -125,6 +137,7 @@ const App = () => {
             const session = sessionRef.current;
             if ((event.key === 'Delete' || event.key === 'Backspace')
                 && mainView !== 'library'
+                && mainView !== 'live'
                 && session.isFileLoaded
                 && !session.isRecording
             ) {
@@ -153,7 +166,7 @@ const App = () => {
                 }
                 return;
             }
-            if (!session.isFileLoaded || session.isRecording) {
+            if (mainView === 'live' || !session.isFileLoaded || session.isRecording) {
                 return;
             }
             if (key === 'c') {
@@ -376,6 +389,11 @@ const App = () => {
                     ref: setFlashRail,
                     className: 'flex-1 min-h-0 flex flex-col'
                 }),
+                mainView === 'live' && React.createElement('div', {
+                    className: 'flex-1 min-h-0 overflow-y-auto'
+                },
+                    React.createElement(LiveRail, { outputNicLabel })
+                ),
                 mainView === 'gallery' && React.createElement('div', { className: 'flex-1' }),
                 wide && React.createElement(PlaybackControls, playerProps)
             ),
@@ -494,6 +512,7 @@ const App = () => {
                         visible: mainView === 'studio'
                     })
                 ),
+                mainView === 'live' && React.createElement(LivePanel, { outputNicLabel }),
                 mainView === 'library' && React.createElement(LibraryPanel, {
                     ref: libraryRef,
                     railHost: libraryRail,

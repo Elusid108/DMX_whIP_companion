@@ -522,8 +522,98 @@
     touch-action: pan-x pan-y;
   }
 
+  /* Live tab: two banks of 16 faders and a 5x5 pad. Faders sit 8 across
+     below md; from lg the pad sits beside the faders. */
+  .live-surface {
+    @apply flex-1 min-h-0 overflow-auto p-3 flex flex-col gap-4 lg:flex-row;
+  }
+
+  .live-faders {
+    @apply flex flex-col gap-3 min-w-0 lg:flex-1;
+  }
+
+  .live-bank {
+    @apply grid gap-1.5 grid-cols-8 md:grid-cols-[repeat(16,minmax(0,1fr))];
+  }
+
+  .live-fader {
+    @apply flex flex-col items-center gap-1 min-w-0 select-none rounded-md py-1;
+  }
+
+  .live-fader.is-editing {
+    @apply outline-dashed outline-1 outline-edge cursor-pointer;
+  }
+
+  .live-fader-value {
+    @apply text-[11px] tabular-nums text-fg-soft;
+  }
+
+  .live-fader-track {
+    @apply relative w-full max-w-[2.75rem] rounded-md border border-edge bg-sunken cursor-ns-resize
+      focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent;
+    height: 9.5rem;
+    touch-action: none;
+  }
+
+  .live-fader-fill {
+    @apply absolute inset-x-0 bottom-0 rounded-md bg-accent/25 pointer-events-none;
+  }
+
+  /* The thumb travels inside the track (Fader.js sets bottom from the
+     level and --fader-thumb). */
+  .live-fader-track {
+    --fader-thumb: 12px;
+  }
+
+  .live-fader-thumb {
+    @apply absolute inset-x-0.5 rounded bg-fg-soft border border-edge pointer-events-none;
+    height: var(--fader-thumb);
+    box-shadow: 0 1px 2px rgb(var(--c-ink) / 0.3);
+  }
+
+  .live-fader-name {
+    @apply w-full truncate text-center text-[11px] font-medium text-fg;
+  }
+
+  .live-fader-addr {
+    @apply w-full truncate text-center text-[10px] text-muted tabular-nums;
+  }
+
+  .live-pads {
+    @apply grid grid-cols-5 gap-1.5 w-full max-w-md self-center lg:self-start lg:w-[22rem] lg:flex-none;
+  }
+
+  .live-pad {
+    @apply flex flex-col items-center justify-center gap-0.5 aspect-square min-w-0 rounded-md border
+      border-edge bg-surface text-fg-soft select-none px-1
+      hover:border-edge-hover
+      focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent;
+    touch-action: none;
+  }
+
+  .live-pad.is-lit {
+    @apply bg-accent border-accent text-on-accent;
+  }
+
+  .live-pad.is-editing {
+    @apply border-dashed;
+  }
+
+  .live-pad-name {
+    @apply w-full truncate text-center text-xs font-semibold;
+  }
+
+  .live-pad-meta {
+    @apply w-full truncate text-center text-[9px] opacity-75 tabular-nums;
+  }
+
   /* Touch screens: 44 px targets. */
   @media (pointer: coarse) {
+    .live-fader-track {
+      height: 12rem;
+      --fader-thumb: 24px;
+    }
+
     .btn-quiet,
     .btn-primary,
     .btn-danger {

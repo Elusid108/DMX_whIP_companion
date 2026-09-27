@@ -47,6 +47,7 @@ const {
 } = require('../../services/shared/recordTriggers');
 const { convertToStudioWav, tempWavPath } = require('../audioConvert');
 const { studioVisible } = require('../uiView');
+const { getLiveOutput } = require('../liveOutput');
 const {
     ensureLibrary,
     uniqueDmxPath,
@@ -117,6 +118,18 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     let senderSeq = 0;
     let sentAudioVersion = -1;
     const HISTORY_CAP = 100;
+    const liveOutput = getLiveOutput();
+    // Last frame sent per 'protocol:universe' while the sockets are open.
+    const lastByUniverse = new Map();
+    liveOutput.attachPlayback({
+        owns: (proto, uni) => lastByUniverse.has(`${proto}:${uni}`),
+        resend: (proto, uni) => {
+            const frame = lastByUniverse.get(`${proto}:${uni}`);
+            if (frame) {
+                emitFrame(frame);
+            }
+        }
+    });
 
     const resolvedTrackNames = () => normalizeTrackNames(
         Math.max(editSession.trackCount, trackCountOf(editSession.clips, 1)),
@@ -258,6 +271,9 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     // just queued (a blackout) still go out even if a new playback starts.
     const cleanupSenders = (graceMs = 0) => {
         senderSeq += 1;
+        // Live levels go back to the Live output's own sockets.
+        lastByUniverse.clear();
+        liveOutput.kick();
         if (discoveryInterval) {
             clearInterval(discoveryInterval);
             discoveryInterval = null;
@@ -385,22 +401,32 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         await initializeSenders(playbackNetwork || activeNetwork);
     };
 
-    const outputFrame = (frame, countFps) => {
-        lastSentFrame = frame;
-        if (countFps) {
-            framesSentWindow.push(Date.now());
-        }
+    // Every playback packet leaves here, with the Live tab's levels merged
+    // in (HTP). While playback sends a universe it owns it, so the Live
+    // output stays quiet there and nodes see one source.
+    const emitFrame = (frame) => {
+        const data = liveOutput.merge(frame.protocol, frame.universe, frame.data);
         if (frame.protocol === 'artnet') {
             if (artnetSender) {
-                artnetSender.send(frame.universe, frame.data, frame.destIp).catch((err) => {
+                lastByUniverse.set(`artnet:${frame.universe}`, frame);
+                artnetSender.send(frame.universe, data, frame.destIp).catch((err) => {
                     console.error('Art-Net playback send error:', err);
                 });
             }
             return;
         }
         if (sacnOutput) {
-            sacnOutput.send(frame.universe, frame.data, frame.destIp);
+            lastByUniverse.set(`sacn:${frame.universe}`, frame);
+            sacnOutput.send(frame.universe, data, frame.destIp);
         }
+    };
+
+    const outputFrame = (frame, countFps) => {
+        lastSentFrame = frame;
+        if (countFps) {
+            framesSentWindow.push(Date.now());
+        }
+        emitFrame(frame);
     };
 
     const sendFrame = (frame) => {
@@ -2077,6 +2103,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     const close = () => {
         clearPunchIn({ deleteTemp: true });
         haltTransport({ cleanup: true });
+        liveOutput.attachPlayback(null);
         HANDLED.forEach((channel) => ipcMain.removeHandler(channel));
         ipcMain.removeListener('set-playback-loop', onSetLoop);
         ipcMain.removeListener('toggle-playback', onToggle);

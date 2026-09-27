@@ -1,5 +1,8 @@
-const STALE_MS = 250;
-const REMOVE_MS = 5000;
+// Consoles often send an idle universe only about once a second (Art-Net
+// and sACN keep-alives), so "inactive" follows the E1.31 data-loss timeout
+// (2.5 s) rather than the frame rate.
+const STALE_MS = 2500;
+const REMOVE_MS = 10000;
 const TICK_MS = 50;
 const SNAPSHOT_MS = 200;
 const FPS_WINDOW_MS = 1000;
