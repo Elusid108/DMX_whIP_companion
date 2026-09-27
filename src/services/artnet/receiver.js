@@ -6,7 +6,6 @@ const RECV_BUFFER = 1024 * 1024;
 class ArtNetReceiver {
     constructor() {
         this.socket = null;
-        this.universeData = new Map();
         this.callbacks = new Map();
         this.pollReplyCallbacks = new Map();
     }
@@ -23,7 +22,15 @@ class ArtNetReceiver {
                     reuseAddr: true
                 });
 
+                const onBindError = (err) => {
+                    console.error('Art-Net receiver bind failed:', err);
+                    this.stop();
+                    reject(err);
+                };
+                this.socket.once('error', onBindError);
+
                 this.socket.on('listening', () => {
+                    this.socket.removeListener('error', onBindError);
                     console.log('Art-Net receiver listening on port 6454');
                     try {
                         this.socket.setRecvBufferSize(RECV_BUFFER);
@@ -46,10 +53,6 @@ class ArtNetReceiver {
                     if (data.kind !== 'dmx') {
                         return;
                     }
-                    this.universeData.set(data.universe, {
-                        ...data,
-                        lastSeen: Date.now()
-                    });
                     this.callbacks.forEach((callback) => callback(data));
                 });
 
@@ -82,7 +85,6 @@ class ArtNetReceiver {
             this.socket.close();
             this.socket = null;
         }
-        this.universeData.clear();
     }
 
     onDmxData(id, callback) {
@@ -96,10 +98,6 @@ class ArtNetReceiver {
     removeCallback(id) {
         this.callbacks.delete(id);
         this.pollReplyCallbacks.delete(id);
-    }
-
-    getUniverseData() {
-        return Array.from(this.universeData.values());
     }
 }
 

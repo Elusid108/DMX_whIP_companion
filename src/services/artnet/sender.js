@@ -1,9 +1,11 @@
 const dgram = require('dgram');
 const { createArtNetDmxPacket } = require('./utils');
+const ownOutput = require('../shared/ownOutput');
 
 class ArtNetSender {
     constructor() {
         this.socket = null;
+        this.port = 0;
     }
 
     async start(interfaceIp) {
@@ -11,27 +13,34 @@ class ArtNetSender {
             this.stop();
         }
 
-        return new Promise((resolve, reject) => {
-            try {
-                this.socket = dgram.createSocket({ 
-                    type: 'udp4',
-                    reuseAddr: true 
-                });
-
-                this.socket.bind(0, interfaceIp, () => {
-                    this.socket.setBroadcast(true);
-                    resolve();
-                });
-
-                this.socket.on('error', (err) => {
-                    console.error('Art-Net sender error:', err);
-                });
-
-            } catch (error) {
-                console.error('Error setting up Art-Net sender:', error);
-                reject(error);
-            }
+        const socket = dgram.createSocket({
+            type: 'udp4',
+            reuseAddr: true
         });
+
+        await new Promise((resolve, reject) => {
+            const onError = (err) => {
+                try {
+                    socket.close();
+                } catch (closeErr) {
+                    // already closed
+                }
+                reject(err);
+            };
+            socket.once('error', onError);
+            socket.bind(0, interfaceIp, () => {
+                socket.removeListener('error', onError);
+                socket.setBroadcast(true);
+                resolve();
+            });
+        });
+
+        socket.on('error', (err) => {
+            console.error('Art-Net sender error:', err);
+        });
+        this.socket = socket;
+        this.port = socket.address().port;
+        ownOutput.addPort(this.port);
     }
 
     async send(universe, dmxData, destIp) {
@@ -54,8 +63,10 @@ class ArtNetSender {
 
     stop() {
         if (this.socket) {
+            ownOutput.removePort(this.port);
             this.socket.close();
             this.socket = null;
+            this.port = 0;
         }
     }
 }

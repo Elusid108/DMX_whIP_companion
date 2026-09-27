@@ -213,22 +213,19 @@ const LibraryPanel = React.forwardRef(({
         let cancelled = false;
         const rows = flattenFolderStack(selectedFolder);
         setFolderStack(rows);
+        // All inspects in flight at once (main caches by mtime and scans in a
+        // worker); one state update when they are all back.
         const loadStack = async () => {
-            const next = [];
-            for (const row of rows) {
+            const next = await Promise.all(rows.map(async (row) => {
                 if (row.kind !== 'look' || !row.show || !row.show.filePath) {
-                    next.push(row);
-                    continue;
+                    return row;
                 }
                 const result = await ipcRenderer.invoke('library-inspect', { filePath: row.show.filePath });
-                if (cancelled) {
-                    return;
-                }
-                next.push({
+                return {
                     ...row,
                     inspect: result && result.success ? result.show : { ...row.show, error: (result && result.error) || 'Unable to inspect' }
-                });
-            }
+                };
+            }));
             if (!cancelled) {
                 setFolderStack(next);
             }

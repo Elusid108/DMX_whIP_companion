@@ -4,9 +4,11 @@ const os = require('os');
 const path = require('path');
 const {
     CHUNK_TARGET,
+    createBurstStamper,
     createHeader,
     encodeFrame,
-    shouldRecordUniverseFrame
+    shouldRecordUniverseFrame,
+    universeKey
 } = require('../../services/shared/dmxRecording');
 const { maskedRecordData } = require('../../services/shared/recordTriggers');
 const { setUiView, studioVisible } = require('../uiView');
@@ -34,6 +36,7 @@ function setupRecordingHandlers(mainWindow) {
     let wokenUniverses = new Set();
     let suppressChannel = null;
     let observer = null;
+    let burstTimestamp = createBurstStamper();
 
     const closeFd = () => {
         if (fd == null) {
@@ -76,6 +79,7 @@ function setupRecordingHandlers(mainWindow) {
         droppedFrames = 0;
         lastFrameNs = null;
         wokenUniverses = new Set();
+        burstTimestamp = createBurstStamper();
     };
 
     const sendStats = (force = false) => {
@@ -142,7 +146,7 @@ function setupRecordingHandlers(mainWindow) {
         return result;
     };
 
-    ipcMain.on('start-recording', () => {
+    const onStartRecording = () => {
         try {
             const result = startAt(recordingPath);
             if (!result.success) {
@@ -154,11 +158,12 @@ function setupRecordingHandlers(mainWindow) {
             console.error('Error starting recording:', error);
             sendSafe(mainWindow, 'recording-error', { error: error.message });
         }
-    });
-
-    ipcMain.on('stop-recording', () => {
+    };
+    const onStopRecording = () => {
         stopAt({ emitSaved: true });
-    });
+    };
+    ipcMain.on('start-recording', onStartRecording);
+    ipcMain.on('stop-recording', onStopRecording);
 
     ipcMain.removeHandler('cancel-recording');
     ipcMain.handle('cancel-recording', async () => {
@@ -192,7 +197,6 @@ function setupRecordingHandlers(mainWindow) {
 
             const nowNs = process.hrtime.bigint();
             const elapsed = Number((nowNs - recordingOriginNs) / 1000000n);
-            const timestamp = frameCount === 0 ? 0 : elapsed;
             const recordedData = maskedRecordData(frame, suppressChannel);
             const writeFrame = shouldRecordUniverseFrame(
                 wokenUniverses,
@@ -200,6 +204,10 @@ function setupRecordingHandlers(mainWindow) {
                 frame.universe,
                 recordedData
             );
+            // The first written record is t=0; later ones share their burst's time.
+            const timestamp = writeFrame
+                ? burstTimestamp(elapsed, universeKey(frame.protocol, frame.universe))
+                : (frameCount === 0 ? 0 : elapsed);
 
             if (writeFrame) {
                 const encoded = encodeFrame({
@@ -284,6 +292,8 @@ function setupRecordingHandlers(mainWindow) {
             }
             closeFd();
             ipcMain.removeHandler('cancel-recording');
+            ipcMain.removeListener('start-recording', onStartRecording);
+            ipcMain.removeListener('stop-recording', onStopRecording);
         }
     };
 }

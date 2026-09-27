@@ -848,6 +848,11 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
             return true;
         }
         return new Promise((resolve) => {
+            // A second request while the name prompt is open settles the
+            // first (as "stay") instead of leaving it pending forever.
+            if (leaveResolveRef.current) {
+                leaveResolveRef.current(false);
+            }
             leaveResolveRef.current = resolve;
             setSaveDraft(compilationName || loadedFileName || 'Stack');
             setSaveNaming(true);

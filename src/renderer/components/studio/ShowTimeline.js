@@ -294,6 +294,13 @@ const ShowTimeline = ({
                 zoomBy(event.deltaY < 0 ? 1.15 : 1 / 1.15, originX);
                 return;
             }
+            // A plain vertical wheel scrolls the tracks up/down when they
+            // overflow; shift or a sideways swipe scrolls time.
+            const sideways = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY);
+            const tracks = node.parentElement && node.parentElement.closest('.overflow-y-auto');
+            if (!sideways && tracks && tracks.scrollHeight > tracks.clientHeight + 1) {
+                return;
+            }
             event.preventDefault();
             node.scrollLeft += event.shiftKey ? event.deltaY : (event.deltaX || event.deltaY);
         };

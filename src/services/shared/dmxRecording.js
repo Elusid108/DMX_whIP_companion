@@ -4,6 +4,8 @@ const MAGIC = 'DMXREC';
 const HEADER_SIZE = 10;
 const FRAME_SIZE = 522;
 const CHUNK_TARGET = 64 * 1024;
+// Walks read this many whole records per readSync.
+const WALK_BLOCK_FRAMES = 4096;
 
 const createHeader = (frameCount = 0) => {
     const buf = Buffer.alloc(HEADER_SIZE);
@@ -19,8 +21,10 @@ const encodeFrame = ({ timestamp, universe, protocol, data }) => {
     buf.writeUInt16LE(protocol === 'artnet' ? 0 : 1, 8);
 
     if (data) {
-        const src = Buffer.isBuffer(data) ? data : Buffer.from(data);
-        src.copy(buf, 10, 0, Math.min(512, src.length));
+        const n = Math.min(512, data.length);
+        for (let i = 0; i < n; i += 1) {
+            buf[10 + i] = data[i] || 0;
+        }
     }
 
     return buf;
@@ -45,25 +49,41 @@ const parseRecording = (fileData) => {
         throw new Error('File is truncated or invalid');
     }
 
-    const frames = [];
+    // data is a view into fileData (no per-frame 512-element array); keep
+    // fileData alive as long as the frames are.
+    const frames = new Array(frameCount);
     for (let i = 0; i < frameCount; i++) {
         const offset = HEADER_SIZE + i * FRAME_SIZE;
-        frames.push({
+        frames[i] = {
             timestamp: fileData.readUInt32LE(offset),
             universe: fileData.readUInt32LE(offset + 4),
             protocol: fileData.readUInt16LE(offset + 8) === 0 ? 'artnet' : 'sacn',
-            data: Array.from(fileData.slice(offset + 10, offset + FRAME_SIZE))
-        });
+            data: fileData.subarray(offset + 10, offset + FRAME_SIZE)
+        };
     }
     return frames;
 };
 
 const writeRecording = (filePath, frames = []) => {
-    const parts = [createHeader(frames.length)];
-    for (const frame of frames) {
-        parts.push(encodeFrame(frame));
+    const fd = fs.openSync(filePath, 'w');
+    try {
+        fs.writeSync(fd, createHeader(frames.length));
+        const block = Buffer.alloc(FRAME_SIZE * 256);
+        let used = 0;
+        for (const frame of frames) {
+            encodeFrame(frame).copy(block, used);
+            used += FRAME_SIZE;
+            if (used === block.length) {
+                fs.writeSync(fd, block, 0, used);
+                used = 0;
+            }
+        }
+        if (used) {
+            fs.writeSync(fd, block, 0, used);
+        }
+    } finally {
+        fs.closeSync(fd);
     }
-    fs.writeFileSync(filePath, Buffer.concat(parts));
 };
 
 const payloadHasSignal = (data, offset = 0) => {
@@ -81,6 +101,27 @@ const payloadHasSignal = (data, offset = 0) => {
 };
 
 const universeKey = (protocol, universe) => `${protocol || 'artnet'}:${universe >>> 0}`;
+
+// A console sends every universe of one frame back to back, but each packet
+// lands on its own millisecond. Records within windowMs share the burst's
+// timestamp until a universe repeats, so a frame stays one frame on playback.
+// The first stamped record is t=0.
+const BURST_WINDOW_MS = 4;
+const createBurstStamper = (windowMs = BURST_WINDOW_MS) => {
+    let startMs = -1;
+    let stamp = 0;
+    let keys = new Set();
+    return (elapsedMs, key) => {
+        if (startMs >= 0 && elapsedMs - startMs < windowMs && !keys.has(key)) {
+            keys.add(key);
+            return stamp;
+        }
+        stamp = startMs < 0 ? 0 : elapsedMs;
+        startMs = elapsedMs;
+        keys = new Set([key]);
+        return stamp;
+    };
+};
 
 const shouldRecordUniverseFrame = (woken, protocol, universe, data, offset = 0) => {
     if (payloadHasSignal(data, offset)) {
@@ -174,21 +215,27 @@ const walkRecording = (filePath, onFrame) => {
         const expected = HEADER_SIZE + frameCount * FRAME_SIZE;
         const framesAvailable = Math.max(0, Math.floor((size - HEADER_SIZE) / FRAME_SIZE));
         const toRead = Math.min(frameCount, framesAvailable);
-        const frameBuf = Buffer.alloc(FRAME_SIZE);
+        // onFrame gets a view into a reused block: copy anything it keeps.
+        const block = Buffer.alloc(FRAME_SIZE * Math.max(1, Math.min(WALK_BLOCK_FRAMES, toRead)));
         let walked = 0;
 
-        for (let i = 0; i < toRead; i += 1) {
-            const read = fs.readSync(fd, frameBuf, 0, FRAME_SIZE, HEADER_SIZE + i * FRAME_SIZE);
-            if (read < FRAME_SIZE) {
+        for (let first = 0; first < toRead; first += WALK_BLOCK_FRAMES) {
+            const want = Math.min(WALK_BLOCK_FRAMES, toRead - first);
+            const read = fs.readSync(fd, block, 0, want * FRAME_SIZE, HEADER_SIZE + first * FRAME_SIZE);
+            const got = Math.floor(read / FRAME_SIZE);
+            for (let k = 0; k < got; k += 1) {
+                const frameBuf = block.subarray(k * FRAME_SIZE, (k + 1) * FRAME_SIZE);
+                walked += 1;
+                onFrame(frameBuf, {
+                    index: first + k,
+                    timestamp: frameBuf.readUInt32LE(0),
+                    universe: frameBuf.readUInt32LE(4),
+                    protocol: frameBuf.readUInt16LE(8) === 0 ? 'artnet' : 'sacn'
+                });
+            }
+            if (got < want) {
                 break;
             }
-            walked += 1;
-            onFrame(frameBuf, {
-                index: i,
-                timestamp: frameBuf.readUInt32LE(0),
-                universe: frameBuf.readUInt32LE(4),
-                protocol: frameBuf.readUInt16LE(8) === 0 ? 'artnet' : 'sacn'
-            });
         }
 
         let error = null;
@@ -321,5 +368,7 @@ module.exports = {
     rangeFromWoken,
     payloadHasSignal,
     shouldRecordUniverseFrame,
-    universeKey
+    universeKey,
+    BURST_WINDOW_MS,
+    createBurstStamper
 };

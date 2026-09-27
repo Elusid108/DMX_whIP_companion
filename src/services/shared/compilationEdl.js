@@ -76,6 +76,9 @@ const trackCountOf = (clips = [], fallback = 1) => {
 
 const shiftChannels = (data, channelOffset) => {
     const shift = wrapChannel(channelOffset);
+    if (shift === 0 && data && data.length >= 512) {
+        return data;
+    }
     const out = new Array(512);
     for (let i = 0; i < 512; i++) {
         out[(i + shift) % 512] = data && data[i] ? data[i] : 0;
@@ -118,6 +121,15 @@ const scaleChannels = (data, gain) => {
     return out;
 };
 
+// Events within this window form one output frame (a console sends every
+// universe of a frame back to back; each lands on its own millisecond).
+const FLATTEN_FRAME_MS = 4;
+
+// Clips -> one timeline of DMX packets. A key (protocol:universe:dest) is sent
+// at a frame time when a contributing clip received a packet for it there,
+// while a contributing clip is fading, or when the set of clips holding it
+// changes. Everything else holds, exactly as it did on the wire. Clips that
+// share a key are averaged (look-at).
 const flattenToFrames = (media, clips = [], options = {}) => {
     const ignoreDest = Boolean(options.ignoreDest);
     const states = layoutClips(clips).map((clip) => {
@@ -126,91 +138,115 @@ const flattenToFrames = (media, clips = [], options = {}) => {
             if (frame.timestamp < clip.sourceInMs || frame.timestamp > clip.sourceOutMs) {
                 continue;
             }
-            const timestamp = clip.startMs + (frame.timestamp - clip.sourceInMs);
+            const protocol = frame.protocol === 'sacn' ? 'sacn' : 'artnet';
             const universe = (Number(frame.universe) || 0) + clip.universeOffset;
-            if (universe < 0) {
+            if (universe < (protocol === 'sacn' ? 1 : 0)) {
                 continue;
             }
+            const destIp = ignoreDest ? '' : (clip.destIp || '');
             events.push({
-                timestamp,
+                timestamp: clip.startMs + (frame.timestamp - clip.sourceInMs),
                 universe,
-                protocol: frame.protocol === 'sacn' ? 'sacn' : 'artnet',
-                destIp: ignoreDest ? '' : (clip.destIp || ''),
-                data: shiftChannels(frame.data, clip.channelOffset)
+                protocol,
+                destIp,
+                key: `${protocol}:${universe}:${destIp}`,
+                data: frame.data,
+                shift: clip.channelOffset
             });
         }
         events.sort((a, b) => a.timestamp - b.timestamp);
-        return { clip, events, index: 0, latest: new Map() };
+        return {
+            clip,
+            events,
+            index: 0,
+            latest: new Map(),
+            fading: clip.fadeInMs > 0 || clip.fadeOutMs > 0,
+            active: false
+        };
     });
 
-    const times = new Set();
+    const times = [];
     for (const state of states) {
         for (const event of state.events) {
-            times.add(event.timestamp);
+            times.push(event.timestamp);
         }
     }
-    const sortedTimes = [...times].sort((a, b) => a - b);
-    const buckets = new Map();
+    times.sort((a, b) => a - b);
+    const frameTimes = [];
+    for (const t of times) {
+        if (!frameTimes.length || t - frameTimes[frameTimes.length - 1] >= FLATTEN_FRAME_MS) {
+            frameTimes.push(t);
+        }
+    }
 
-    for (const timestamp of sortedTimes) {
+    const out = [];
+    const sums = new Float64Array(512);
+    for (let f = 0; f < frameTimes.length; f += 1) {
+        const t = frameTimes[f];
+        const until = f + 1 < frameTimes.length ? frameTimes[f + 1] : Infinity;
+        const dirty = new Set();
         for (const state of states) {
-            while (
-                state.index < state.events.length
-                && state.events[state.index].timestamp <= timestamp
-            ) {
+            while (state.index < state.events.length && state.events[state.index].timestamp < until) {
                 const event = state.events[state.index];
-                state.latest.set(`${event.protocol}:${event.universe}:${event.destIp}`, event);
+                state.latest.set(event.key, event);
+                dirty.add(event.key);
                 state.index += 1;
             }
-            if (timestamp < state.clip.startMs || timestamp > state.clip.endMs) {
+            const active = t >= state.clip.startMs && t <= state.clip.endMs;
+            if (active !== state.active || (active && state.fading)) {
+                for (const key of state.latest.keys()) {
+                    dirty.add(key);
+                }
+            }
+            state.active = active;
+        }
+        if (!dirty.size) {
+            continue;
+        }
+        const keys = [...dirty].sort((a, b) => {
+            const [pa, ua] = a.split(':');
+            const [pb, ub] = b.split(':');
+            return pa === pb ? Number(ua) - Number(ub) : pa.localeCompare(pb);
+        });
+        for (const key of keys) {
+            let count = 0;
+            let ref = null;
+            sums.fill(0);
+            for (const state of states) {
+                if (!state.active) {
+                    continue;
+                }
+                const event = state.latest.get(key);
+                if (!event) {
+                    continue;
+                }
+                ref = event;
+                count += 1;
+                const gain = fadeGainAt(state.clip, t);
+                const shift = event.shift;
+                const data = event.data;
+                for (let i = 0; i < 512; i += 1) {
+                    const v = (data && data[i]) || 0;
+                    sums[(i + shift) % 512] += gain >= 0.999 ? v : Math.round(v * gain);
+                }
+            }
+            if (!count) {
                 continue;
             }
-            const gain = fadeGainAt(state.clip, timestamp);
-            for (const event of state.latest.values()) {
-                const key = `${timestamp}|${event.protocol}|${event.universe}|${event.destIp}`;
-                let entry = buckets.get(key);
-                if (!entry) {
-                    entry = {
-                        timestamp,
-                        universe: event.universe,
-                        protocol: event.protocol,
-                        destIp: event.destIp || undefined,
-                        sums: new Array(512).fill(0),
-                        count: 0
-                    };
-                    buckets.set(key, entry);
-                }
-                const data = scaleChannels(event.data, gain);
-                entry.count += 1;
-                for (let i = 0; i < 512; i += 1) {
-                    entry.sums[i] += data[i] || 0;
-                }
+            const data = new Uint8Array(512);
+            for (let i = 0; i < 512; i += 1) {
+                data[i] = Math.round(sums[i] / count);
             }
+            out.push({
+                timestamp: t,
+                universe: ref.universe,
+                protocol: ref.protocol,
+                destIp: ref.destIp || undefined,
+                data
+            });
         }
     }
-
-    return [...buckets.values()].map((entry) => {
-        const data = new Array(512);
-        const count = Math.max(1, entry.count);
-        for (let i = 0; i < 512; i += 1) {
-            data[i] = Math.round(entry.sums[i] / count);
-        }
-        return {
-            timestamp: entry.timestamp,
-            universe: entry.universe,
-            protocol: entry.protocol,
-            destIp: entry.destIp,
-            data
-        };
-    }).sort((a, b) => {
-        if (a.timestamp !== b.timestamp) {
-            return a.timestamp - b.timestamp;
-        }
-        if (a.protocol !== b.protocol) {
-            return a.protocol.localeCompare(b.protocol);
-        }
-        return a.universe - b.universe;
-    });
+    return out;
 };
 
 const clipAtTime = (clips, timeMs) => {

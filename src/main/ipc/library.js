@@ -2,7 +2,8 @@ const { ipcMain, dialog } = require('electron');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
-const { createHeader, scanRecording } = require('../../services/shared/dmxRecording');
+const { createHeader } = require('../../services/shared/dmxRecording');
+const { runFileTask } = require('../fileTasks');
 const { getLibraryDir, saveSettings } = require('../settings');
 const {
     cloneTree,
@@ -37,9 +38,24 @@ const sidecarPath = (dmxPath) => {
     return path.join(parsed.dir, `${parsed.name}.json`);
 };
 
+// Real paths, so a symlink or junction inside the library cannot point out.
+const realOrResolved = (target) => {
+    const resolved = path.resolve(target);
+    try {
+        return fs.realpathSync.native(resolved);
+    } catch (err) {
+        // A path that does not exist yet (new file): resolve its parent.
+        try {
+            return path.join(fs.realpathSync.native(path.dirname(resolved)), path.basename(resolved));
+        } catch (parentErr) {
+            return resolved;
+        }
+    }
+};
+
 const isInsideLibrary = (filePath) => {
-    const libDir = path.resolve(ensureLibrary());
-    const resolved = path.resolve(filePath);
+    const libDir = realOrResolved(ensureLibrary());
+    const resolved = realOrResolved(filePath);
     const relative = path.relative(libDir, resolved);
     return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 };
@@ -262,9 +278,27 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
     const scheduleRefresh = () => {
         clearTimeout(watchTimer);
         watchTimer = setTimeout(() => {
-            inspectCache.clear();
             emitList();
         }, 200);
+    };
+
+    // The inspect cache re-checks each file's mtime, so an event never needs
+    // to wipe it. A take being written into the library and our own index
+    // writes are not library changes.
+    const onWatch = (eventType, filename) => {
+        if (filename) {
+            const base = path.basename(String(filename));
+            if (base === 'library.json') {
+                return;
+            }
+            const recording = recordingHandler
+                && recordingHandler.isRecording && recordingHandler.isRecording()
+                && recordingHandler.getRecordingPath && recordingHandler.getRecordingPath();
+            if (recording && path.basename(recording) === base) {
+                return;
+            }
+        }
+        scheduleRefresh();
     };
 
     const startWatch = () => {
@@ -274,7 +308,7 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
             watcher = null;
         }
         try {
-            watcher = fs.watch(dir, scheduleRefresh);
+            watcher = fs.watch(dir, onWatch);
             watcher.on('error', (err) => {
                 console.error('Library watch error:', err);
             });
@@ -283,7 +317,7 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
         }
     };
 
-    const inspectShow = (filePath) => {
+    const inspectShow = async (filePath) => {
         assertInLibrary(filePath);
         if (!fs.existsSync(filePath)) {
             throw new Error('File not found');
@@ -296,7 +330,7 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
             scan = cached.scan;
         } else {
             try {
-                scan = scanRecording(filePath);
+                scan = await runFileTask('scan', { filePath });
             } catch (err) {
                 scan = {
                     duration: 0,
@@ -379,7 +413,7 @@ function setupLibraryHandlers(mainWindow, recordingHandler) {
 
     ipcMain.handle('library-inspect', async (event, { filePath } = {}) => {
         try {
-            return { success: true, show: inspectShow(filePath) };
+            return { success: true, show: await inspectShow(filePath) };
         } catch (error) {
             return { success: false, error: error.message };
         }

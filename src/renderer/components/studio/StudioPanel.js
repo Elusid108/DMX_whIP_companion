@@ -175,4 +175,6 @@ const StudioPanel = ({
     );
 };
 
-module.exports = StudioPanel;
+// Stays mounted while another tab is shown (a take must not reset) but does
+// not re-render there; the first render after it becomes visible catches up.
+module.exports = React.memo(StudioPanel, (prev, next) => !prev.visible && !next.visible);

@@ -20,7 +20,6 @@ class SacnReceiver {
     constructor() {
         this.socket = null;
         this.interfaceIp = null;
-        this.universeData = new Map();
         this.callbacks = new Map();
         this.joinedUniverses = new Set();
         this.discoverySources = new Map();
@@ -42,7 +41,15 @@ class SacnReceiver {
                     ttl: 128
                 });
 
+                const onBindError = (err) => {
+                    console.error('sACN receiver bind failed:', err);
+                    this.stop();
+                    reject(err);
+                };
+                this.socket.once('error', onBindError);
+
                 this.socket.on('listening', () => {
+                    this.socket.removeListener('error', onBindError);
                     console.log('sACN receiver listening on port 5568');
 
                     try {
@@ -77,11 +84,6 @@ class SacnReceiver {
                         this.handleDiscovery(data);
                         return;
                     }
-
-                    this.universeData.set(data.universe, {
-                        ...data,
-                        lastSeen: Date.now()
-                    });
 
                     this.callbacks.forEach((callback) => callback(data));
                 });
@@ -224,7 +226,6 @@ class SacnReceiver {
         }
         this.joinedUniverses.clear();
         this.discoverySources.clear();
-        this.universeData.clear();
     }
 
     onDmxData(id, callback) {
@@ -233,10 +234,6 @@ class SacnReceiver {
 
     removeCallback(id) {
         this.callbacks.delete(id);
-    }
-
-    getUniverseData() {
-        return Array.from(this.universeData.values());
     }
 }
 

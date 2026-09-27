@@ -28,11 +28,16 @@ const UniverseActivityCanvas = ({ protocol, universeId }) => {
         }
 
         const draw = () => {
+            // Resizing a canvas reallocates it; only do that when DPR changed.
             const dpr = window.devicePixelRatio || 1;
-            canvas.width = Math.floor(CSS_W * dpr);
-            canvas.height = Math.floor(CSS_H * dpr);
-            canvas.style.width = `${CSS_W}px`;
-            canvas.style.height = `${CSS_H}px`;
+            const pxW = Math.floor(CSS_W * dpr);
+            const pxH = Math.floor(CSS_H * dpr);
+            if (canvas.width !== pxW || canvas.height !== pxH) {
+                canvas.width = pxW;
+                canvas.height = pxH;
+                canvas.style.width = `${CSS_W}px`;
+                canvas.style.height = `${CSS_H}px`;
+            }
 
             const ctx = canvas.getContext('2d');
             if (!ctx) {

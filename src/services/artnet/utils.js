@@ -15,7 +15,9 @@ const createArtNetDmxPacket = (universe, dmxData) => {
     packet.writeUInt16LE(universe, 14);
     packet.writeUInt16BE(dmxData.length, 16);
 
-    Buffer.from(dmxData).copy(packet, 18);
+    for (let i = 0; i < dmxData.length; i += 1) {
+        packet[18 + i] = dmxData[i] || 0;
+    }
 
     return packet;
 };
@@ -103,13 +105,15 @@ const parseArtNetPacket = (msg, rinfo) => {
         const opcode = msg.readUInt16LE(8);
         if (opcode === OP_DMX) {
             const universe = msg.readUInt16LE(14);
-            const length = msg.readUInt16BE(16);
-            const dmxData = Array.from(msg.slice(18, 18 + length));
+            const length = Math.min(msg.readUInt16BE(16), msg.length - 18, 512);
+            // A view, not a copy: dgram hands each message its own Buffer.
+            const dmxData = msg.subarray(18, 18 + Math.max(0, length));
             return {
                 kind: 'dmx',
                 universe,
                 dmxData,
                 sourceIp: rinfo.address,
+                sourcePort: rinfo.port,
                 protocol: 'artnet'
             };
         }

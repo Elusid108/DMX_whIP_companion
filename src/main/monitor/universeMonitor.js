@@ -28,6 +28,7 @@ class UniverseMonitor {
         this.lastSnapshotAt = 0;
         this.emitSnapshot = true;
         this.emitGrid = true;
+        this.gridDirty = true;
     }
 
     setEmit({ snapshot, grid } = {}) {
@@ -35,7 +36,25 @@ class UniverseMonitor {
             this.emitSnapshot = Boolean(snapshot);
         }
         if (grid != null) {
-            this.emitGrid = Boolean(grid);
+            const next = Boolean(grid);
+            if (next && !this.emitGrid) {
+                this.gridDirty = true;
+            }
+            this.emitGrid = next;
+        }
+        this.syncTimer();
+    }
+
+    // The timer only runs while something is shown (Monitor / Studio rail).
+    // Ingest keeps state current either way; expiry catches up on the next tick.
+    syncTimer() {
+        const wanted = Boolean((this.onSnapshot || this.onGrid) && (this.emitSnapshot || this.emitGrid));
+        if (wanted && !this.interval) {
+            this.lastSnapshotAt = 0;
+            this.interval = setInterval(() => this.tick(), TICK_MS);
+        } else if (!wanted && this.interval) {
+            clearInterval(this.interval);
+            this.interval = null;
         }
     }
 
@@ -44,9 +63,10 @@ class UniverseMonitor {
         this.onGrid = onGrid;
         if (this.interval) {
             clearInterval(this.interval);
+            this.interval = null;
         }
-        this.lastSnapshotAt = 0;
-        this.interval = setInterval(() => this.tick(), TICK_MS);
+        this.gridDirty = true;
+        this.syncTimer();
     }
 
     stop() {
@@ -60,11 +80,19 @@ class UniverseMonitor {
 
     clear() {
         this.universes.clear();
+        this.gridDirty = true;
+    }
+
+    isSelected(protocol, universe) {
+        return this.selectedUniverse != null
+            && protocol === this.selectedProtocol
+            && String(universe) === String(this.selectedUniverse);
     }
 
     setSelected(protocol, universe) {
         this.selectedProtocol = protocol ?? null;
         this.selectedUniverse = universe ?? null;
+        this.gridDirty = true;
         this.sendGrid();
     }
 
@@ -99,6 +127,9 @@ class UniverseMonitor {
         }
         entry.lastSeen = now;
         entry.stale = false;
+        if (this.isSelected(protocol, universe)) {
+            this.gridDirty = true;
+        }
         entry.frameTimes.push(now);
         this.refreshFps(entry, now);
 
@@ -133,6 +164,9 @@ class UniverseMonitor {
             const age = now - entry.lastSeen;
             if (age > REMOVE_MS) {
                 this.universes.delete(key);
+                if (this.isSelected(entry.protocol, entry.universe)) {
+                    this.gridDirty = true;
+                }
                 continue;
             }
             this.refreshFps(entry, now);
@@ -186,9 +220,10 @@ class UniverseMonitor {
     }
 
     sendGrid() {
-        if (!this.onGrid || !this.emitGrid) {
+        if (!this.onGrid || !this.emitGrid || !this.gridDirty) {
             return;
         }
+        this.gridDirty = false;
 
         const protocol = this.selectedProtocol;
         const universe = this.selectedUniverse;

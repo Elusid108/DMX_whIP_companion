@@ -1,5 +1,6 @@
 const fs = require('fs');
 const http = require('http');
+const os = require('os');
 const path = require('path');
 
 const SOFTAP_IP = '4.3.2.1';
@@ -10,7 +11,22 @@ const INVALID_SEG = /[<>:"/\\|?*\x00-\x1f]/;
 
 const isIpv4 = (ip) => typeof ip === 'string' && IPV4.test(ip.trim());
 
-const hostsFor = (ip) => (ip === SOFTAP_IP ? [SOFTAP_IP] : [ip, SOFTAP_IP]);
+// 4.3.2.1 is a public internet address. Only fall back to it when this PC
+// is actually on a node's SoftAP (has a 4.3.2.x address).
+const softApReachable = () => Object.values(os.networkInterfaces()).some((list) => (
+    (list || []).some((addr) => addr && addr.family === 'IPv4' && /^4\.3\.2\./.test(addr.address))
+));
+
+const hostsFor = (ip) => (
+    ip === SOFTAP_IP || !softApReachable() ? [ip] : [ip, SOFTAP_IP]
+);
+
+const isImmediateConnectFail = (err) => {
+    const code = err && err.code;
+    const msg = String((err && err.message) || '');
+    return code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EHOSTUNREACH'
+        || /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH/.test(msg);
+};
 
 const busyError = () => ({
     success: false,
@@ -50,11 +66,12 @@ const requestJson = (method, ip, requestPath, { body, contentType, timeoutMs = 1
             timeout: timeoutMs,
             headers
         }, (res) => {
-            let data = '';
+            const chunks = [];
             res.on('data', (chunk) => {
-                data += chunk;
+                chunks.push(chunk);
             });
             res.on('end', () => {
+                const data = Buffer.concat(chunks).toString('utf8');
                 if (!data) {
                     resolve({ statusCode: res.statusCode, json: {} });
                     return;
@@ -91,7 +108,9 @@ const formBody = (fields = {}) => Object.entries(fields)
     })
     .join('&');
 
-const withHosts = async (ip, run) => {
+// idempotent: false (POSTs) moves to the next host only when the first
+// could not even connect, so a slow node never runs a command twice.
+const withHosts = async (ip, run, { idempotent = true } = {}) => {
     if (!isIpv4(ip)) {
         return { success: false, error: 'Invalid device IP' };
     }
@@ -104,6 +123,9 @@ const withHosts = async (ip, run) => {
             }
         } catch (err) {
             lastError = err;
+            if (!idempotent && !isImmediateConnectFail(err)) {
+                break;
+            }
         }
     }
     if (lastError && lastError.message === 'Invalid JSON from node') {
@@ -138,7 +160,7 @@ const postForm = async (ip, requestPath, fields, timeoutMs = 2500) => withHosts(
         return { success: true, status: result.json, result: result.json, via: host };
     }
     return mapNodeError(result.json, result.statusCode);
-});
+}, { idempotent: false });
 
 const postIdentify = async (ip, ms = 3000) => {
     const duration = Number(ms);
@@ -213,13 +235,6 @@ const formatUploadElapsed = (ms) => {
     const minutes = Math.floor(total / 60);
     const seconds = total % 60;
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
-};
-
-const isImmediateConnectFail = (err) => {
-    const code = err && err.code;
-    const msg = String((err && err.message) || '');
-    return code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EHOSTUNREACH'
-        || /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH/.test(msg);
 };
 
 const uploadFail = (err, sent, total) => {
@@ -354,8 +369,16 @@ const postUpload = (ip, filePath, onProgress, destPathArg, extraMeta = {}) => {
             });
         });
 
-        const budgetTimer = setTimeout(() => {
+        let stream = null;
+        const abort = () => {
+            if (stream) {
+                stream.destroy();
+            }
             req.destroy();
+        };
+
+        const budgetTimer = setTimeout(() => {
+            abort();
             finish(() => reject(timeoutError()));
         }, budgetMs);
 
@@ -364,10 +387,13 @@ const postUpload = (ip, filePath, onProgress, destPathArg, extraMeta = {}) => {
             socket.setTimeout(UPLOAD_IDLE_MS);
         });
         req.on('timeout', () => {
-            req.destroy();
+            abort();
             finish(() => reject(timeoutError()));
         });
         req.on('error', (err) => {
+            if (stream) {
+                stream.destroy();
+            }
             finish(() => reject(err));
         });
 
@@ -376,7 +402,7 @@ const postUpload = (ip, filePath, onProgress, destPathArg, extraMeta = {}) => {
         emit({ phase: 'sending', sent, total });
         bumpIdle();
 
-        const stream = fs.createReadStream(filePath);
+        stream = fs.createReadStream(filePath);
         stream.on('error', (err) => {
             req.destroy();
             finish(() => reject(err));
@@ -433,8 +459,14 @@ const postUpload = (ip, filePath, onProgress, destPathArg, extraMeta = {}) => {
                     fields.sync_kind = extraMeta.sync_kind;
                 }
             }
+            if (extraMeta && extraMeta.meta === false) {
+                return uploaded;
+            }
             if (fields.name || fields.sync_group) {
-                await postForm(ip, '/meta', fields);
+                const meta = await postForm(ip, '/meta', fields);
+                if (!meta || !meta.success) {
+                    uploaded.metaError = (meta && meta.error) || 'Could not write the show title';
+                }
             }
         }
         return uploaded;
@@ -446,7 +478,8 @@ const postUpload = (ip, filePath, onProgress, destPathArg, extraMeta = {}) => {
             result.via = ip;
             return finishUpload(result);
         } catch (err) {
-            if (ip !== SOFTAP_IP && isImmediateConnectFail(err) && lastSent === 0) {
+            if (ip !== SOFTAP_IP && isImmediateConnectFail(err) && lastSent === 0
+                && softApReachable()) {
                 try {
                     const result = await sendTo(SOFTAP_IP);
                     result.via = SOFTAP_IP;
@@ -599,6 +632,9 @@ const downloadFile = async (ip, sdPath, destPath) => {
     return busyError();
 };
 
+// Sidecar title and sync group for a show already on the node's SD.
+const postMeta = async (ip, fields) => postForm(ip, '/meta', fields);
+
 module.exports = {
     SOFTAP_IP,
     isIpv4,
@@ -608,6 +644,7 @@ module.exports = {
     getJson,
     postForm,
     postIdentify,
+    postMeta,
     postReboot,
     postUpload,
     scanWifi

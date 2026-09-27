@@ -1,12 +1,10 @@
 const fs = require('fs');
-const { MAGIC, HEADER_SIZE, FRAME_SIZE } = require('./dmxRecording');
+const { HEADER_SIZE, walkRecording } = require('./dmxRecording');
 
 const BANDS = 8;
 const CHANNELS_PER_BAND = 64;
 const DEFAULT_BUCKET_MS = 50;
 const MAX_BUCKETS = 120000;
-
-const protocolName = (code) => (code === 0 ? 'artnet' : 'sacn');
 
 const ensureBands = (entry, bucket) => {
     const needed = (bucket + 1) * BANDS;
@@ -155,43 +153,18 @@ const buildTimelineOverview = (filePath, options = {}) => {
         throw new Error('File is too small to be a recording');
     }
 
-    const fd = fs.openSync(filePath, 'r');
-    try {
-        const header = Buffer.alloc(HEADER_SIZE);
-        fs.readSync(fd, header, 0, HEADER_SIZE, 0);
-        if (header.slice(0, 6).toString('ascii') !== MAGIC) {
-            throw new Error('Invalid file format');
-        }
-
-        const frameCount = header.readUInt32LE(6);
-        const framesAvailable = Math.max(0, Math.floor((size - HEADER_SIZE) / FRAME_SIZE));
-        const toRead = Math.min(frameCount, framesAvailable);
-        const tracks = emptyTracks();
-        const frameBuf = Buffer.alloc(FRAME_SIZE);
-
-        for (let i = 0; i < toRead; i += 1) {
-            const read = fs.readSync(fd, frameBuf, 0, FRAME_SIZE, HEADER_SIZE + i * FRAME_SIZE);
-            if (read < FRAME_SIZE) {
-                break;
-            }
-
-            const timestamp = frameBuf.readUInt32LE(0);
-            const universe = frameBuf.readUInt32LE(4);
-            const protocol = protocolName(frameBuf.readUInt16LE(8));
-            ingestSample(
-                tracks,
-                timestamp,
-                universe,
-                protocol,
-                (ch) => frameBuf[10 + ch],
-                bucketMs
-            );
-        }
-
-        return finalizeTracks(tracks, bucketMs);
-    } finally {
-        fs.closeSync(fd);
-    }
+    const tracks = emptyTracks();
+    walkRecording(filePath, (frameBuf, info) => {
+        ingestSample(
+            tracks,
+            info.timestamp,
+            info.universe,
+            info.protocol,
+            (ch) => frameBuf[10 + ch],
+            bucketMs
+        );
+    });
+    return finalizeTracks(tracks, bucketMs);
 };
 
 module.exports = {

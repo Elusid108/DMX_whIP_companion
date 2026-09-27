@@ -40,50 +40,63 @@ const readSourceName = (msg) => {
 
 const flagsAndLength = (pduLength) => 0x7000 | (pduLength & 0x0fff);
 
-const createSacnDmxPacket = (universe, dmxData, options = {}) => {
-    const multicastAddress = getMulticastAddress(universe);
-    const sourceName = options.sourceName || 'DMX whIP Companion';
-    const priority = options.priority || 100;
-    const CID = options.cid || crypto.randomBytes(16);
+const SACN_DMX_LEN = 638;
+const OPTION_PREVIEW = 0x80;
+const OPTION_TERMINATED = 0x40;
 
-    try {
-        const normalizedData = new Uint8Array(512).fill(0);
-        dmxData.forEach((value, index) => {
-            if (index < 512) normalizedData[index] = value;
-        });
+// E1.31 data packet, written into a reused 638-byte buffer. Only the
+// sequence, universe and slots change per send; the rest is constant for a
+// source (see initSacnDmxPacket).
+const initSacnDmxPacket = (packet, { cid, sourceName, priority = 100 } = {}) => {
+    packet.fill(0);
+    /* root layer */
+    packet.writeUInt16BE(0x0010, 0);
+    packet.writeUInt16BE(0x0000, 2);
+    packet.write('ASC-E1.17\0\0\0', 4, 'latin1');
+    packet.writeUInt16BE(flagsAndLength(SACN_DMX_LEN - 16), 16);
+    packet.writeUInt32BE(VECTOR_ROOT_E131_DATA, 18);
+    Buffer.from(cid).copy(packet, 22, 0, 16);
+    /* framing layer */
+    packet.writeUInt16BE(flagsAndLength(SACN_DMX_LEN - 38), 38);
+    packet.writeUInt32BE(2, 40);
+    packet.write(String(sourceName || 'DMX whIP Companion').slice(0, 63), 44, 'latin1');
+    packet[108] = Math.max(0, Math.min(200, Number(priority) || 100));
+    /* DMP layer */
+    packet.writeUInt16BE(flagsAndLength(SACN_DMX_LEN - 115), 115);
+    packet[117] = 0x02;
+    packet[118] = 0xa1;
+    packet.writeUInt16BE(0x0000, 119);
+    packet.writeUInt16BE(0x0001, 121);
+    packet.writeUInt16BE(0x0201, 123);
+    packet[125] = 0x00;
+    return packet;
+};
 
-        const packet = Buffer.alloc(638);
-
-        packet[0] = 0x00;
-        packet[1] = 0x10;
-        packet.write('ASC-E1.17\0\0\0', 4);
-        packet.writeUInt16BE(flagsAndLength(packet.length - 16), 16);
-        packet.writeUInt32BE(VECTOR_ROOT_E131_DATA, 18);
-        Buffer.from(CID).copy(packet, 22, 0, 16);
-
-        packet.writeUInt16BE(flagsAndLength(packet.length - 38), 38);
-        packet.writeUInt32BE(2, 40);
-        packet.write(sourceName.padEnd(64, '\0').slice(0, 64), 44);
-        packet[108] = priority;
-        packet[113] = (universe >> 8) & 0xFF;
-        packet[114] = universe & 0xFF;
-        packet[115] = 0x00;
-        packet[116] = 0x02;
-        packet[117] = 0x02;
-        packet[118] = 0xa1;
-        packet[119] = 0x00;
-        packet[124] = (normalizedData.length >> 8) & 0xFF;
-        packet[125] = normalizedData.length & 0xFF;
-        Buffer.from(normalizedData).copy(packet, 126);
-
-        return {
-            packet,
-            multicastAddress
-        };
-    } catch (error) {
-        console.error('Error creating sACN packet:', error);
-        throw error;
+const writeSacnDmx = (packet, universe, sequence, dmxData, options = 0) => {
+    packet[111] = sequence & 0xff;
+    packet[112] = options & 0xff;
+    packet.writeUInt16BE(universe & 0xffff, 113);
+    const n = dmxData ? Math.min(512, dmxData.length) : 0;
+    for (let i = 0; i < n; i += 1) {
+        packet[126 + i] = dmxData[i] || 0;
     }
+    if (n < 512) {
+        packet.fill(0, 126 + n, SACN_DMX_LEN);
+    }
+    return packet;
+};
+
+const createSacnDmxPacket = (universe, dmxData, options = {}) => {
+    const packet = initSacnDmxPacket(Buffer.alloc(SACN_DMX_LEN), {
+        cid: options.cid || crypto.randomBytes(16),
+        sourceName: options.sourceName,
+        priority: options.priority
+    });
+    writeSacnDmx(packet, universe, options.sequence || 0, dmxData, options.options || 0);
+    return {
+        packet,
+        multicastAddress: getMulticastAddress(universe)
+    };
 };
 
 const createSacnDiscoveryPacket = (universes, options = {}) => {
@@ -158,6 +171,12 @@ const parseDiscoveryPacket = (msg, rinfo) => {
     };
 };
 
+const padTo512 = (view) => {
+    const out = new Uint8Array(512);
+    out.set(view.subarray(0, 512));
+    return out;
+};
+
 const parseDmxPacket = (msg, rinfo) => {
     if (msg.length < 126) {
         return null;
@@ -167,11 +186,21 @@ const parseDmxPacket = (msg, rinfo) => {
     if (universe === DISCOVERY_UNIVERSE || universe < 1) {
         return null;
     }
-
-    const dmxData = Array.from(msg.slice(126, 638));
-    while (dmxData.length < 512) {
-        dmxData.push(0);
+    // Only null-start-code level data. 0xDD per-address priority and other
+    // alternate start codes are not levels; preview data is not for output.
+    if (msg[125] !== 0x00 || (msg[112] & OPTION_PREVIEW)) {
+        return null;
     }
+    const terminated = (msg[112] & OPTION_TERMINATED) !== 0;
+    if (terminated) {
+        return null;
+    }
+
+    // A view, not a copy: dgram hands each message its own Buffer.
+    const end = Math.min(msg.length, 638);
+    const dmxData = end - 126 >= 512
+        ? msg.subarray(126, 638)
+        : padTo512(msg.subarray(126, end));
 
     return {
         type: 'dmx',
@@ -179,6 +208,7 @@ const parseDmxPacket = (msg, rinfo) => {
         dmxData,
         sourceName: readSourceName(msg),
         sourceIp: rinfo.address,
+        sourcePort: rinfo.port,
         priority: msg.length > 108 ? msg[108] : 100,
         cid: msg.slice(22, 38).toString('hex'),
         protocol: 'sacn'
@@ -209,6 +239,9 @@ const parseSacnPacket = (msg, rinfo) => {
 
 module.exports = {
     DISCOVERY_UNIVERSE,
+    SACN_DMX_LEN,
+    initSacnDmxPacket,
+    writeSacnDmx,
     createSacnDmxPacket,
     createSacnDiscoveryPacket,
     parseSacnPacket,

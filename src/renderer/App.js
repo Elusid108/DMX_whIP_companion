@@ -68,11 +68,18 @@ const App = () => {
         target && target.closest && target.closest('input, textarea, select, [contenteditable="true"]')
     );
 
+    const mainViewRef = React.useRef(mainView);
+    const sessionRef = React.useRef(session);
+    mainViewRef.current = mainView;
+    sessionRef.current = session;
+
     React.useEffect(() => {
         const onKeyDown = (event) => {
             if (isEditableTarget(event.target)) {
                 return;
             }
+            const mainView = mainViewRef.current;
+            const session = sessionRef.current;
             if ((event.key === 'Delete' || event.key === 'Backspace')
                 && mainView !== 'library'
                 && session.isFileLoaded
@@ -127,7 +134,7 @@ const App = () => {
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [mainView, session]);
+    }, []);
 
     const handleUniverseClick = (id, protocol) => {
         setSelectedUniverse(id);
@@ -266,6 +273,7 @@ const App = () => {
                     isPlaying: player.isPlaying,
                     isRecording: session.isRecording,
                     isLoopEnabled: player.loop,
+                    error: player.error,
                     playheadMs: player.playheadMs,
                     durationMs: player.durationMs,
                     formatClock: player.formatClock,
@@ -343,7 +351,8 @@ const App = () => {
                 },
                     React.createElement(StudioPanel, {
                         session,
-                        selectedUniverses
+                        selectedUniverses,
+                        visible: mainView === 'studio'
                     })
                 ),
                 mainView === 'library' && React.createElement(LibraryPanel, {

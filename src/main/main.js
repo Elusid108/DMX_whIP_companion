@@ -21,6 +21,7 @@ const setupPlaybackHandlers = require('./ipc/playback');
 const { setupLibraryHandlers } = require('./ipc/library');
 const setupSettingsHandlers = require('./ipc/settings');
 const setupFirmwareFlashHandlers = require('./firmwareFlash');
+const { stopFileTasks } = require('./fileTasks');
 
 const IPV4 = /^(\d{1,3}\.){3}\d{1,3}$/;
 
@@ -95,6 +96,15 @@ function createWindow() {
         event.preventDefault();
     });
 
+    // The app page holds the full window.dmx bridge (flash, delete, reboot):
+    // it never navigates away or opens windows.
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+        if (url !== mainWindow.webContents.getURL()) {
+            event.preventDefault();
+        }
+    });
+    mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
     const recordingHandler = setupRecordingHandlers(mainWindow);
     const cleanupNetwork = setupNetworkHandlers(mainWindow, recordingHandler);
     const playback = setupPlaybackHandlers(mainWindow, recordingHandler);
@@ -116,6 +126,8 @@ function createWindow() {
     const cleanupFlash = setupFirmwareFlashHandlers(mainWindow);
 
     mainWindow.on('closed', () => {
+        protocol.unhandle('compmedia');
+        if (playback && playback.close) playback.close();
         if (cleanupNetwork) cleanupNetwork();
         if (cleanupLibrary) cleanupLibrary();
         if (cleanupSettings) cleanupSettings();
@@ -133,6 +145,10 @@ function createWindow() {
 }
 
 app.whenReady().then(createWindow);
+
+app.on('will-quit', () => {
+    stopFileTasks();
+});
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {

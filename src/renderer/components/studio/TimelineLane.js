@@ -1,5 +1,6 @@
 const React = require('react');
-const { useEffect, useRef } = React;
+const { useCallback } = React;
+const TiledCanvas = require('./TiledCanvas');
 
 const ARTNET_RGB = [34, 211, 238];
 const SACN_RGB = [45, 212, 191];
@@ -14,70 +15,37 @@ const TimelineLane = ({
     recording,
     ghost
 }) => {
-    const wrapRef = useRef(null);
-    const canvasRef = useRef(null);
-
     const canHeatmap = !ghost && !recording && Array.isArray(bands) && bucketCount > 0;
     const clipWidth = Math.max(
         (durationMs > 0 || recording || canHeatmap) ? 2 : 0,
         (durationMs / 1000) * pixelsPerSecond
     );
 
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        const wrap = wrapRef.current;
-        if (!canvas || !wrap || !canHeatmap) {
-            return undefined;
-        }
+    // Paints only the columns inside the tile being drawn.
+    const draw = useCallback((ctx, { x0, x1, height, isDark }) => {
+        ctx.fillStyle = isDark ? '#09090b' : '#f4f4f5';
+        ctx.fillRect(x0, 0, x1 - x0, height);
 
-        const draw = () => {
-            const cssW = Math.max(1, wrap.clientWidth);
-            const cssH = Math.max(1, wrap.clientHeight);
-            const dpr = window.devicePixelRatio || 1;
-            canvas.width = Math.floor(cssW * dpr);
-            canvas.height = Math.floor(cssH * dpr);
-            canvas.style.width = `${cssW}px`;
-            canvas.style.height = `${cssH}px`;
+        const rgb = protocol === 'sacn' ? SACN_RGB : ARTNET_RGB;
+        const rows = Math.max(1, bandsPerBucket || 8);
+        const cols = Math.max(1, bucketCount);
+        const bandH = height / rows;
+        const colW = clipWidth / cols;
+        const first = Math.max(0, Math.floor(x0 / colW));
+        const last = Math.min(cols - 1, Math.ceil(x1 / colW));
 
-            const ctx = canvas.getContext('2d');
-            if (!ctx) {
-                return;
-            }
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-            const isDark = document.documentElement.classList.contains('dark');
-            ctx.fillStyle = isDark ? '#09090b' : '#f4f4f5';
-            ctx.fillRect(0, 0, cssW, cssH);
-
-            const rgb = protocol === 'sacn' ? SACN_RGB : ARTNET_RGB;
-            const rows = Math.max(1, bandsPerBucket || 8);
-            const cols = Math.max(1, bucketCount);
-            const bandH = cssH / rows;
-            const colW = cssW / cols;
-
-            for (let col = 0; col < cols; col += 1) {
-                for (let row = 0; row < rows; row += 1) {
-                    const value = bands[(col * rows) + row] || 0;
-                    if (value <= 0) {
-                        continue;
-                    }
-                    const t = value / 255;
-                    ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${0.14 + (t * 0.86)})`;
-                    ctx.fillRect(col * colW, row * bandH, Math.max(1, colW), Math.max(1, bandH));
+        for (let col = first; col <= last; col += 1) {
+            for (let row = 0; row < rows; row += 1) {
+                const value = bands[(col * rows) + row] || 0;
+                if (value <= 0) {
+                    continue;
                 }
+                const t = value / 255;
+                ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${0.14 + (t * 0.86)})`;
+                ctx.fillRect(col * colW, row * bandH, Math.max(1, colW), Math.max(1, bandH));
             }
-        };
-
-        draw();
-        const observer = new ResizeObserver(draw);
-        observer.observe(wrap);
-        const themeObserver = new MutationObserver(draw);
-        themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-        return () => {
-            observer.disconnect();
-            themeObserver.disconnect();
-        };
-    }, [bands, bandsPerBucket, bucketCount, canHeatmap, protocol]);
+        }
+    }, [bands, bandsPerBucket, bucketCount, clipWidth, protocol]);
 
     if (ghost) {
         return React.createElement('div', { className: 'timeline-track' });
@@ -94,14 +62,10 @@ const TimelineLane = ({
 
     return React.createElement('div', { className: 'timeline-track' },
         React.createElement('div', {
-            ref: wrapRef,
             className: 'timeline-clip',
             style: { width: `${clipWidth}px` }
         },
-            React.createElement('canvas', {
-                ref: canvasRef,
-                className: 'block h-full w-full'
-            })
+            React.createElement(TiledCanvas, { width: clipWidth, draw })
         )
     );
 };

@@ -288,6 +288,21 @@ const destProtoFor = (deviceProto, fileProto) => {
     return fileProto === 'sacn' ? 'sacn' : 'artnet';
 };
 
+// Window addresses are in the file protocol's universe numbering. When the
+// node patches the other protocol, its universes start elsewhere (sACN is
+// usually Art-Net + 1): shift the written universe numbers by the difference.
+const destUniShiftFor = (deviceWindow, fileProto, destProto) => {
+    if (!deviceWindow || fileProto === destProto) {
+        return 0;
+    }
+    const from = fileProto === 'sacn' ? deviceWindow.sacn : deviceWindow.artnet;
+    const to = destProto === 'sacn' ? deviceWindow.sacn : deviceWindow.artnet;
+    if (!from || !to) {
+        return 0;
+    }
+    return to.startUni - from.startUni;
+};
+
 const deviceRow = ({
     device,
     window,
@@ -303,6 +318,7 @@ const deviceRow = ({
     const overlap = window && file.span
         ? overlapRanges(spanRanges(file.span), window, slideDelta)
         : null;
+    const destProto = destProtoFor((device.window && device.window.proto) || 'auto', file.proto);
     return {
         id: device.id,
         ip: device.ip,
@@ -331,7 +347,9 @@ const deviceRow = ({
         overlap,
         destFirstAddr: overlap ? overlap.firstAddr : (window ? window.firstAddr : 0),
         destLastAddr: overlap ? overlap.lastAddr : (window ? window.lastAddr : 0),
-        destProto: destProtoFor((device.window && device.window.proto) || 'auto', file.proto),
+        destProto,
+        fileProto: file.proto,
+        destUniShift: destUniShiftFor(device.window, file.proto, destProto),
         ...extra
     };
 };
@@ -409,11 +427,24 @@ const analyzeLook = (look, selected) => {
     });
 
     const batchable = devices.filter((row) => row.kind !== 'no-status' && row.kind !== 'live' && row.kind !== 'empty');
-    const windows = batchable.map((row) => ({
-        firstAddr: toAddr(row.startUni, row.startCh),
-        lastAddr: toAddr(row.startUni, row.startCh) + row.capacity - 1
-    }));
     const file = primary;
+    // A batch is sliced from the primary span, so every node's window must be
+    // in the primary protocol's numbering (a row may have picked another).
+    const selectedById = new Map(selected.map((row) => [row.id, row]));
+    const primaryWindowOf = (row) => {
+        const sel = selectedById.get(row.id);
+        return sel && sel.window ? windowForProto(sel.window, file.proto) : null;
+    };
+    const windows = batchable.map((row) => {
+        const window = primaryWindowOf(row);
+        if (window) {
+            return { firstAddr: window.firstAddr, lastAddr: window.lastAddr };
+        }
+        return {
+            firstAddr: toAddr(row.startUni, row.startCh),
+            lastAddr: toAddr(row.startUni, row.startCh) + row.capacity - 1
+        };
+    });
     let batch = {
         level: 'red',
         kind: 'uncovered',
@@ -457,8 +488,11 @@ const analyzeLook = (look, selected) => {
             }
             const window = windows[batchable.indexOf(row)] || windows[0];
             const overlap = overlapRanges(spanRanges(file.span), window, slide.delta);
+            const sel = selectedById.get(row.id);
             row.slideDelta = slide.delta;
             row.overlap = overlap;
+            row.fileProto = file.proto;
+            row.destUniShift = destUniShiftFor(sel && sel.window, file.proto, row.destProto);
             if (overlap) {
                 const from = fromAddr(overlap.firstAddr);
                 const to = fromAddr(overlap.lastAddr);
@@ -629,8 +663,9 @@ const slicePlan = (lookRow, deviceId) => {
         filePath: lookRow.filePath,
         destPath: lookRow.dest || undefined,
         name: lookRow.name,
-        proto: lookRow.proto,
+        proto: row.fileProto || lookRow.proto,
         destProto: row.destProto,
+        destUniShift: row.destUniShift || 0,
         slideDelta: row.slideDelta || 0,
         destFirstAddr: row.destFirstAddr,
         destLastAddr: row.destLastAddr,

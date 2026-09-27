@@ -67,7 +67,8 @@ const PlaybackControls = ({
     onSelect,
     onMove,
     onRemove,
-    onClear
+    onClear,
+    error
 }) => {
     const disabled = !isFileLoaded || isRecording;
     const duration = Math.max(0, Number(durationMs) || 0);
@@ -86,6 +87,11 @@ const PlaybackControls = ({
     return React.createElement('div', {
         className: 'flex-none flex flex-col gap-1.5 p-2 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
     },
+        error && React.createElement('p', {
+            className: 'text-[11px] text-red-500 truncate',
+            title: error,
+            role: 'alert'
+        }, error),
         React.createElement('div', {
             className: 'flex items-center gap-1 min-w-0'
         },

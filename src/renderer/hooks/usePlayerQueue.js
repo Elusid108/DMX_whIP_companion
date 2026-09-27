@@ -75,7 +75,8 @@ const usePlayerQueue = ({ playbackNetwork, isRecording } = {}) => {
                 setPlayheadMs(0);
                 return;
             }
-            if (typeof stats.playheadMs === 'number') {
+            // A minimised window skips the 10 Hz scrubber; queue advance still runs.
+            if (typeof stats.playheadMs === 'number' && !document.hidden) {
                 setPlayheadMs(stats.playheadMs);
             }
             if (stats.playerEnded && !loopRef.current) {

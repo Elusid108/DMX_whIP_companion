@@ -145,9 +145,25 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
     const logRef = useRef(null);
     const busy = batchBusy || buildBusy;
 
-    const persist = (patch) => {
-        ipcRenderer.invoke('flash-set-settings', patch).catch(() => {});
+    // Typing in a field coalesces into one settings write after a short pause
+    // (not one per keystroke); unmount flushes whatever is still pending.
+    const pendingPersistRef = useRef(null);
+    const persistTimerRef = useRef(null);
+    const flushPersist = () => {
+        clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+        const patch = pendingPersistRef.current;
+        pendingPersistRef.current = null;
+        if (patch) {
+            ipcRenderer.invoke('flash-set-settings', patch).catch(() => {});
+        }
     };
+    const persist = (patch) => {
+        pendingPersistRef.current = { ...(pendingPersistRef.current || {}), ...patch };
+        clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = setTimeout(flushPersist, 400);
+    };
+    useEffect(() => () => flushPersist(), []);
 
     const patchRow = (path, patch) => {
         setRows((prev) => prev.map((row) => (row.path === path ? { ...row, ...patch } : row)));

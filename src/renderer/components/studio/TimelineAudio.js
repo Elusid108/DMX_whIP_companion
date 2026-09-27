@@ -1,6 +1,7 @@
 const React = require('react');
-const { useEffect, useRef, useState } = React;
+const { useCallback, useRef, useState } = React;
 const { findGapOnTrack, SNAP_GAP_MS } = require('../../../services/shared/compilationEdl');
+const TiledCanvas = require('./TiledCanvas');
 
 const EDGE = 7;
 
@@ -16,63 +17,40 @@ const slicePeaks = (peaks, sourceInMs, sourceOutMs, durationMs) => {
 };
 
 const WaveRow = ({ clips, audioMedia, channel, pixelsPerSecond, durationMs }) => {
-    const wrapRef = useRef(null);
-    const canvasRef = useRef(null);
+    let endMs = durationMs || 0;
+    for (const clip of clips || []) {
+        endMs = Math.max(endMs, (clip.startMs || 0) + ((clip.sourceOutMs || 0) - (clip.sourceInMs || 0)));
+    }
+    const width = (endMs / 1000) * pixelsPerSecond;
 
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        const wrap = wrapRef.current;
-        if (!canvas || !wrap) {
-            return undefined;
+    // Row background is CSS; tiles draw only the peaks inside [x0, x1).
+    const draw = useCallback((ctx, { x0, x1, height, isDark }) => {
+        ctx.fillStyle = isDark ? 'rgba(34,211,238,0.85)' : 'rgba(8,145,178,0.8)';
+        const mid = height / 2;
+        for (const clip of clips || []) {
+            const media = audioMedia && audioMedia[clip.mediaId];
+            const left = ((clip.startMs || 0) / 1000) * pixelsPerSecond;
+            const clipW = Math.max(2, (((clip.sourceOutMs || 0) - (clip.sourceInMs || 0)) / 1000) * pixelsPerSecond);
+            if (!media || left > x1 || left + clipW < x0) {
+                continue;
+            }
+            const peaks = channel === 'R' ? media.peaksR : media.peaksL;
+            const shown = slicePeaks(peaks, clip.sourceInMs, clip.sourceOutMs, media.durationMs);
+            if (shown.length === 0) {
+                continue;
+            }
+            const step = clipW / shown.length;
+            const first = Math.max(0, Math.floor((x0 - left) / step));
+            const last = Math.min(shown.length - 1, Math.ceil((x1 - left) / step));
+            for (let i = first; i <= last; i += 1) {
+                const amp = (shown[i] / 255) * (mid - 1);
+                ctx.fillRect(left + (i * step), mid - amp, Math.max(1, step), amp * 2);
+            }
         }
-        const draw = () => {
-            const cssW = Math.max(1, wrap.clientWidth);
-            const cssH = Math.max(1, wrap.clientHeight);
-            const dpr = window.devicePixelRatio || 1;
-            canvas.width = Math.floor(cssW * dpr);
-            canvas.height = Math.floor(cssH * dpr);
-            canvas.style.width = `${cssW}px`;
-            canvas.style.height = `${cssH}px`;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) {
-                return;
-            }
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            const isDark = document.documentElement.classList.contains('dark');
-            ctx.fillStyle = isDark ? '#09090b' : '#f4f4f5';
-            ctx.fillRect(0, 0, cssW, cssH);
-            ctx.fillStyle = isDark ? 'rgba(34,211,238,0.85)' : 'rgba(8,145,178,0.8)';
-            const mid = cssH / 2;
-            for (const clip of clips || []) {
-                const media = audioMedia && audioMedia[clip.mediaId];
-                const peaks = media ? (channel === 'R' ? media.peaksR : media.peaksL) : [];
-                const shown = slicePeaks(peaks, clip.sourceInMs, clip.sourceOutMs, media && media.durationMs);
-                const left = ((clip.startMs || 0) / 1000) * pixelsPerSecond;
-                const width = Math.max(2, (((clip.sourceOutMs || 0) - (clip.sourceInMs || 0)) / 1000) * pixelsPerSecond);
-                if (shown.length === 0) {
-                    continue;
-                }
-                const step = width / shown.length;
-                for (let i = 0; i < shown.length; i += 1) {
-                    const amp = (shown[i] / 255) * (mid - 1);
-                    const x = left + (i * step);
-                    ctx.fillRect(x, mid - amp, Math.max(1, step), amp * 2);
-                }
-            }
-        };
-        draw();
-        const observer = new ResizeObserver(draw);
-        observer.observe(wrap);
-        const themeObserver = new MutationObserver(draw);
-        themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-        return () => {
-            observer.disconnect();
-            themeObserver.disconnect();
-        };
-    }, [audioMedia, channel, clips, durationMs, pixelsPerSecond]);
+    }, [audioMedia, channel, clips, pixelsPerSecond]);
 
-    return React.createElement('div', { className: 'timeline-audio-row', ref: wrapRef },
-        React.createElement('canvas', { ref: canvasRef, className: 'block h-full w-full pointer-events-none' })
+    return React.createElement('div', { className: 'timeline-audio-row' },
+        React.createElement(TiledCanvas, { width, draw })
     );
 };
 

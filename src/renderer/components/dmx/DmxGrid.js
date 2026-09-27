@@ -65,7 +65,7 @@ const DmxGrid = React.memo(({
         prev.displayFormat === next.displayFormat &&
         prev.gridDimensions === next.gridDimensions &&
         prev.showAnimations === next.showAnimations &&
-        JSON.stringify(prev.dmxData) === JSON.stringify(next.dmxData)
+        prev.dmxData === next.dmxData
     );
 });
 

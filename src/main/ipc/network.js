@@ -6,9 +6,9 @@ const path = require('path');
 const ArtNetReceiver = require('../../services/artnet/receiver');
 const SacnReceiver = require('../../services/sacn/receiver');
 const { getNetworkInterfaces } = require('../../services/shared/networkUtils');
-const { scanRecording } = require('../../services/shared/dmxRecording');
 const { analyzePush, slicePlan } = require('../../services/shared/pushFit');
-const { sliceRecording } = require('../../services/shared/dmxSlice');
+const { runFileTask } = require('../fileTasks');
+const ownOutput = require('../../services/shared/ownOutput');
 const { getUiView, setUiView, onUiViewChange, devicesUiWanted } = require('../uiView');
 const UniverseMonitor = require('../monitor/universeMonitor');
 const { assertInLibrary, sanitizeBaseName, uniqueDmxPath, writeSidecar, ensureLibrary } = require('./library');
@@ -19,6 +19,7 @@ const {
     isIpv4,
     postForm,
     postIdentify,
+    postMeta,
     postReboot,
     postUpload,
     scanWifi
@@ -36,6 +37,7 @@ let selectedUniverses = new Set();
 let setupGeneration = 0;
 
 const POLL_MS = 2500;
+const PUSH_PARALLEL = 3;
 const STALE_MS = 9000;
 const DROP_MS = 20000;
 
@@ -120,11 +122,23 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         };
     };
 
-    const emitDevices = () => {
+    // Every ArtPollReply lands within a moment of the poll: send one list per
+    // burst instead of one per reply.
+    let emitTimer = null;
+    const emitDevicesNow = () => {
+        if (emitTimer) {
+            clearTimeout(emitTimer);
+            emitTimer = null;
+        }
         if (!devicesUiWanted()) {
             return;
         }
         sendToRenderer('devices-update', snapshotDevices());
+    };
+    const emitDevices = () => {
+        if (!emitTimer) {
+            emitTimer = setTimeout(emitDevicesNow, 150);
+        }
     };
 
     const quietRecord = () => Boolean(
@@ -148,7 +162,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
 
     const clearDevices = () => {
         devices.clear();
-        emitDevices();
+        emitDevicesNow();
     };
 
     const ingestPollReply = (reply) => {
@@ -272,7 +286,15 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
                 }, { selected });
             };
 
-            const dispatchDmx = (protocol, universe, dmxData, ingest) => {
+            const dispatchDmx = (protocol, universe, dmxData, ingest, own) => {
+                // Our own playback looping back: show it, never record it or
+                // let it fire a record trigger.
+                if (own) {
+                    if (!(recordingHandler && recordingHandler.isRecording())) {
+                        ingest();
+                    }
+                    return;
+                }
                 const wasRecording = Boolean(recordingHandler && recordingHandler.isRecording());
                 if (!wasRecording) {
                     observeDmx(protocol, universe, dmxData);
@@ -295,7 +317,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
                         sourceIp: data.sourceIp,
                         dmxData: data.dmxData
                     });
-                });
+                }, ownOutput.isOwn(data));
             });
 
             artnetReceiver.onPollReply('main', ingestPollReply);
@@ -309,7 +331,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
                         sourceName: data.sourceName,
                         dmxData: data.dmxData
                     });
-                });
+                }, ownOutput.isOwn(data));
             });
 
             syncUiEmit();
@@ -338,11 +360,11 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
 
     ipcMain.handle('device-list', () => snapshotDevices());
 
-    const inspectPushJobs = (jobs = []) => (jobs || []).map((job) => {
+    const inspectPushJobs = async (jobs = []) => Promise.all((jobs || []).map(async (job) => {
         assertInLibrary(job.filePath);
         let scan;
         try {
-            scan = scanRecording(job.filePath);
+            scan = await runFileTask('scan', { filePath: job.filePath });
         } catch (err) {
             scan = {
                 error: err.message,
@@ -358,7 +380,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
             dest: job.dest || null,
             scan
         };
-    });
+    }));
 
     const loadPushDeviceStates = async (rows = []) => Promise.all((rows || []).map(async (device) => {
         const result = await fetchStatus(device.ip);
@@ -382,8 +404,10 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
 
     ipcMain.handle('device-push-analyze', async (event, { jobs, devices: rows } = {}) => {
         try {
-            const looks = inspectPushJobs(jobs);
-            const states = await loadPushDeviceStates(rows);
+            const [looks, states] = await Promise.all([
+                inspectPushJobs(jobs),
+                loadPushDeviceStates(rows)
+            ]);
             return { success: true, analysis: analyzePush(looks, states) };
         } catch (error) {
             return { success: false, error: error.message };
@@ -404,76 +428,134 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     ipcMain.handle('device-push-batch', async (event, { jobs, devices: rows } = {}) => {
         const temps = [];
         try {
-            const looks = inspectPushJobs(jobs);
-            const states = await loadPushDeviceStates(rows);
+            const [looks, states] = await Promise.all([
+                inspectPushJobs(jobs),
+                loadPushDeviceStates(rows)
+            ]);
             const analysis = analyzePush(looks, states);
             if (!analysis.overall.canPush) {
                 return { success: false, error: analysis.overall.label || 'Cannot push', analysis };
             }
             const results = [];
             for (const look of analysis.looks) {
-                const receiving = (rows || []).filter((device) => slicePlan(look, device.id));
-                if (!receiving.length) {
+                const plans = (rows || [])
+                    .map((target) => ({ target, plan: slicePlan(look, target.id) }))
+                    .filter((item) => item.plan);
+                if (!plans.length) {
                     continue;
                 }
-                const group = crypto.randomUUID();
-                const wantSync = receiving.length > 1;
-                const batchKind = look.batch && look.batch.kind;
-                const syncKind = (batchKind === 'fit' || batchKind === 'shift') ? 'uni' : 'split';
-                const members = JSON.stringify(receiving.map((device) => ({
-                    n: device.longName || device.shortName || device.ip,
-                    m: device.mac || ''
-                })));
-                for (const target of receiving) {
-                    const plan = slicePlan(look, target.id);
-                    if (!plan) {
-                        continue;
-                    }
-                    const destPath = plan.destPath || destUploadPath(plan.filePath);
-                    const tempPath = path.join(
+                const labelOf = (target) => target.longName || target.shortName || target.ip;
+                emitPushProgress({
+                    phase: 'connecting',
+                    sent: 0,
+                    total: 0,
+                    label: `Slicing ${look.name}`
+                });
+                plans.forEach((item) => {
+                    item.destPath = item.plan.destPath || destUploadPath(item.plan.filePath);
+                    item.tempPath = path.join(
                         os.tmpdir(),
                         `whip-push-${crypto.randomBytes(8).toString('hex')}.dmx`
                     );
-                    temps.push(tempPath);
-                    emitPushProgress({
-                        phase: 'connecting',
-                        sent: 0,
-                        total: 0,
-                        label: `${target.longName || target.ip} · ${look.name}`
-                    });
-                    sliceRecording(plan.filePath, tempPath, {
+                    temps.push(item.tempPath);
+                });
+                // One pass over the look for every node's slice.
+                await runFileTask('slice', {
+                    srcPath: look.filePath,
+                    targets: plans.map(({ plan, tempPath }) => ({
+                        destPath: tempPath,
                         proto: plan.proto,
                         destProto: plan.destProto,
+                        destUniShift: plan.destUniShift,
                         slideDelta: plan.slideDelta,
                         destFirstAddr: plan.destFirstAddr,
                         destLastAddr: plan.destLastAddr
-                    });
-                    const uploaded = await postUpload(target.ip, tempPath, (progress) => {
-                        emitPushProgress({
-                            ...progress,
-                            label: `${target.longName || target.ip} · ${look.name}`
-                        });
-                    }, destPath, {
-                        name: look.name,
-                        titlePath: plan.filePath,
-                        sync_group: wantSync ? group : undefined,
-                        sync_members: wantSync ? members : undefined,
-                        sync_kind: wantSync ? syncKind : undefined
-                    });
-                    try {
-                        fs.unlinkSync(tempPath);
-                    } catch (err) {
-                        // ignore
+                    }))
+                });
+
+                // Up to PUSH_PARALLEL nodes at once; the progress bar is the sum.
+                const progress = new Map();
+                const label = plans.length > 1
+                    ? `${plans.length} nodes · ${look.name}`
+                    : `${labelOf(plans[0].target)} · ${look.name}`;
+                const emitSum = (phase) => {
+                    let sent = 0;
+                    let total = 0;
+                    let startedAt = Date.now();
+                    for (const item of progress.values()) {
+                        sent += item.sent || 0;
+                        total += item.total || 0;
+                        startedAt = Math.min(startedAt, item.startedAt || startedAt);
                     }
-                    if (!uploaded || !uploaded.success) {
+                    emitPushProgress({ phase, sent, total, startedAt, label });
+                };
+                const queue = plans.slice();
+                const uploadOne = async (item) => {
+                    const uploaded = await postUpload(item.target.ip, item.tempPath, (update) => {
+                        progress.set(item.target.id, update);
+                        const phase = update.phase === 'done' || update.phase === 'error'
+                            ? 'sending'
+                            : update.phase;
+                        emitSum(phase);
+                    }, item.destPath, { meta: false });
+                    try {
+                        fs.unlinkSync(item.tempPath);
+                    } catch (err) {
+                        // retried in finally
+                    }
+                    item.uploaded = uploaded;
+                };
+                const workers = Array.from({ length: Math.min(PUSH_PARALLEL, queue.length) }, async () => {
+                    while (queue.length) {
+                        await uploadOne(queue.shift());
+                    }
+                });
+                await Promise.all(workers);
+                emitSum('waiting');
+
+                // Sidecars last, so the sync group names only the nodes that
+                // actually received their slice.
+                const ok = plans.filter((item) => item.uploaded && item.uploaded.success);
+                const group = crypto.randomUUID();
+                const wantSync = ok.length > 1;
+                const batchKind = look.batch && look.batch.kind;
+                const syncKind = (batchKind === 'fit' || batchKind === 'shift') ? 'uni' : 'split';
+                const members = JSON.stringify(ok.map((item) => ({
+                    n: labelOf(item.target),
+                    m: item.target.mac || ''
+                })));
+                await Promise.all(ok.map(async (item) => {
+                    const dest = (item.uploaded.result && item.uploaded.result.path) || item.destPath;
+                    const fields = { path: dest, name: look.name };
+                    if (wantSync) {
+                        fields.sync_group = group;
+                        fields.sync_members = members;
+                        fields.sync_kind = syncKind;
+                    }
+                    const meta = await postMeta(item.target.ip, fields);
+                    item.dest = dest;
+                    if (!meta || !meta.success) {
+                        item.metaError = (meta && meta.error) || 'sidecar failed';
+                    }
+                }));
+                emitSum('done');
+
+                for (const item of plans) {
+                    const name = labelOf(item.target);
+                    if (!item.uploaded || !item.uploaded.success) {
                         results.push({
-                            label: target.longName || target.ip,
-                            dest: destPath,
-                            error: (uploaded && uploaded.error) || 'Push failed'
+                            label: name,
+                            dest: item.destPath,
+                            error: (item.uploaded && item.uploaded.error) || 'Push failed'
+                        });
+                    } else if (item.metaError) {
+                        results.push({
+                            label: name,
+                            dest: item.dest,
+                            error: `Uploaded, but the title/sync sidecar failed: ${item.metaError}`
                         });
                     } else {
-                        const dest = (uploaded.result && uploaded.result.path) || destPath;
-                        results.push({ label: target.longName || target.ip, dest });
+                        results.push({ label: name, dest: item.dest });
                     }
                 }
             }
@@ -615,9 +697,10 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         }
     });
 
-    ipcMain.on('set-protocol', async (event, { interfaceIp }) => {
-        await setupReceivers(interfaceIp);
-    });
+    const handleSetProtocol = async (event, payload = {}) => {
+        await setupReceivers((payload && payload.interfaceIp) || '0.0.0.0');
+    };
+    ipcMain.on('set-protocol', handleSetProtocol);
 
     const handleScan = () => {
         if (quietRecord()) {
@@ -643,17 +726,22 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         syncUiEmit();
     });
 
-    ipcMain.on('select-monitor-universe', (event, { protocol, universe } = {}) => {
+    const handleSelectMonitor = (event, { protocol, universe } = {}) => {
         monitor.setSelected(protocol, universe);
-    });
-
-    ipcMain.on('update-selected-universes', (event, universes) => {
-        selectedUniverses = new Set(universes);
-    });
+    };
+    const handleSelectedUniverses = (event, universes) => {
+        selectedUniverses = new Set(Array.isArray(universes) ? universes : []);
+    };
+    ipcMain.on('select-monitor-universe', handleSelectMonitor);
+    ipcMain.on('update-selected-universes', handleSelectedUniverses);
 
     return () => {
         setupGeneration += 1;
         stopPoll();
+        if (emitTimer) {
+            clearTimeout(emitTimer);
+            emitTimer = null;
+        }
         devices.clear();
         monitor.stop();
         if (artnetReceiver) artnetReceiver.stop();
@@ -678,6 +766,9 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('device-open-portal');
         ipcMain.removeHandler('device-pull-show');
         ipcMain.removeListener('devices-scan', handleScan);
+        ipcMain.removeListener('set-protocol', handleSetProtocol);
+        ipcMain.removeListener('select-monitor-universe', handleSelectMonitor);
+        ipcMain.removeListener('update-selected-universes', handleSelectedUniverses);
         ipcMain.removeListener('set-ui-view', handleUiView);
         if (stopUiView) {
             stopUiView();

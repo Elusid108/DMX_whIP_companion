@@ -127,3 +127,22 @@ test('no idle patched node still blocks Push', () => {
     assert.equal(analysis.overall.canPush, false);
     assert.equal(slicePlan(look, 'whip-9'), null);
 });
+
+test('an Art-Net look pushed to an sACN-patched node is renumbered to its sACN universes', () => {
+    const node = whip(1, 0, {
+        status: {
+            proto: 'sacn',
+            live: false,
+            outputs: [{
+                segs: [{ proto: 'sacn', artnet: 0, sacn: 1, ch: 1, count: 192, ch_px: 3 }]
+            }],
+            play: { sync: true }
+        }
+    });
+    const analysis = analyzePush([multiscreenLook()], [node]);
+    const plan = slicePlan(analysis.looks[0], node.id);
+    assert.ok(plan);
+    assert.equal(plan.proto, 'artnet');
+    assert.equal(plan.destProto, 'sacn');
+    assert.equal(plan.destUniShift, 1);
+});
