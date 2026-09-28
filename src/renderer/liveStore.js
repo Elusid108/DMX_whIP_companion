@@ -1,4 +1,4 @@
-// Live tab state outside React: faders move at pointer rate and MIDI (5c)
+// Control tab state outside React: faders move at pointer rate and MIDI (5c)
 // drives it from any tab, so neither should re-render the whole app.
 // Layout is saved through live-save; levels go to the main process as
 // changed addresses (HTP across controls sharing an address).

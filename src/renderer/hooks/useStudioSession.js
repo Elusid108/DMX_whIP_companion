@@ -108,7 +108,7 @@ const useStudioSession = (selectedUniverses, selectedNic, { studioVisible } = {}
         setPlaybackNetwork((current) => current || selectedNic || '0.0.0.0');
     }, [selectedNic]);
 
-    // The Output NIC is saved (it is also the Live tab's adapter).
+    // The Output NIC is saved (it is also the Control tab's adapter).
     useEffect(() => {
         let alive = true;
         ipcRenderer.invoke('live-get').then((result) => {

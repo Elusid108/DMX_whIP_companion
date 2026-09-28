@@ -1,4 +1,4 @@
-// USB MIDI for the Live tab (Web MIDI in the renderer). Runs from app start
+// USB MIDI for the Control tab (Web MIDI in the renderer). Runs from app start
 // so any number of controllers drive the faders and pads from any tab.
 //
 // Devices: every connected port is opened and listed, hot-plug included

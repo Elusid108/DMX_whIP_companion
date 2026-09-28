@@ -26,7 +26,9 @@ const ipcRenderer = require('./ipc');
 // rail: what the left column holds (the drawer button's label when narrow).
 const VIEWS = [
     { id: 'monitor', label: 'Monitor', icon: Icons.ViewMonitor, rail: 'Universes' },
-    { id: 'live', label: 'Live', icon: Icons.ViewLive, rail: 'Output' },
+    // Control: the control surface setup (faders, pads, MIDI; later the
+    // Raspberry Pi surface). Its id stays 'live' so saved settings carry over.
+    { id: 'live', label: 'Control', icon: Icons.ViewLive, rail: 'Output' },
     { id: 'studio', label: 'Studio', icon: Icons.ViewStudio, rail: 'Universes' },
     { id: 'library', label: 'Library', icon: Icons.ViewLibrary, rail: 'Shows' },
     { id: 'devices', label: 'Devices', icon: Icons.ViewDevices, rail: 'Nodes' },
