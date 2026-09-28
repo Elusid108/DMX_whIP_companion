@@ -24,20 +24,20 @@ test('patchFromStatus reads outputs, the legacy map and the fixture', () => {
     assert.equal(mo.patchFromStatus({ fixture: { en: false } }).fixture, null);
 });
 
-test('GRB pixels: groups of 3 with wire-order roles', () => {
+test('GRB strip: groups of 3, DMX roles R, G, B (grb is only the wire order)', () => {
     const o = mo.buildOverlay([device('a', [seg({ ch: 4, count: 2 })])], 'artnet', 0);
     assert.equal(o.cells[2], null);
-    assert.deepEqual(o.cells.slice(3, 9).map((c) => c.role), ['g', 'r', 'b', 'g', 'r', 'b']);
+    assert.deepEqual(o.cells.slice(3, 9).map((c) => c.role), ['r', 'g', 'b', 'r', 'g', 'b']);
     assert.equal(o.cells[3].group, o.cells[5].group);
     assert.notEqual(o.cells[5].group, o.cells[6].group);
     assert.equal(o.spans.length, 1);
     assert.deepEqual([o.spans[0].first, o.spans[0].last], [4, 9]);
-    assert.equal(mo.describeChannel(o, 5), 'Ch 5 · a · Out 1 Seg 1 · Px 1 · Red');
+    assert.equal(mo.describeChannel(o, 5), 'Ch 5 · a · Out 1 Seg 1 · Px 1 · Green');
 });
 
 test('4 and 5 channel pixels', () => {
     const o4 = mo.buildOverlay([device('a', [seg({ order: 'grbw', white: true, ch_px: 4, count: 2 })])], 'artnet', 0);
-    assert.deepEqual(o4.cells.slice(0, 8).map((c) => c.role).join(''), 'grbwgrbw');
+    assert.deepEqual(o4.cells.slice(0, 8).map((c) => c.role).join(''), 'rgbwrgbw');
     assert.equal(o4.cells[3].group, o4.cells[0].group);
     const o5 = mo.buildOverlay([device('a', [seg({ order: 'rgbwc', white: true, cct: true, ch_px: 5, count: 1 })])], 'artnet', 0);
     assert.equal(o5.cells.slice(0, 5).map((c) => c.role).join(''), 'rgbwc');
@@ -89,29 +89,34 @@ test('fixture Dim and RGB footprints', () => {
     const dim = device('a', [seg({ artnet: 0, count: 4 })], { mode: 'dim', proto: 'artnet', uni: 2, ch: 101, subs: 3, valid: true });
     const o = mo.buildOverlay([dim], 'artnet', 2);
     assert.equal(o.spans.length, 1);
-    assert.deepEqual([o.spans[0].first, o.spans[0].last], [101, 116]);
+    assert.deepEqual([o.spans[0].first, o.spans[0].last], [101, 119]);
     assert.equal(o.spans[0].name, 'a · Fixture');
     assert.equal(o.cells[100].label, 'Master dimmer');
-    assert.equal(o.cells[110].label, 'Sub 1 dim');
-    assert.equal(o.cells[110].group, o.cells[111].group);
+    assert.equal(o.cells[102].label, 'Strobe colour');
+    assert.equal(o.cells[113].label, 'Sub 1 dim');
+    assert.equal(o.cells[113].group, o.cells[114].group);
     const rgb = device('a', [seg({ count: 4 })], { mode: 'rgb', proto: 'artnet', uni: 2, ch: 1, subs: 2, valid: true });
     const r = mo.buildOverlay([rgb], 'artnet', 2);
-    assert.equal(r.spans[0].last, 20);
-    assert.deepEqual(r.cells.slice(10, 15).map((c) => c.role), ['fx', 'fx', 'r', 'g', 'b']);
+    assert.equal(r.spans[0].last, 23);
+    assert.deepEqual(r.cells.slice(13, 18).map((c) => c.role), ['fx', 'fx', 'r', 'g', 'b']);
+    const basic = device('a', [seg({ count: 4 })], { mode: 'basic', proto: 'artnet', uni: 2, ch: 50, subs: 3, valid: true });
+    const b = mo.buildOverlay([basic], 'artnet', 2);
+    assert.deepEqual([b.spans[0].first, b.spans[0].last], [50, 54]);
+    assert.equal(b.cells[53].label, 'Clip');
 });
 
 test('fixture Full never splits a pixel across a universe', () => {
-    // 10 header + 170 pixels * 3 = 520 from ch 1: pixel 167 ends at 511, so
-    // pixel 168 starts U1 ch 1.
+    // 13 header + 170 pixels * 3 from ch 1: pixels 0-165 end at ch 511, so
+    // pixel 166 starts U8 ch 1.
     const full = device('a', [seg({ order: 'grb', count: 170 })], { mode: 'full', proto: 'sacn', uni: 7, ch: 1, subs: 0, valid: true });
     const u7 = mo.buildOverlay([full], 'sacn', 7);
-    assert.equal(u7.cells[10].role, 'g');
-    assert.equal(u7.cells[510].pixel, 166);
+    assert.equal(u7.cells[13].role, 'r');
+    assert.equal(u7.cells[510].pixel, 165);
     assert.equal(u7.cells[511], null);
     const u8 = mo.buildOverlay([full], 'sacn', 8);
-    assert.equal(u8.cells[0].pixel, 167);
-    assert.equal(u8.cells[0].role, 'g');
-    assert.equal(mo.describeChannel(u8, 1), 'Ch 1 · a · Fixture · Pixel 167 · Green');
+    assert.equal(u8.cells[0].pixel, 166);
+    assert.equal(u8.cells[0].role, 'r');
+    assert.equal(mo.describeChannel(u8, 1), 'Ch 1 · a · Fixture · Pixel 166 · Red');
 });
 
 test('manual grouping and off', () => {
@@ -122,5 +127,5 @@ test('manual grouping and off', () => {
     assert.equal(mo.describeChannel(m, 3), 'Ch 3 · 2-ch group 2 · White');
     const off = mo.buildOverlay([device('a', [seg({ count: 2 })])], 'artnet', 0, { group: 'off' });
     assert.equal(off.cells[0].group, -1);
-    assert.equal(off.cells[0].role, 'g');
+    assert.equal(off.cells[0].role, 'r');
 });

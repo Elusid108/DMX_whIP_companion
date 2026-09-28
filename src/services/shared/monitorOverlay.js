@@ -6,15 +6,14 @@
 //   - a segment whose span runs past 512 channels packs pixels back to back,
 //     so a pixel may straddle two universes (mapPacked); otherwise every pixel
 //     is whole in one universe (mapWholePixels)
-//   - the DMX channel order is the wire order: channel k of a pixel is the
-//     colour order's letter k (grb -> green, red, blue)
+//   - DMX per pixel is always R, G, B[, W][, warm W]; the chip's colour
+//     order is only the wire order, applied on the node (LedBus::setPacked)
 // The Advanced patch fixture (/status.fixture) follows src/fixture.cpp via
 // fixture.js.
 
 const {
-    HEADER,
-    HEADER_NAMES,
     MODES,
+    headerInfo,
     layout
 } = require('./fixture');
 
@@ -34,11 +33,10 @@ const cppOf = (seg) => Number(seg && seg.ch_px)
     || (3 + (seg && seg.white ? 1 : 0) + (seg && seg.cct ? 1 : 0));
 
 const orderOf = (seg, cpp) => {
-    const order = String((seg && seg.order) || '').toLowerCase();
-    if (order.length === cpp) {
-        return order;
-    }
-    return 'rgbwc'.slice(0, cpp);
+    const white = seg && seg.white != null ? Boolean(seg.white) : cpp >= 4;
+    const cct = seg && seg.cct != null ? Boolean(seg.cct) : cpp >= 5;
+    const channels = `rgb${white ? 'w' : ''}${cct ? 'c' : ''}`;
+    return channels.length === cpp ? channels : 'rgbwc'.slice(0, cpp);
 };
 
 // /status -> the compact patch the device list carries.
@@ -175,8 +173,9 @@ const fixtureCells = (device, protocol, universe) => {
         }
         cells.push({ ch: (abs % UNIVERSE) + 1, group, pixel, seg: null, out: null, kind, role, label });
     };
-    for (let i = 0; i < HEADER; i += 1) {
-        push(i, `h:${i}`, 'fx', HEADER_NAMES[i], null, 'header');
+    const header = headerInfo(fx.mode);
+    for (let i = 0; i < header.length; i += 1) {
+        push(i, `h:${i}`, 'fx', header[i].name, null, 'header');
     }
     if (fx.mode === 'full') {
         const segs = [];
@@ -205,9 +204,9 @@ const fixtureCells = (device, protocol, universe) => {
     }
     const mode = MODES[fx.mode];
     const roles = fx.mode === 'rgb' ? ['fx', 'fx', 'r', 'g', 'b'] : ['fx', 'fx'];
-    for (let k = 0; k < fx.subs; k += 1) {
+    for (let k = 0; k < fx.subs && mode.per; k += 1) {
         for (let i = 0; i < mode.per; i += 1) {
-            push(HEADER + (k * mode.per) + i, `s:${k}`, roles[i], `Sub ${k + 1} ${mode.fields[i].toLowerCase()}`, k, 'sub');
+            push(header.length + (k * mode.per) + i, `s:${k}`, roles[i], `Sub ${k + 1} ${mode.fields[i].toLowerCase()}`, k, 'sub');
         }
     }
     return cells;

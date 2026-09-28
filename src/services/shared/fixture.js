@@ -1,13 +1,19 @@
 // Advanced patch (node as one console fixture). Mirrors the firmware rules in
 // DMX_whIP_embedded src/fixture.cpp and the portal's Patch -> Advanced editor.
 //
-// Header (every mode), then per mode:
-//   dim : 2 ch per sub-fixture (dim, strobe) over the recorded look
-//   rgb : 5 ch per sub-fixture (dim, strobe, R, G, B) from the console
-//   full: channels-per-pixel for every LED, never split across a universe
+// Header, then per mode:
+//   basic: 5-channel header only (intensity, strobe, hue, folder, clip) over
+//          the recorded look
+//   dim  : 13-channel header, then 2 ch per sub-fixture (dim, strobe) over
+//          the recorded look
+//   rgb  : 13-channel header, then 5 ch per sub-fixture (dim, strobe, R, G, B)
+//   full : 13-channel header, then channels-per-pixel for every LED (R, G, B
+//          [, W][, warm W], whatever the chip's wire order), never split
+//          across a universe
 // Pixels are the main patch's LEDs in map order (output -> segment -> pixel).
 
-const HEADER = 10;
+const HEADER = 13;
+const HEADER_BASIC = 5;
 const UNIVERSE = 512;
 const MAX_SUBS = 96;
 const MAX_RANGES = 256;
@@ -17,24 +23,49 @@ const NAME_MAX = 23;
 // The header in every mode, with what the values do. 0 is "no effect" on
 // every channel (firmware 0.48+), so channels a console leaves unpatched are
 // ignored; dimmers stay open until the console first raises them.
+const H = {
+    dim: { name: 'Master dimmer', values: '0-255 · open until first raised' },
+    intensity: { name: 'Intensity', values: '0-255 · open until first raised' },
+    strobe: { name: 'Strobe', values: '0-9 open · 10-255 = 1-25 Hz' },
+    strobeColour: { name: 'Strobe colour', values: '0 white · 1-255 round the colour wheel' },
+    strobeLevel: { name: 'Strobe intensity', values: 'Off-phase level of the strobe colour · 0 blackout' },
+    hue: { name: 'Hue shift', values: '0 none · 1-255 round the colour wheel' },
+    folder: { name: 'Folder', values: '0 SD root · n = n-th folder (A-Z)' },
+    clip: { name: 'Clip', values: '0 normal playback · n = n-th look in the folder (A-Z)' }
+};
+
 const HEADER_INFO = [
-    { name: 'Master dimmer', values: '0-255 · open until first raised' },
-    { name: 'Strobe', values: '0-9 open · 10-255 = 1-25 Hz' },
-    { name: 'Hue shift', values: '0 none · 1-255 round the colour wheel' },
+    H.dim,
+    H.strobe,
+    H.strobeColour,
+    H.strobeLevel,
+    H.hue,
     { name: 'Filter red', values: 'Red removed · 0 none' },
     { name: 'Filter green', values: 'Green removed · 0 none' },
     { name: 'Filter blue', values: 'Blue removed · 0 none' },
     { name: 'Add red', values: 'Red added · 0 none' },
     { name: 'Add green', values: 'Green added · 0 none' },
     { name: 'Add blue', values: 'Blue added · 0 none' },
-    { name: 'Clip select', values: '0 normal playback · n = n-th look on the SD' }
+    H.folder,
+    H.clip
 ];
+
+const HEADER_INFO_BASIC = [H.intensity, H.strobe, H.hue, H.folder, H.clip];
+
+const headerInfo = (mode) => (mode === 'basic' ? HEADER_INFO_BASIC : HEADER_INFO);
+const headerLen = (mode) => headerInfo(mode).length;
 
 const HEADER_NAMES = HEADER_INFO.map((h) => h.name);
 
 const GENERAL_NOTE = 'A channel left at 0 has no effect, so channels your console doesn’t patch are ignored. Dimmers stay open until the console first raises them.';
 
 const MODES = {
+    basic: {
+        label: 'Basic',
+        per: 0,
+        fields: [],
+        description: 'Five channels over what the node already plays: intensity, strobe, hue shift, folder and clip. No sub-fixtures. It uses its own universe, which never takes over playback; with no console the show plays untouched.'
+    },
     dim: {
         label: 'Dim + FX',
         per: 2,
@@ -51,7 +82,7 @@ const MODES = {
         label: 'Full',
         per: 0,
         fields: [],
-        description: 'The console drives every LED directly after the 10 header channels, in each strip’s colour order. It continues into the next universes without splitting a pixel (up to 6).'
+        description: 'The console drives every LED directly after the 13 header channels: red, green, blue (then white, warm white) per pixel, whatever order the strip wires them in. It continues into the next universes without splitting a pixel (up to 6).'
     }
 };
 
@@ -68,7 +99,11 @@ const segmentsFromOutputs = (outputs) => {
         (out.segs || []).forEach((seg, segIndex) => {
             const count = Math.max(0, Number(seg.count) || 0);
             const cpp = cppOf(seg);
-            const order = String(seg.order || '').toLowerCase();
+            // DMX is always R, G, B[, W][, warm W]; the chip order is only
+            // the wire order, applied on the node.
+            const white = seg.white != null ? Boolean(seg.white) : cpp >= 4;
+            const cct = seg.cct != null ? Boolean(seg.cct) : cpp >= 5;
+            const channels = `rgb${white ? 'w' : ''}${cct ? 'c' : ''}`;
             segs.push({
                 out: outIndex,
                 seg: segIndex,
@@ -77,7 +112,7 @@ const segmentsFromOutputs = (outputs) => {
                 g0,
                 count,
                 cpp,
-                order: order.length === cpp ? order : 'rgbwc'.slice(0, cpp)
+                channels: channels.length === cpp ? channels : 'rgbwc'.slice(0, cpp)
             });
             g0 += count;
         });
@@ -153,7 +188,7 @@ const layout = (fx, pixels) => {
     const base = Math.max(0, (Number(fx.ch) || 1) - 1);
     const result = { base, footprint: 0, unis: 1, addr: null, error: '' };
     if (fx.mode === 'full') {
-        let pos = base + HEADER;
+        let pos = base + headerLen(fx.mode);
         if (pos > UNIVERSE) {
             result.error = 'The header does not fit after this channel.';
         }
@@ -171,7 +206,7 @@ const layout = (fx, pixels) => {
             result.error = 'Full mode needs more than 6 universes. Use a reduced mode or fewer pixels.';
         }
     } else {
-        result.footprint = HEADER + perSub(fx.mode) * (fx.subs || []).length;
+        result.footprint = headerLen(fx.mode) + perSub(fx.mode) * (fx.subs || []).length;
         if (base + result.footprint > UNIVERSE) {
             result.error = 'The fixture does not fit in the universe from this channel.';
         }
@@ -199,7 +234,7 @@ const subChannels = (fx, k) => {
     if (!per) {
         return { universe: null, channels: [] };
     }
-    return channelsAt(fx, Math.max(0, (Number(fx.ch) || 1) - 1) + HEADER + per * k, per);
+    return channelsAt(fx, Math.max(0, (Number(fx.ch) || 1) - 1) + headerLen(fx.mode) + per * k, per);
 };
 
 // A pixel's channels in the current mode: its own (Full), its sub-fixture's,
@@ -215,9 +250,9 @@ const pixelChannels = (fx, lay, subOf, pixels, g) => {
     return k >= 0 ? subChannels(fx, k) : { universe: null, channels: [] };
 };
 
-const headerChannels = (fx) => HEADER_NAMES.map((name, i) => ({
+const headerChannels = (fx) => headerInfo(fx.mode).map((h, i) => ({
     channel: (Number(fx.ch) || 1) + i,
-    name
+    name: h.name
 }));
 
 const pixelsOf = (subOf, k) => {
@@ -255,7 +290,7 @@ const LETTERS = { r: 'R', g: 'G', b: 'B', w: 'W', c: 'WW' };
 // Rows: { channels, name, values }.
 const channelMap = (fx, outputs, subOf = []) => {
     const base = Math.max(0, (Number(fx.ch) || 1) - 1);
-    const rows = HEADER_INFO.map((h, i) => ({
+    const rows = headerInfo(fx.mode).map((h, i) => ({
         channels: spanText(fx, base + i, base + i),
         name: h.name,
         values: h.values
@@ -273,14 +308,17 @@ const channelMap = (fx, outputs, subOf = []) => {
             rows.push({
                 channels: spanText(fx, first, last),
                 name: `Out ${seg.out + 1} Seg ${seg.seg + 1}`,
-                values: `px ${seg.g0}-${seg.g0 + seg.count - 1} · ${seg.cpp} ch each (${seg.order.split('').map((l) => LETTERS[l] || l.toUpperCase()).join(', ')})`
+                values: `px ${seg.g0}-${seg.g0 + seg.count - 1} · ${seg.cpp} ch each (${seg.channels.split('').map((l) => LETTERS[l] || l.toUpperCase()).join(', ')})`
             });
         });
         return rows;
     }
     const mode = MODES[fx.mode];
+    if (!mode.per) {
+        return rows;
+    }
     (fx.subs || []).forEach((sub, k) => {
-        const rel = base + HEADER + (mode.per * k);
+        const rel = base + headerLen(fx.mode) + (mode.per * k);
         const count = pixelsOf(subOf, k).length;
         rows.push({
             channels: spanText(fx, rel, rel + mode.per - 1),
@@ -365,8 +403,11 @@ const toFields = (fx, subOf) => {
 module.exports = {
     GENERAL_NOTE,
     HEADER,
+    HEADER_BASIC,
     HEADER_INFO,
     HEADER_NAMES,
+    headerInfo,
+    headerLen,
     MAX_SUBS,
     MAX_UNIVERSES,
     MODES,

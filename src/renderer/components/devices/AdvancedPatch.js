@@ -10,6 +10,7 @@ const {
     channelText,
     formatRanges,
     fromFixture,
+    headerLen,
     layout,
     pixelChannels,
     pixelsFromOutputs,
@@ -37,9 +38,13 @@ const LIST_H = 360;
 const OVERSCAN = 8;
 
 const footText = (fx, lay, pixelCount) => {
-    const math = fx.mode === 'full'
-        ? `10 + ${pixelCount} px`
-        : `10 + ${MODES[fx.mode].per}×${fx.subs.length}`;
+    const hdr = headerLen(fx.mode);
+    let math = `${hdr} + ${MODES[fx.mode].per}×${fx.subs.length}`;
+    if (fx.mode === 'full') {
+        math = `${hdr} + ${pixelCount} px`;
+    } else if (fx.mode === 'basic') {
+        math = `${hdr}`;
+    }
     const start = Number(fx.ch) || 1;
     const last = start - 1 + lay.footprint - 1;
     const endUni = (Number(fx.uni) || 0) + Math.floor(last / 512);
@@ -407,6 +412,8 @@ const AdvancedPatch = ({ open, device, onClose }) => {
             React.createElement('div', { className: 'grid gap-3 md:grid-cols-[17rem_1fr]' },
                 React.createElement('div', { className: 'min-w-0' },
                     React.createElement('div', { className: 'label-micro mb-1' }, `Sub-fixtures · ${fx.subs.length}`),
+                    fx.mode === 'basic' && React.createElement('p', { className: 'text-xs text-muted mb-1' },
+                        'Basic mode has no sub-fixtures. Any you group are kept for the other modes.'),
                     fx.subs.length === 0
                         ? React.createElement(EmptyState, { size: 'xs' }, 'None yet. Select pixels, then Group as new.')
                         : React.createElement('div', { className: 'flex flex-col gap-1 max-h-[24rem] overflow-y-auto' },

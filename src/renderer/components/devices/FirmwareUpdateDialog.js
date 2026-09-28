@@ -1,5 +1,5 @@
 const React = require('react');
-const { useEffect, useMemo, useState } = React;
+const { useEffect, useMemo, useRef, useState } = React;
 const ipcRenderer = require('../../ipc');
 const { otaVerdict } = require('../../../services/shared/firmwareCompat');
 const { formatBytes } = require('../../../services/shared/format');
@@ -115,6 +115,21 @@ const FirmwareUpdateDialog = ({ open, onClose, initialIds }) => {
     const chosen = selected.filter(updatable);
     const busyChosen = chosen.filter((id) => verdicts[id] && verdicts[id].busy);
 
+    // Select all: every node that can be updated (current, no reply, other
+    // board and needs-USB rows are never picked).
+    const updatableIds = rows.map((row) => row.id).filter(updatable);
+    const allChosen = updatableIds.length > 0 && chosen.length === updatableIds.length;
+    const someChosen = chosen.length > 0 && !allChosen;
+    const allRef = useRef(null);
+    useEffect(() => {
+        if (allRef.current) {
+            allRef.current.indeterminate = someChosen;
+        }
+    });
+    const toggleAll = () => {
+        setSelected(allChosen ? [] : updatableIds);
+    };
+
     const toggle = (id) => {
         setSelected((current) => (current.includes(id)
             ? current.filter((item) => item !== id)
@@ -165,7 +180,18 @@ const FirmwareUpdateDialog = ({ open, onClose, initialIds }) => {
             ? React.createElement(EmptyState, null, 'Reading the nodes…')
             : rows.length === 0
                 ? React.createElement(EmptyState, null, 'No nodes found. Scan on the selected NIC first.')
-                : React.createElement('div', { className: 'flex flex-col gap-1 mb-2 max-h-[50vh] overflow-y-auto' },
+                : React.createElement(React.Fragment, null,
+                  React.createElement(Checkbox, {
+                      ref: allRef,
+                      className: 'mb-1.5 px-3 ml-px text-sm',
+                      checked: allChosen,
+                      disabled: running || !updatableIds.length,
+                      onChange: toggleAll,
+                      label: updatableIds.length
+                          ? `Select all (${chosen.length} of ${updatableIds.length} to update)`
+                          : 'Select all (nothing to update)'
+                  }),
+                  React.createElement('div', { className: 'flex flex-col gap-1 mb-2 max-h-[50vh] overflow-y-auto' },
                     rows.map((row) => {
                         const verdict = verdicts[row.id] || { verdict: 'unknown', label: 'No reply' };
                         const p = progress[row.id];
@@ -207,6 +233,7 @@ const FirmwareUpdateDialog = ({ open, onClose, initialIds }) => {
                             )
                         );
                     })
+                  )
                 ),
         React.createElement(Toggle, {
             className: 'text-xs text-muted mb-1',
