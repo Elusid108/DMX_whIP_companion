@@ -13,6 +13,7 @@ const {
     formatAddr,
     normalizePixels,
     pixelsSummary,
+    strappingWarning,
     validatePixels
 } = require('../../../services/shared/pixelMap');
 
@@ -21,9 +22,9 @@ const ARTPOLL_WAIT_MS = 30000;
 
 const { Field, IconButton, Icons, ProgressBar } = require('../ui');
 
-const pinValue = (value) => {
+const pinValue = (value, max = 48) => {
     const n = Number(value);
-    return Number.isInteger(n) && n >= 0 && n <= 48 ? n : 0;
+    return Number.isInteger(n) && n >= 0 && n <= max ? n : 0;
 };
 
 const emptyRow = (port, selected) => ({
@@ -96,7 +97,7 @@ const waitForArtPoll = (mac, timeoutMs) => new Promise((resolve) => {
 const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
     const [rows, setRows] = useState([]);
     const [boards, setBoards] = useState([]);
-    const [boardId, setBoardId] = useState('waveshare-s3-matrix');
+    const [boardId, setBoardId] = useState('');
     const [sdPins, setSdPins] = useState({ cs: 7, mosi: 6, clk: 5, miso: 4 });
     const [pixels, setPixels] = useState(DEFAULT_PIXELS);
     const [namePattern, setNamePattern] = useState('Whip');
@@ -312,15 +313,22 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
         nameOpts
     ).long;
 
+    const board = boards.find((item) => item.id === boardId) || null;
+    const gpio = (board && board.gpio) || null;
+    const gpioMax = (gpio && gpio.max) || 48;
+    const strapWarning = strappingWarning(pixels, gpio);
+    // Only boards with a panel that can overheat (catalog brightnessWarn > 0).
+    const heatWarn = !board || Number(board.brightnessWarn) !== 0;
+
     const bandWarning = useMemo(() => {
-        if (!ssid) {
+        if (!ssid || (board && board.wifi5g)) {
             return '';
         }
         if (wlan.current && wlan.current.ssid === ssid && wlan.current.is24ghz === false) {
             return 'This PC is on 5 GHz. Current firmware STA scan is 2.4 GHz only — it will fail if this SSID has no 2.4 GHz radio.';
         }
         return '';
-    }, [ssid, wlan.current]);
+    }, [ssid, wlan.current, board]);
 
     const handleBoardChange = (nextId) => {
         setBoardId(nextId);
@@ -341,7 +349,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
     };
 
     const handlePin = (key, raw) => {
-        const next = { ...sdPins, [key]: pinValue(raw) };
+        const next = { ...sdPins, [key]: pinValue(raw, gpioMax) };
         setSdPins(next);
         persist({ flashSdPins: next });
     };
@@ -518,7 +526,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             setError('Select at least one COM port');
             return;
         }
-        const pixelCheck = validatePixels(pixels, sdPins, targets.length);
+        const pixelCheck = validatePixels(pixels, sdPins, targets.length, gpio);
         if (!pixelCheck.ok) {
             setError(pixelCheck.error);
             return;
@@ -676,7 +684,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
         React.createElement('input', {
             type: 'number',
             min: 0,
-            max: 48,
+            max: gpioMax,
             className: 'field',
             value: sdPins[key],
             disabled: busy,
@@ -1069,7 +1077,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                     React.createElement('input', {
                         type: 'number',
                         min: 0,
-                        max: 48,
+                        max: gpioMax,
                         className: 'field',
                         value: pixels.data,
                         disabled: busy,
@@ -1081,7 +1089,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                         React.createElement('input', {
                             type: 'number',
                             min: 0,
-                            max: 48,
+                            max: gpioMax,
                             className: 'field',
                             value: pixels.clk,
                             disabled: busy,
@@ -1137,7 +1145,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             React.createElement('p', {
                 className: 'readout'
             }, pixelsSummary(pixels)),
-            pixels.bri > BRIGHTNESS_WARN && React.createElement('p', {
+            strapWarning && React.createElement('p', {
+                className: 'text-sm text-warn'
+            }, strapWarning),
+            heatWarn && pixels.bri > BRIGHTNESS_WARN && React.createElement('p', {
                 className: 'text-sm text-warn'
             }, `Brightness ${pixels.bri} is above ${BRIGHTNESS_WARN}. This panel can overheat.`),
             artifactNote && React.createElement('p', {

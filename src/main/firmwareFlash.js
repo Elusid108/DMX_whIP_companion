@@ -469,7 +469,7 @@ function setupFirmwareFlashHandlers(mainWindow) {
                 let pixelChip = null;
                 let addr = null;
                 if (!keepExisting) {
-                    const pixelCheck = validatePixels(pixels, sdPins, seqIndex + 1);
+                    const pixelCheck = validatePixels(pixels, sdPins, seqIndex + 1, board.gpio);
                     if (!pixelCheck.ok) {
                         throw new Error(pixelCheck.error);
                     }
@@ -600,9 +600,14 @@ function setupFirmwareFlashHandlers(mainWindow) {
                         const grand = totals.reduce((sum, n) => sum + n, 0);
                         await loader.writeFlash({
                             fileArray,
-                            flashMode: flash.mode || 'dio',
-                            flashFreq: flash.freq || '80m',
-                            flashSize: flash.size || '4MB',
+                            // Each image is built by its own PIO env, so its
+                            // header already has the right mode/freq/size.
+                            // esptool-js rewrites freq from one table for every
+                            // chip (80m -> 0xF), which is wrong for the C6
+                            // (80m = 0x0) and leaves its ROM in a WDT reset loop.
+                            flashMode: 'keep',
+                            flashFreq: 'keep',
+                            flashSize: 'keep',
                             eraseAll: false,
                             compress: true,
                             calculateMD5Hash: md5hex,

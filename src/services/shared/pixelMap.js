@@ -124,18 +124,52 @@ const sdPinList = (sdPins = {}) => [
     Number(sdPins.miso)
 ];
 
-const validDataGpio = (pin, sdPins) => {
+// Catalog board.gpio ({ max, reserved[], strapping[] }). Without one, the S3
+// rules the Matrix shipped with (USB 19/20, flash/PSRAM 26–32).
+const S3_GPIO_RULES = {
+    max: S3_GPIO_MAX,
+    reserved: [19, 20, 26, 27, 28, 29, 30, 31, 32],
+    strapping: []
+};
+
+const gpioRules = (rules) => {
+    if (!rules || typeof rules !== 'object') {
+        return S3_GPIO_RULES;
+    }
+    const max = Number(rules.max);
+    return {
+        max: Number.isInteger(max) && max > 0 ? max : S3_GPIO_MAX,
+        reserved: Array.isArray(rules.reserved) ? rules.reserved.map(Number) : [],
+        strapping: Array.isArray(rules.strapping) ? rules.strapping.map(Number) : []
+    };
+};
+
+const validDataGpio = (pin, sdPins, rules) => {
+    const gpio = gpioRules(rules);
     const n = Number(pin);
-    if (!Number.isInteger(n) || n < 0 || n > S3_GPIO_MAX) {
+    if (!Number.isInteger(n) || n < 0 || n > gpio.max) {
         return false;
     }
-    if (n === 19 || n === 20) {
-        return false;
-    }
-    if (n >= 26 && n <= 32) {
+    if (gpio.reserved.includes(n)) {
         return false;
     }
     return !sdPinList(sdPins).includes(n);
+};
+
+// Warning text when an LED pin is a strapping pin (can hold the chip in the
+// wrong boot mode if the strip pulls it at reset), else ''.
+const strappingWarning = (pixels = {}, rules) => {
+    const gpio = gpioRules(rules);
+    const chip = chipByName(pixels.chip);
+    const pins = [Number(pixels.data)];
+    if (chip && chip.needsClock) {
+        pins.push(Number(pixels.clk));
+    }
+    const hit = pins.filter((pin) => gpio.strapping.includes(pin));
+    if (!hit.length) {
+        return '';
+    }
+    return `GPIO ${hit.join(', ')} is a strapping pin. If the LED line pulls it low at power-up the board may not boot.`;
 };
 
 const normalizePixels = (raw = {}) => {
@@ -163,17 +197,17 @@ const normalizePixels = (raw = {}) => {
     };
 };
 
-const validatePixels = (raw, sdPins, nodeCount = 1) => {
+const validatePixels = (raw, sdPins, nodeCount = 1, rules) => {
     const pixels = normalizePixels(raw);
     const chip = chipByName(pixels.chip);
     if (!chip) {
         return { ok: false, error: 'Unknown IC type', pixels };
     }
-    if (!validDataGpio(pixels.data, sdPins)) {
+    if (!validDataGpio(pixels.data, sdPins, rules)) {
         return { ok: false, error: 'LED data GPIO is reserved or collides with an SD pin', pixels };
     }
     if (chip.needsClock) {
-        if (!validDataGpio(pixels.clk, sdPins)) {
+        if (!validDataGpio(pixels.clk, sdPins, rules)) {
             return { ok: false, error: 'Clock GPIO is reserved or collides with an SD pin', pixels };
         }
         if (pixels.clk === pixels.data) {
@@ -261,7 +295,7 @@ const validateOutputs = (raw, sdPins, caps = {}) => {
         return { ok: false, error: `More than ${maxPx} pixels`, outputs };
     }
     for (let i = 0; i < flat.length; i += 1) {
-        const check = validatePixels(flat[i], sdPins, 1);
+        const check = validatePixels(flat[i], sdPins, 1, caps.gpio);
         if (!check.ok) {
             return { ok: false, error: check.error, outputs };
         }
@@ -319,6 +353,8 @@ module.exports = {
     addressAt,
     formatAddr,
     validDataGpio,
+    gpioRules,
+    strappingWarning,
     normalizePixels,
     validatePixels,
     pixelsSummary,

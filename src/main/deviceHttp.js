@@ -134,6 +134,11 @@ const withHosts = async (ip, run, { idempotent = true } = {}) => {
     if (lastError && /HTTP|Invalid|Scan|password|ssid|bad /.test(lastError.message)) {
         return { success: false, error: lastError.message };
     }
+    // A timeout or refused connection is not live input (that answers 503 or
+    // error "live"); saying so hid a node stalled by its SD retry.
+    if (lastError) {
+        return { success: false, error: 'Node did not answer HTTP (timed out or refused). Check its Wi-Fi and serial log.' };
+    }
     return busyError();
 };
 
