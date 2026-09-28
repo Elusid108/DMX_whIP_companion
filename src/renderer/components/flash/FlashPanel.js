@@ -330,8 +330,17 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
         return '';
     }, [ssid, wlan.current, board]);
 
+    const refreshArtifacts = (id) => {
+        ipcRenderer.invoke('flash-catalog', { boardId: id }).then((catalogResult) => {
+            if (catalogResult && catalogResult.success) {
+                applyArtifacts(catalogResult.artifacts);
+            }
+        }).catch(() => {});
+    };
+
     const handleBoardChange = (nextId) => {
         setBoardId(nextId);
+        refreshArtifacts(nextId);
         const next = boards.find((item) => item.id === nextId);
         if (next && next.defaults) {
             setSdPins(next.defaults.sd);
@@ -453,10 +462,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             if (result.source) {
                 applyArtifacts({ source: result.source });
             } else {
-                const catalogResult = await ipcRenderer.invoke('flash-catalog');
-                if (catalogResult && catalogResult.success) {
-                    applyArtifacts(catalogResult.artifacts);
-                }
+                refreshArtifacts(boardId);
             }
             const extra = result.warning ? ` ${result.warning}` : '';
             setBuildOk(true);
@@ -809,8 +815,9 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                     type: 'button',
                     className: 'btn-quiet w-full justify-center',
                     disabled: busy,
+                    title: 'Build every board (scripts/release.py) into one release bundle',
                     onClick: handleBuild
-                }, buildBusy ? 'Building…' : 'Build firmware'),
+                }, buildBusy ? 'Building all boards…' : 'Build all'),
                 buildStatus && React.createElement('p', {
                     className: buildOk
                         ? 'text-xs text-ok'

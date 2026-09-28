@@ -1,8 +1,11 @@
 const { SerialPort } = require('serialport');
 
 class NodeSerialDevice {
-    constructor(path) {
+    // usb: { vendorId, productId } as numbers from SerialPort.list(), so
+    // esptool-js can pick the USB-Serial/JTAG reset for native-USB chips.
+    constructor(path, usb = {}) {
         this.path = path;
+        this.usb = usb || {};
         this._port = null;
         this._chunks = [];
         this._waiters = [];
@@ -12,7 +15,7 @@ class NodeSerialDevice {
     }
 
     getInfo() {
-        return { usbVendorId: undefined, usbProductId: undefined };
+        return { usbVendorId: this.usb.vendorId, usbProductId: this.usb.productId };
     }
 
     _makeReadable() {

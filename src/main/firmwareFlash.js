@@ -1,4 +1,4 @@
-const { ipcMain, app } = require('electron');
+const { ipcMain } = require('electron');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -8,6 +8,8 @@ const { SerialPort } = require('serialport');
 const { postForm, SOFTAP_IP } = require('./deviceHttp');
 const { loadSettings, saveSettings } = require('./settings');
 const NodeSerialDevice = require('./nodeSerialDevice');
+const { repoRoot, siblingRoot, loadCatalog, boardById } = require('./firmwareCatalog');
+const { describeImage, readImageFile, resolveImage } = require('./firmwareImages');
 const { buildNvsImage, shouldWriteNvs } = require('./nvsImage');
 const { readWlan } = require('./wlanInfo');
 const { clipName, resolveNodeName, normalizeNameOpts } = require('../services/shared/flashName');
@@ -20,28 +22,6 @@ const {
 
 const DOWNLOAD_HINT = 'Hold BOOT, tap RESET, release BOOT, then try again. Close any serial monitor first.';
 const FLASH_CONCURRENCY = 4;
-
-const repoRoot = () => {
-    if (app && app.isPackaged) {
-        return process.resourcesPath;
-    }
-    return path.join(__dirname, '../..');
-};
-
-const catalogPath = () => path.join(repoRoot(), 'firmware', 'catalog.json');
-
-const loadCatalog = () => {
-    const raw = JSON.parse(fs.readFileSync(catalogPath(), 'utf8'));
-    if (!raw || !Array.isArray(raw.boards) || !raw.boards.length) {
-        throw new Error('firmware/catalog.json has no boards');
-    }
-    return raw;
-};
-
-const boardById = (catalog, id) => {
-    const wanted = id || (catalog.boards[0] && catalog.boards[0].id);
-    return catalog.boards.find((board) => board.id === wanted) || catalog.boards[0];
-};
 
 const chipKey = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -66,46 +46,16 @@ const md5hex = (image) => crypto.createHash('md5').update(Buffer.from(image)).di
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const allBins = (dir) => {
-    const files = {
-        bootloader: path.join(dir, 'bootloader.bin'),
-        partitions: path.join(dir, 'partitions.bin'),
-        firmware: path.join(dir, 'firmware.bin')
-    };
-    return Object.values(files).every((file) => fs.existsSync(file)) ? files : null;
-};
-
-const resolveArtifacts = (board) => {
-    const flashClass = board.artifact || board.flashClass;
-    const bundled = allBins(path.join(repoRoot(), 'firmware', 'artifacts', flashClass));
-    if (bundled) {
-        return { files: bundled, source: `firmware/artifacts/${flashClass}` };
-    }
-    const env = board.pioEnv || 'matrix';
-    const sibling = allBins(path.join(repoRoot(), '..', 'DMX_whIP_embedded', '.pio', 'build', env));
-    if (sibling) {
-        return { files: sibling, source: `DMX_whIP_embedded/.pio/build/${env}` };
-    }
-    throw new Error(
-        `No firmware image for ${flashClass}. Build [env:${env}] in DMX_whIP_embedded or copy bootloader.bin, partitions.bin, and firmware.bin into firmware/artifacts/${flashClass}/.`
-    );
-};
-
 const siblingFirmwareRoot = () => {
+    const { app } = require('electron');
     if (app && app.isPackaged) {
-        throw new Error('Build firmware is only available when running from the companion source tree.');
+        throw new Error('Build all is only available when running from the companion source tree.');
     }
-    const root = path.join(repoRoot(), '..', 'DMX_whIP_embedded');
+    const root = siblingRoot();
     if (!fs.existsSync(path.join(root, 'platformio.ini'))) {
         throw new Error('DMX_whIP_embedded not found next to this repo (missing platformio.ini).');
     }
     return root;
-};
-
-const pioEnvName = (board) => {
-    const raw = String((board && board.pioEnv) || 'matrix');
-    const env = raw.replace(/[^a-zA-Z0-9_-]/g, '');
-    return env || 'matrix';
 };
 
 const findOnPath = (names) => {
@@ -154,6 +104,14 @@ const findPio = () => {
     throw new Error('PlatformIO CLI not found. Install PlatformIO Core or open a shell where pio works.');
 };
 
+// release.py needs Python; PlatformIO's own (next to pio) always exists.
+const findPython = (pioPath) => {
+    const dir = path.dirname(pioPath);
+    const beside = ['python.exe', 'python3', 'python'].map((name) => path.join(dir, name));
+    const found = beside.find((file) => fs.existsSync(file));
+    return found || findOnPath(['python', 'python3', 'py']) || null;
+};
+
 const pipeLines = (stream, onLine) => {
     let rest = '';
     stream.on('data', (chunk) => {
@@ -175,13 +133,15 @@ const pipeLines = (stream, onLine) => {
     });
 };
 
-const runPioBuild = (pioPath, env, cwd, log) => {
-    log(`${pioPath} run -e ${env}`);
-    const child = spawn(pioPath, ['run', '-e', env], {
+// python scripts/release.py: builds every release env, writes dist/whip-<ver>/.
+const runRelease = (pythonPath, cwd, log) => {
+    const script = path.join('scripts', 'release.py');
+    log(`${pythonPath} ${script}`);
+    const child = spawn(pythonPath, ['-u', script], {
         cwd,
         windowsHide: true,
         shell: false,
-        env: process.env
+        env: { ...process.env, PYTHONUTF8: '1' }
     });
     const done = new Promise((resolve, reject) => {
         pipeLines(child.stdout, log);
@@ -192,17 +152,11 @@ const runPioBuild = (pioPath, env, cwd, log) => {
                 resolve();
                 return;
             }
-            if (signal) {
-                reject(new Error(`pio run -e ${env} ended (${signal})`));
-                return;
-            }
-            reject(new Error(`pio run -e ${env} exited ${code == null ? 'null' : code}`));
+            reject(new Error(signal ? `release build ended (${signal})` : `release build exited ${code == null ? 'null' : code}`));
         });
     });
     return { child, done };
 };
-
-const readBin = (filePath) => Uint8Array.from(fs.readFileSync(filePath));
 
 const pinsDiffer = (pins, defaults) => {
     if (!pins || !defaults) {
@@ -257,9 +211,21 @@ const loadEsptool = () => {
     }
 };
 
+// USB vendor/product id of a port as numbers. esptool-js picks its reset
+// sequence from the product id (0x1001 = the chip's own USB-Serial/JTAG).
+const usbIdsFor = async (portPath) => {
+    try {
+        const port = (await SerialPort.list()).find((item) => item.path === portPath);
+        const hex = (value) => (value ? parseInt(String(value), 16) : undefined);
+        return port ? { vendorId: hex(port.vendorId), productId: hex(port.productId) } : {};
+    } catch (err) {
+        return {};
+    }
+};
+
 const runLoader = async (portPath, { baudrate, log, work }) => {
     const { ESPLoader, Transport } = await loadEsptool();
-    const device = new NodeSerialDevice(portPath);
+    const device = new NodeSerialDevice(portPath, await usbIdsFor(portPath));
     const transport = new Transport(device, false);
     const loader = new ESPLoader({
         transport,
@@ -336,13 +302,14 @@ function setupFirmwareFlashHandlers(mainWindow) {
         send('flash-progress', { port: portPath, ...payload });
     };
 
-    ipcMain.handle('flash-catalog', async () => {
+    ipcMain.handle('flash-catalog', async (event, { boardId } = {}) => {
         try {
             const catalog = loadCatalog();
             const settings = loadSettings();
             let artifacts = null;
             try {
-                artifacts = resolveArtifacts(boardById(catalog, settings.flashBoardId));
+                const image = resolveImage(boardById(catalog, boardId || settings.flashBoardId));
+                artifacts = { source: describeImage(image), version: image.version };
             } catch (err) {
                 artifacts = { error: err.message };
             }
@@ -447,8 +414,8 @@ function setupFirmwareFlashHandlers(mainWindow) {
                 if (!board) {
                     throw new Error('Select a board profile');
                 }
-                const artifacts = resolveArtifacts(board);
-                const flash = board.flash || {};
+                const artifacts = resolveImage(board);
+                const { offsets, layout } = artifacts;
                 const sdPins = {
                     cs: Number(pins && pins.cs),
                     mosi: Number(pins && pins.mosi),
@@ -488,7 +455,7 @@ function setupFirmwareFlashHandlers(mainWindow) {
                         ...(ssidTrim ? { flashSsid: ssidTrim, flashPassword: passTrim } : {})
                     });
                 }
-                logPort(portPath, `Using image from ${artifacts.source}`);
+                logPort(portPath, `Using image from ${describeImage(artifacts)}`);
                 if (keepExisting) {
                     logPort(portPath, 'Keeping existing NVS (name, start address, Wi-Fi)');
                 }
@@ -524,21 +491,21 @@ function setupFirmwareFlashHandlers(mainWindow) {
                                 ? { long: givenLong, short: clipName(shortName || givenLong, 17) }
                                 : { long: '', short: '' });
                         const fileArray = [
-                            { data: readBin(artifacts.files.bootloader), address: Number(flash.bootloader) || 0 },
-                            { data: readBin(artifacts.files.partitions), address: Number(flash.partitions) || 0x8000 }
+                            { data: readImageFile(artifacts, 'bootloader'), address: offsets.bootloader },
+                            { data: readImageFile(artifacts, 'partitions'), address: offsets.partitions }
                         ];
                         // Blank otadata so the node boots the app written below
                         // (app0), even if an earlier OTA left it on app1.
-                        if (flash.otadata) {
+                        if (layout.otadata) {
                             fileArray.push({
-                                data: new Uint8Array(Number(flash.otadataSize) || 0x2000).fill(0xff),
-                                address: Number(flash.otadata)
+                                data: new Uint8Array(Number(layout.otadataSize) || 0x2000).fill(0xff),
+                                address: Number(layout.otadata)
                             });
                             logPort(portPath, 'Resetting the OTA boot slot');
                         }
                         if (writeNvs) {
-                            const nvsSize = Number(flash.nvsSize) || 20480;
-                            const nvsAddr = Number(flash.nvs) || 0x9000;
+                            const nvsSize = Number(layout.nvsSize) || 20480;
+                            const nvsAddr = Number(layout.nvs) || 0x9000;
                             const nvsOpts = {
                                 board: { pins: sdPins },
                                 pmap: {
@@ -593,8 +560,8 @@ function setupFirmwareFlashHandlers(mainWindow) {
                             nvsWritten = true;
                         }
                         fileArray.push({
-                            data: readBin(artifacts.files.firmware),
-                            address: Number(flash.app) || 0x10000
+                            data: readImageFile(artifacts, 'firmware'),
+                            address: offsets.app
                         });
                         const totals = fileArray.map((file) => file.data.length);
                         const grand = totals.reduce((sum, n) => sum + n, 0);
@@ -635,7 +602,7 @@ function setupFirmwareFlashHandlers(mainWindow) {
                     chip: result.chip,
                     mac: result.mac,
                     name: keepExisting ? '' : (result.names && result.names.long),
-                    artifacts: artifacts.source,
+                    artifacts: describeImage(artifacts),
                     provisioned: Boolean(!keepExisting && nvsWritten && ssidTrim && !clearWifi),
                     keptNvs: keepExisting,
                     nvsWritten,
@@ -649,6 +616,8 @@ function setupFirmwareFlashHandlers(mainWindow) {
         }
     });
 
+    // Build all: scripts/release.py in the sibling checkout builds every
+    // release board and writes one dist/whip-<ver>/ bundle.
     ipcMain.handle('flash-build', async (event, { boardId } = {}) => {
         if (buildInFlight) {
             return { success: false, error: 'A firmware build is already running' };
@@ -656,44 +625,26 @@ function setupFirmwareFlashHandlers(mainWindow) {
         buildInFlight = true;
         const log = (line) => logPort('build', line);
         try {
-            const catalog = loadCatalog();
-            const board = boardById(catalog, boardId);
-            const env = pioEnvName(board);
             const sibling = siblingFirmwareRoot();
-            const pioPath = findPio();
-            log(`Building [env:${env}] in ${sibling}`);
-            const started = runPioBuild(pioPath, env, sibling, log);
+            const python = findPython(findPio());
+            if (!python) {
+                throw new Error('Python not found (PlatformIO normally brings one). Run python scripts/release.py in DMX_whIP_embedded.');
+            }
+            log(`Building every release board in ${sibling} (the first build after a platformio.ini change takes about 10 minutes)`);
+            const started = runRelease(python, sibling, log);
             buildChild = started.child;
             await started.done;
-            const flashClass = board.artifact || board.flashClass;
-            const bundled = allBins(path.join(repoRoot(), 'firmware', 'artifacts', flashClass));
-            let artifacts = null;
+            let source = '';
+            let warning = '';
             try {
-                artifacts = resolveArtifacts(board);
+                const image = resolveImage(boardById(loadCatalog(), boardId));
+                source = describeImage(image);
+                log(`Build succeeded. Image: ${source}`);
             } catch (err) {
-                return {
-                    success: true,
-                    env,
-                    source: '',
-                    bundledPreferred: Boolean(bundled),
-                    warning: err.message
-                };
-            }
-            const warning = bundled
-                ? `Flash still uses firmware/artifacts/${flashClass} (copies take priority over this PIO build).`
-                : '';
-            if (warning) {
+                warning = err.message;
                 log(warning);
-            } else {
-                log(`Build succeeded. Image: ${artifacts.source}`);
             }
-            return {
-                success: true,
-                env,
-                source: artifacts.source,
-                bundledPreferred: Boolean(bundled),
-                warning
-            };
+            return { success: true, source, warning };
         } catch (error) {
             log(error.message);
             return { success: false, error: error.message };
