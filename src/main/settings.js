@@ -92,6 +92,9 @@ const normalize = (raw = {}) => ({
     flashShowSsid: typeof raw.flashShowSsid === 'string' ? raw.flashShowSsid : '',
     flashShowPass: typeof raw.flashShowPass === 'string' ? raw.flashShowPass : '',
     flashShowCh: clampInt(raw.flashShowCh, 1, 13, 6),
+    flashButtonPin: Number.isInteger(raw.flashButtonPin) && raw.flashButtonPin >= 0 && raw.flashButtonPin <= 48
+        ? raw.flashButtonPin
+        : null,
     monitor: normalizeMonitor(raw.monitor),
     // Output adapter for playback and Live (the Settings menu's Output NIC).
     outputNic: typeof raw.outputNic === 'string' && /^[\d.]{7,15}$/.test(raw.outputNic) ? raw.outputNic : '0.0.0.0',

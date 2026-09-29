@@ -15,6 +15,7 @@ const {
     normalizePixels,
     pixelsSummary,
     strappingWarning,
+    validateButton,
     validatePixels
 } = require('../../../services/shared/pixelMap');
 
@@ -127,6 +128,8 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
     const [showSsid, setShowSsid] = useState('');
     const [showPass, setShowPass] = useState('');
     const [showCh, setShowCh] = useState(6);
+    // Play / pause button GPIO: '' = none.
+    const [buttonPin, setButtonPin] = useState('');
     const [wlan, setWlan] = useState({ current: null, networks: [] });
     const [artifactNote, setArtifactNote] = useState('');
     const [artifactError, setArtifactError] = useState('');
@@ -307,6 +310,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             setShowSsid(settings.flashShowSsid || '');
             setShowPass(settings.flashShowPass || '');
             setShowCh(settings.flashShowCh || 6);
+            setButtonPin(Number.isInteger(settings.flashButtonPin) ? settings.flashButtonPin : '');
             const savedSsid = settings.flashSsid || '';
             setPassword(typeof settings.flashPassword === 'string' ? settings.flashPassword : '');
             if (savedSsid) {
@@ -395,6 +399,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
     const gpio = (board && board.gpio) || null;
     const gpioMax = (gpio && gpio.max) || 48;
     const strapWarning = strappingWarning(pixels, gpio);
+    const buttonError = validateButton(buttonPin === '' ? null : Number(buttonPin), pixels, sdPins, gpio).error;
     // Only boards with a panel that can overheat (catalog brightnessWarn > 0).
     const heatWarn = !board || Number(board.brightnessWarn) !== 0;
 
@@ -600,7 +605,8 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
     // The form's pins carried over to this row's board (by XIAO pad).
     const pinsForRow = (row, formPixels) => pinsForBoard(board, boardOf(row), {
         pixels: formPixels,
-        sdPins
+        sdPins,
+        button: buttonPin === '' ? null : Number(buttonPin)
     });
 
     const logLine = (line) => setLog((prev) => [...prev, line]);
@@ -625,8 +631,11 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             const rowBoard = boardOf(row);
             const mapped = pinsForRow(row, pixelCheck.pixels);
             const rowCheck = validatePixels(mapped.pixels, mapped.sdPins, targets.length, rowBoard && rowBoard.gpio);
-            if (!rowCheck.ok) {
-                setError(`${row.path} (${rowBoard ? rowBoard.name : 'board'}): ${rowCheck.error}`);
+            const btnCheck = rowCheck.ok
+                ? validateButton(mapped.button, mapped.pixels, mapped.sdPins, rowBoard && rowBoard.gpio)
+                : rowCheck;
+            if (!btnCheck.ok) {
+                setError(`${row.path} (${rowBoard ? rowBoard.name : 'board'}): ${btnCheck.error}`);
                 return;
             }
         }
@@ -643,6 +652,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             flashShowSsid: showSsid,
             flashShowPass: showPass,
             flashShowCh: showCh,
+            flashButtonPin: buttonPin === '' ? null : Number(buttonPin),
             flashBoardId: boardId
         });
         setLog([]);
@@ -678,6 +688,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 shortName: names.short,
                 clearWifi,
                 pixels: mapped.pixels,
+                buttonPin: mapped.button,
                 show: showRole === 'standalone'
                     ? null
                     : { role: showRole, ssid: showSsid.trim(), pass: showPass, ch: showCh }
@@ -1023,22 +1034,6 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                     })
                 )
             ),
-            React.createElement(Field, { label: 'Pins set for' },
-                React.createElement('select', {
-                    className: 'field',
-                    value: boardId,
-                    disabled: busy || boards.length < 2,
-                    onChange: (event) => handleBoardChange(event.target.value)
-                },
-                    boards.map((item) => React.createElement('option', {
-                        key: item.id,
-                        value: item.id
-                    }, item.name))
-                )
-            ),
-            React.createElement('p', {
-                className: 'readout -mt-1'
-            }, 'Each port flashes its own board (left rail). LED and SD pins here are for this board; other XIAO boards get the same pads (D0, D1, D7–D10), other boards their own defaults.'),
             React.createElement('p', {
                 className: 'readout -mt-1'
             }, nameMode === 'seq'
@@ -1150,14 +1145,6 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                     }),
                     'Clear saved Wi-Fi (omit STA keys)'
                 )
-            ),
-            React.createElement('div', {
-                className: 'grid grid-cols-4 gap-2'
-            },
-                pinField('cs', 'SD CS'),
-                pinField('mosi', 'SD MOSI'),
-                pinField('clk', 'SD CLK'),
-                pinField('miso', 'SD MISO')
             ),
             React.createElement('div', {
                 className: 'grid grid-cols-2 gap-2'
@@ -1288,6 +1275,58 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             heatWarn && pixels.bri > BRIGHTNESS_WARN && React.createElement('p', {
                 className: 'text-sm text-warn'
             }, `Brightness ${pixels.bri} is above ${BRIGHTNESS_WARN}. This panel can overheat.`),
+            React.createElement(Field, { label: 'Pins set for' },
+                React.createElement('select', {
+                    className: 'field',
+                    value: boardId,
+                    disabled: busy || boards.length < 2,
+                    onChange: (event) => handleBoardChange(event.target.value)
+                },
+                    boards.map((item) => React.createElement('option', {
+                        key: item.id,
+                        value: item.id
+                    }, item.name))
+                )
+            ),
+            React.createElement('p', {
+                className: 'readout -mt-1'
+            }, 'Each port flashes its own board (left rail). LED, SD and button pins are for this board; other XIAO boards get the same pads (D0, D1, D7–D10), other boards their own defaults (no button).'),
+            React.createElement('div', {
+                className: 'grid grid-cols-4 gap-2'
+            },
+                pinField('cs', 'SD CS'),
+                pinField('mosi', 'SD MOSI'),
+                pinField('clk', 'SD CLK'),
+                pinField('miso', 'SD MISO')
+            ),
+            React.createElement('div', {
+                className: 'grid grid-cols-4 gap-2'
+            },
+                React.createElement(Field, { label: 'Button GPIO' },
+                    React.createElement('input', {
+                        type: 'number',
+                        min: 0,
+                        max: gpioMax,
+                        placeholder: 'None',
+                        className: 'field',
+                        value: buttonPin,
+                        disabled: busy,
+                        title: 'Play / pause push button, wired from this pin to GND (internal pull-up). Empty = no button.',
+                        onChange: (event) => {
+                            const raw = event.target.value;
+                            const next = raw === '' ? '' : pinValue(raw, gpioMax);
+                            setButtonPin(next);
+                            persist({ flashButtonPin: next === '' ? null : next });
+                        }
+                    })
+                ),
+                React.createElement('p', {
+                    className: 'readout col-span-3 self-end pb-1.5'
+                }, 'Play / pause. Wire the button from this pin to GND. Empty = no button.')
+            ),
+            buttonError && React.createElement('p', {
+                className: 'text-sm text-danger'
+            }, buttonError),
             artifactNote && React.createElement('p', {
                 className: 'readout'
             }, `Image: ${artifactNote}`),

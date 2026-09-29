@@ -19,6 +19,7 @@ const {
     addressAt,
     chipByName,
     validatePixels,
+    validateButton,
     buildPmapBlob
 } = require('../services/shared/pixelMap');
 
@@ -472,6 +473,7 @@ function setupFirmwareFlashHandlers(mainWindow) {
         shortName,
         clearWifi,
         pixels,
+        buttonPin,
         keepNvs,
         show
     } = {}) => {
@@ -495,6 +497,7 @@ function setupFirmwareFlashHandlers(mainWindow) {
                     clk: Number(pins && pins.clk),
                     miso: Number(pins && pins.miso)
                 };
+                const button = Number.isInteger(buttonPin) && buttonPin >= 0 ? buttonPin : null;
                 const ssidTrim = keepExisting ? '' : clipName(ssid, 32);
                 const passTrim = keepExisting || password == null ? '' : String(password);
                 const pattern = keepExisting ? '' : clipName(namePattern, 40);
@@ -515,6 +518,10 @@ function setupFirmwareFlashHandlers(mainWindow) {
                     }
                     pixelMap = pixelCheck.pixels;
                     pixelChip = pixelCheck.chip || chipByName(pixelMap.chip);
+                    const buttonCheck = validateButton(button, pixelMap, sdPins, board.gpio);
+                    if (!buttonCheck.ok) {
+                        throw new Error(buttonCheck.error);
+                    }
                     addr = addressAt(pixelMap, seqIndex);
                     saveSettings({
                         flashPort: portPath,
@@ -580,7 +587,7 @@ function setupFirmwareFlashHandlers(mainWindow) {
                             const nvsSize = Number(layout.nvsSize) || 20480;
                             const nvsAddr = Number(layout.nvs) || 0x9000;
                             const nvsOpts = {
-                                board: { pins: sdPins },
+                                board: { pins: sdPins, button },
                                 pmap: {
                                     chip: pixelChip.id,
                                     ords: pixelMap.order,

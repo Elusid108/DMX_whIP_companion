@@ -1,7 +1,7 @@
 const React = require('react');
 const { useEffect, useMemo, useRef, useState } = React;
 const ipcRenderer = require('../../ipc');
-const { otaVerdict } = require('../../../services/shared/firmwareCompat');
+const { groupOtaRows, otaVerdict } = require('../../../services/shared/firmwareCompat');
 const { formatBytes } = require('../../../services/shared/format');
 const { Button, Checkbox, Dialog, EmptyState, ProgressBar, StatusPill, Toggle } = require('../ui');
 
@@ -130,6 +130,14 @@ const FirmwareUpdateDialog = ({ open, onClose, initialIds }) => {
         setSelected(allChosen ? [] : updatableIds);
     };
 
+    // Tick or untick every updatable node of one board.
+    const toggleGroup = (ids) => {
+        const all = ids.every((id) => selected.includes(id));
+        setSelected((current) => (all
+            ? current.filter((id) => !ids.includes(id))
+            : Array.from(new Set([...current, ...ids]))));
+    };
+
     const toggle = (id) => {
         setSelected((current) => (current.includes(id)
             ? current.filter((item) => item !== id)
@@ -162,6 +170,74 @@ const FirmwareUpdateDialog = ({ open, onClose, initialIds }) => {
     };
 
     const images = (plan && plan.images) || [];
+    const groups = groupOtaRows(rows, images);
+
+    const renderRow = (row) => {
+        const verdict = verdicts[row.id] || { verdict: 'unknown', label: 'No reply' };
+        const p = progress[row.id];
+        const value = progressValue(p);
+        return React.createElement('div', {
+            key: row.id,
+            className: 'kv-row flex-col items-stretch gap-1'
+        },
+            React.createElement('div', { className: 'flex items-center gap-2 min-w-0' },
+                React.createElement(Checkbox, {
+                    checked: selected.includes(row.id) && updatable(row.id),
+                    disabled: running || !updatable(row.id),
+                    onChange: () => toggle(row.id),
+                    'aria-label': `Update ${row.name}`
+                }),
+                React.createElement('div', { className: 'min-w-0 flex-1' },
+                    React.createElement('div', { className: 'text-sm truncate' }, row.name),
+                    React.createElement('div', { className: 'readout mt-0' },
+                        [
+                            row.ip,
+                            row.fw ? `v${row.fw.ver}${verdict.target && verdict.verdict !== 'current' ? ` → v${verdict.target}` : ''}` : row.error,
+                            row.fw && row.fw.ota && row.fw.ota.rolled_back ? 'rolled back last time' : ''
+                        ].filter(Boolean).join(' · '))
+                ),
+                React.createElement(StatusPill, {
+                    tone: TONES[verdict.verdict] || 'muted',
+                    title: verdict.label
+                }, verdict.label)
+            ),
+            p && React.createElement('div', { className: 'flex items-center gap-2' },
+                React.createElement(ProgressBar, {
+                    className: 'flex-1',
+                    value: p.phase === 'error' || p.phase === 'skipped' ? 0 : value,
+                    label: `${row.name} update`
+                }),
+                React.createElement('span', {
+                    className: `text-xs flex-none ${p.phase === 'error' ? 'text-danger' : (p.phase === 'done' ? 'text-ok' : 'text-muted')}`
+                }, progressText(p))
+            )
+        );
+    };
+
+    const renderGroup = (group) => {
+        const ids = group.rows.map((row) => row.id).filter(updatable);
+        const picked = ids.filter((id) => selected.includes(id)).length;
+        const note = group.image
+            ? `v${group.image.version} · ${formatBytes(group.image.size)} · ${group.image.source}`
+            : (group.board ? 'no image for this board in any release bundle' : '');
+        return React.createElement('div', { key: group.board || group.name, className: 'flex flex-col gap-1' },
+            React.createElement('div', { className: 'flex items-center gap-2 px-1 pt-1' },
+                React.createElement(Checkbox, {
+                    checked: ids.length > 0 && picked === ids.length,
+                    disabled: running || !ids.length,
+                    onChange: () => toggleGroup(ids),
+                    'aria-label': `Update every ${group.name}`
+                }),
+                React.createElement('div', { className: 'min-w-0 flex-1' },
+                    React.createElement('div', { className: 'text-xs font-medium truncate' },
+                        `${group.name} (${group.rows.length})`),
+                    note && React.createElement('div', { className: 'readout mt-0 truncate' }, note)
+                ),
+                ids.length > 0 && React.createElement('span', { className: 'readout flex-none' }, `${picked}/${ids.length}`)
+            ),
+            group.rows.map(renderRow)
+        );
+    };
 
     return React.createElement(Dialog, {
         open,
@@ -171,11 +247,9 @@ const FirmwareUpdateDialog = ({ open, onClose, initialIds }) => {
         title: 'Update firmware'
     },
         React.createElement('p', { className: 'text-xs text-muted mb-1' },
-            'Over Wi-Fi. Each node checks the image is for its board, reboots itself, and goes back to its old firmware if the new one does not come up cleanly.'),
-        React.createElement('div', { className: 'readout mb-2' },
-            images.length
-                ? images.map((image) => `${image.boardName} v${image.version} (${formatBytes(image.size)}, ${image.source})`).join(' · ')
-                : 'No firmware image found. Build it (Flash tab → Build firmware) or copy firmware.bin into firmware/artifacts/<board>/.'),
+            'Over Wi-Fi, any mix of boards: each node gets the image for the board it reports, checks it is for that board, reboots itself, and goes back to its old firmware if the new one does not come up cleanly.'),
+        !images.length && React.createElement('div', { className: 'readout mb-2' },
+            'No firmware image found. Flash tab → Build all, or put a release bundle in firmware/releases/.'),
         loading && !rows.length
             ? React.createElement(EmptyState, null, 'Reading the nodes…')
             : rows.length === 0
@@ -191,48 +265,8 @@ const FirmwareUpdateDialog = ({ open, onClose, initialIds }) => {
                           ? `Select all (${chosen.length} of ${updatableIds.length} to update)`
                           : 'Select all (nothing to update)'
                   }),
-                  React.createElement('div', { className: 'flex flex-col gap-1 mb-2 max-h-[50vh] overflow-y-auto' },
-                    rows.map((row) => {
-                        const verdict = verdicts[row.id] || { verdict: 'unknown', label: 'No reply' };
-                        const p = progress[row.id];
-                        const value = progressValue(p);
-                        return React.createElement('div', {
-                            key: row.id,
-                            className: 'kv-row flex-col items-stretch gap-1'
-                        },
-                            React.createElement('div', { className: 'flex items-center gap-2 min-w-0' },
-                                React.createElement(Checkbox, {
-                                    checked: selected.includes(row.id) && updatable(row.id),
-                                    disabled: running || !updatable(row.id),
-                                    onChange: () => toggle(row.id),
-                                    'aria-label': `Update ${row.name}`
-                                }),
-                                React.createElement('div', { className: 'min-w-0 flex-1' },
-                                    React.createElement('div', { className: 'text-sm truncate' }, row.name),
-                                    React.createElement('div', { className: 'readout mt-0' },
-                                        [
-                                            row.ip,
-                                            row.fw ? `v${row.fw.ver}${verdict.target && verdict.verdict !== 'current' ? ` → v${verdict.target}` : ''}` : row.error,
-                                            row.fw && row.fw.ota && row.fw.ota.rolled_back ? 'rolled back last time' : ''
-                                        ].filter(Boolean).join(' · '))
-                                ),
-                                React.createElement(StatusPill, {
-                                    tone: TONES[verdict.verdict] || 'muted',
-                                    title: verdict.label
-                                }, verdict.label)
-                            ),
-                            p && React.createElement('div', { className: 'flex items-center gap-2' },
-                                React.createElement(ProgressBar, {
-                                    className: 'flex-1',
-                                    value: p.phase === 'error' || p.phase === 'skipped' ? 0 : value,
-                                    label: `${row.name} update`
-                                }),
-                                React.createElement('span', {
-                                    className: `text-xs flex-none ${p.phase === 'error' ? 'text-danger' : (p.phase === 'done' ? 'text-ok' : 'text-muted')}`
-                                }, progressText(p))
-                            )
-                        );
-                    })
+                  React.createElement('div', { className: 'flex flex-col gap-2 mb-2 max-h-[50vh] overflow-y-auto' },
+                    groups.map(renderGroup)
                   )
                 ),
         React.createElement(Toggle, {
@@ -243,7 +277,7 @@ const FirmwareUpdateDialog = ({ open, onClose, initialIds }) => {
             onChange: setIncludeBusy
         }),
         React.createElement('p', { className: 'text-xs text-muted mb-2' },
-            'Up to three nodes update at once. Nodes on firmware older than 0.44 need one USB flash from the Flash tab first.'),
+            'Up to three nodes update at once, whatever their board. Nodes on firmware older than 0.44 need one USB flash from the Flash tab first.'),
         error && React.createElement('p', { className: 'text-sm text-danger mb-2' }, error),
         React.createElement('div', { className: 'flex gap-1.5' },
             React.createElement(Button, {

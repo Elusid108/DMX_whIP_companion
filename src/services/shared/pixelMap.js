@@ -156,6 +156,23 @@ const validDataGpio = (pin, sdPins, rules) => {
     return !sdPinList(sdPins).includes(n);
 };
 
+// Play / pause button GPIO (null = none): a free, non-reserved pin that is
+// not an SD pin or the LED data / clock pin.
+const validateButton = (button, pixels = {}, sdPins, rules) => {
+    if (button == null || button === '') {
+        return { ok: true, error: '' };
+    }
+    const pin = Number(button);
+    if (!validDataGpio(pin, sdPins, rules)) {
+        return { ok: false, error: `Button GPIO ${pin} is reserved or is an SD pin` };
+    }
+    const chip = chipByName(pixels.chip);
+    if (pin === Number(pixels.data) || (chip && chip.needsClock && pin === Number(pixels.clk))) {
+        return { ok: false, error: `Button GPIO ${pin} is the LED data or clock pin` };
+    }
+    return { ok: true, error: '' };
+};
+
 // Warning text when an LED pin is a strapping pin (can hold the chip in the
 // wrong boot mode if the strip pulls it at reset), else ''.
 const strappingWarning = (pixels = {}, rules) => {
@@ -355,6 +372,7 @@ module.exports = {
     validDataGpio,
     gpioRules,
     strappingWarning,
+    validateButton,
     normalizePixels,
     validatePixels,
     pixelsSummary,

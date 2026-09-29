@@ -26,7 +26,7 @@ const {
     postUpload,
     scanWifi
 } = require('../deviceHttp');
-const { listImages } = require('../firmwareImages');
+const { listImages, verifyListedImage } = require('../firmwareImages');
 const { otaVerdict } = require('../../services/shared/firmwareCompat');
 const { patchFromStatus } = require('../../services/shared/monitorOverlay');
 
@@ -587,6 +587,14 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         const progress = (id, payload) => sendToRenderer('device-ota-progress', { id, ...payload });
         try {
             const images = listImages();
+            // Each board's image is read and checked once, before any node gets it.
+            const verified = new Map();
+            const imageOk = (image) => {
+                if (!verified.has(image.board)) {
+                    verified.set(image.board, verifyListedImage(image));
+                }
+                return verified.get(image.board);
+            };
             const results = await runPool(list, OTA_PARALLEL, async (node) => {
                 progress(node.id, { phase: 'connecting' });
                 const statusResult = await fetchStatus(node.ip);
@@ -596,6 +604,11 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
                 if (verdict.verdict !== 'update') {
                     progress(node.id, { phase: 'skipped', message: verdict.label });
                     return { id: node.id, success: false, skipped: true, error: verdict.label };
+                }
+                if (!imageOk(image)) {
+                    const message = `The ${image.boardName} image in ${image.source} does not match its manifest; rebuild it`;
+                    progress(node.id, { phase: 'error', message });
+                    return { id: node.id, success: false, error: message };
                 }
                 const result = await postFirmware(node.ip, image.path, (payload) => progress(node.id, payload), {
                     force: Boolean(includeBusy && verdict.busy),

@@ -179,6 +179,8 @@ const buildNvsImage = (opts = {}, size = 20480) => {
         writePrimitiveU8(state, board, 'sd_mosi', pins.mosi);
         writePrimitiveU8(state, board, 'sd_clk', pins.clk);
         writePrimitiveU8(state, board, 'sd_miso', pins.miso);
+        // Play / pause button GPIO; 255 = none (firmware kGpioUnset).
+        writePrimitiveU8(state, board, 'btn', opts.board.button == null ? 255 : opts.board.button);
     }
 
     if (opts.pmap) {

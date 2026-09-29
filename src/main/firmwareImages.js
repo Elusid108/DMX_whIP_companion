@@ -220,7 +220,7 @@ const readImageFile = (image, role) => {
     return Uint8Array.from(data);
 };
 
-// OTA: { [boardId]: { board, boardName, version, api, size, path, source } }
+// OTA: { [boardId]: { board, boardName, version, api, size, path, source, sha256 } }
 // for every catalog board with a tagged image.
 const listImages = () => {
     let catalog;
@@ -242,10 +242,24 @@ const listImages = () => {
             api: image.api,
             size: image.size,
             path: image.path,
-            source: image.source
+            source: image.source,
+            sha256: image.sha256 ? image.sha256.firmware : null
         };
     });
     return out;
 };
 
-module.exports = { imageFor, resolveImage, readImageFile, describeImage, listImages };
+// OTA: true when an image from listImages still matches its bundle sha256
+// (loose images have none to check).
+const verifyListedImage = (image) => {
+    if (!image || !image.sha256) {
+        return Boolean(image);
+    }
+    try {
+        return crypto.createHash('sha256').update(fs.readFileSync(image.path)).digest('hex') === image.sha256;
+    } catch (err) {
+        return false;
+    }
+};
+
+module.exports = { imageFor, resolveImage, readImageFile, describeImage, listImages, verifyListedImage };

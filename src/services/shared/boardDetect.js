@@ -71,9 +71,9 @@ const matchBoard = (boards, { chip, flashSize, vendorId, productId } = {}) => {
 // Carry a pin setup made for formBoard over to rowBoard. A pin on a XIAO pad
 // (silk D0, D1, D7-D10) moves to the same pad on the other XIAO; anything
 // else falls back to the row board's own default.
-const pinsForBoard = (formBoard, rowBoard, { pixels = {}, sdPins = {} } = {}) => {
+const pinsForBoard = (formBoard, rowBoard, { pixels = {}, sdPins = {}, button = null } = {}) => {
     if (!rowBoard || !formBoard || rowBoard.id === formBoard.id) {
-        return { pixels, sdPins, mapped: false };
+        return { pixels, sdPins, button, mapped: false };
     }
     const fromSilk = formBoard.silk || {};
     const toSilk = rowBoard.silk || {};
@@ -87,6 +87,10 @@ const pinsForBoard = (formBoard, rowBoard, { pixels = {}, sdPins = {} } = {}) =>
         }
         return fallback != null ? Number(fallback) : Number(pin);
     };
+    // A button off the pad map is dropped rather than guessed.
+    const buttonLabel = button == null
+        ? null
+        : Object.keys(fromSilk).find((key) => Number(fromSilk[key]) === Number(button));
     return {
         pixels: {
             ...pixels,
@@ -99,6 +103,7 @@ const pinsForBoard = (formBoard, rowBoard, { pixels = {}, sdPins = {} } = {}) =>
             clk: carry(sdPins.clk, sd.clk),
             miso: carry(sdPins.miso, sd.miso)
         },
+        button: buttonLabel && toSilk[buttonLabel] != null ? Number(toSilk[buttonLabel]) : null,
         mapped: true
     };
 };
