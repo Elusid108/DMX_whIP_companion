@@ -10,6 +10,8 @@ const { loadSettings, saveSettings } = require('./settings');
 const NodeSerialDevice = require('./nodeSerialDevice');
 const { repoRoot, siblingRoot, loadCatalog, boardById } = require('./firmwareCatalog');
 const { describeImage, readImageFile, resolveImage } = require('./firmwareImages');
+const { whipQuery } = require('./portProbe');
+const { matchBoard, usbClass } = require('../services/shared/boardDetect');
 const { buildNvsImage, shouldWriteNvs } = require('./nvsImage');
 const { readWlan } = require('./wlanInfo');
 const { clipName, resolveNodeName, normalizeNameOpts } = require('../services/shared/flashName');
@@ -344,6 +346,100 @@ function setupFirmwareFlashHandlers(mainWindow) {
         }
     });
 
+    // Chip, MAC and flash size from the ROM bootloader. resetAfter boots the
+    // app again (a probe); Identify leaves it for the flash that follows.
+    const esptoolIdentify = (portPath, { resetAfter = false } = {}) => runLoader(portPath, {
+        baudrate: 115200,
+        log: (line) => logPort(portPath, line),
+        work: async ({ loader }) => {
+            const chip = await loader.main('default_reset');
+            let mac = '';
+            let flashSize = '';
+            try {
+                mac = await loader.chip.readMac(loader);
+            } catch (err) {
+                mac = '';
+            }
+            try {
+                flashSize = await loader.detectFlashSize();
+            } catch (err) {
+                flashSize = '';
+            }
+            if (resetAfter) {
+                try {
+                    await loader.after('hard_reset');
+                } catch (err) {
+                    // the next flash resets it anyway
+                }
+            }
+            return {
+                chip: detectedChipName(chip, loader) || 'unknown',
+                mac,
+                flashSize
+            };
+        }
+    });
+
+    // Which board is on a port. First asks running whIP firmware ("whip id",
+    // no reset); with deep, a port that does not answer is read by esptool
+    // (resets into the bootloader and back) and matched against the catalog.
+    // source: fw | chip | guess | rp | '' (unknown).
+    ipcMain.handle('flash-probe', async (event, { port, deep } = {}) => {
+        const portPath = String(port || '').trim();
+        if (!portPath) {
+            return { success: false, error: 'Select a USB serial port' };
+        }
+        try {
+            return await withPort(portPath, async () => {
+                const catalog = loadCatalog();
+                const listed = (await SerialPort.list()).find((item) => item.path === portPath) || {};
+                const usb = usbClass(listed.vendorId, listed.productId);
+                const base = { success: true, port: portPath, usb };
+                const reply = await whipQuery(portPath, 'id');
+                if (reply && reply.ok) {
+                    const known = catalog.boards.some((board) => board.id === reply.board);
+                    logPort(portPath, `Firmware answered: ${reply.board} v${reply.ver} ${reply.name || ''}`.trim());
+                    return {
+                        ...base,
+                        source: 'fw',
+                        boardId: known ? reply.board : '',
+                        fwBoard: reply.board || '',
+                        fam: reply.fam || 'esp',
+                        chip: reply.chip || '',
+                        mac: reply.mac || '',
+                        name: reply.name || '',
+                        ver: reply.ver || ''
+                    };
+                }
+                if (usb === 'rp') {
+                    return { ...base, source: 'rp', fam: 'rp', boardId: '' };
+                }
+                if (!deep) {
+                    return { ...base, source: '', boardId: '' };
+                }
+                logPort(portPath, `No firmware answer on ${portPath}; reading the chip`);
+                const info = await esptoolIdentify(portPath, { resetAfter: true });
+                const match = matchBoard(catalog.boards, {
+                    chip: info.chip,
+                    flashSize: info.flashSize,
+                    vendorId: listed.vendorId,
+                    productId: listed.productId
+                });
+                return {
+                    ...base,
+                    source: match ? match.source : '',
+                    boardId: match ? match.boardId : '',
+                    fam: 'esp',
+                    chip: info.chip,
+                    mac: info.mac,
+                    flashSize: info.flashSize
+                };
+            });
+        } catch (error) {
+            return failResult(error);
+        }
+    });
+
     ipcMain.handle('flash-identify', async (event, { port } = {}) => {
         const portPath = String(port || '').trim();
         if (!portPath) {
@@ -352,30 +448,7 @@ function setupFirmwareFlashHandlers(mainWindow) {
         try {
             return await withPort(portPath, async () => {
                 logPort(portPath, `Identify ${portPath}`);
-                const info = await runLoader(portPath, {
-                    baudrate: 115200,
-                    log: (line) => logPort(portPath, line),
-                    work: async ({ loader }) => {
-                        const chip = await loader.main('default_reset');
-                        let mac = '';
-                        let flashSize = '';
-                        try {
-                            mac = await loader.chip.readMac(loader);
-                        } catch (err) {
-                            mac = '';
-                        }
-                        try {
-                            flashSize = await loader.detectFlashSize();
-                        } catch (err) {
-                            flashSize = '';
-                        }
-                        return {
-                            chip: detectedChipName(chip, loader) || 'unknown',
-                            mac,
-                            flashSize
-                        };
-                    }
-                });
+                const info = await esptoolIdentify(portPath);
                 saveSettings({ flashPort: portPath });
                 return { success: true, ...info, port: portPath };
             });
@@ -668,6 +741,7 @@ function setupFirmwareFlashHandlers(mainWindow) {
         ipcMain.removeHandler('flash-wlan');
         ipcMain.removeHandler('flash-set-settings');
         ipcMain.removeHandler('flash-identify');
+        ipcMain.removeHandler('flash-probe');
         ipcMain.removeHandler('flash-run');
         ipcMain.removeHandler('flash-build');
     };

@@ -3,6 +3,7 @@ const { createPortal } = require('react-dom');
 const { useEffect, useMemo, useRef, useState } = React;
 const ipcRenderer = require('../../ipc');
 const { resolveNodeName, normalizeNameOpts, normMac } = require('../../../services/shared/flashName');
+const { pinsForBoard, usbClass } = require('../../../services/shared/boardDetect');
 const {
     CHIPS,
     RGB_ORDERS,
@@ -42,8 +43,22 @@ const emptyRow = (port, selected) => ({
     downloadMode: false,
     provisioned: false,
     deviceId: '',
-    waiting: false
+    waiting: false,
+    // Board on this port: '' = the form's board. boardSource: fw (the running
+    // firmware said so), chip (esptool, one catalog match), guess, manual, rp.
+    boardId: '',
+    boardSource: '',
+    fwVer: '',
+    fam: ''
 });
+
+const SOURCE_LABEL = {
+    fw: 'firmware',
+    chip: 'chip',
+    guess: 'guess',
+    manual: 'set',
+    rp: 'RP2040/RP2350'
+};
 
 const runPool = async (items, worker) => {
     let index = 0;
@@ -149,6 +164,58 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
         setRows((prev) => prev.map((row) => (row.path === path ? { ...row, ...patch } : row)));
     };
 
+    // Row fields from a flash-probe result.
+    const probePatch = (result) => {
+        if (!result || !result.success) {
+            return {
+                label: 'Not detected',
+                error: (result && result.error) || 'Detect failed',
+                downloadMode: Boolean(result && result.downloadMode)
+            };
+        }
+        const patch = {
+            boardSource: result.source || '',
+            fam: result.fam || '',
+            fwVer: result.ver || '',
+            error: ''
+        };
+        if (result.boardId) {
+            patch.boardId = result.boardId;
+        }
+        if (result.chip) {
+            patch.chip = result.chip;
+        }
+        if (result.mac) {
+            patch.mac = result.mac;
+        }
+        if (result.source === 'fw') {
+            patch.label = result.boardId
+                ? `whIP v${result.ver}${result.name ? ` · ${result.name}` : ''}`
+                : `Unknown board ${result.fwBoard} v${result.ver}`;
+        } else if (result.source === 'rp') {
+            patch.label = 'RP2040/RP2350 — USB flashing comes later';
+        } else if (result.source === 'chip' || result.source === 'guess') {
+            patch.label = result.source === 'guess' ? 'Board guessed from chip; check it' : 'Board from chip';
+        } else {
+            patch.label = 'No answer — Detect reads the chip';
+        }
+        return patch;
+    };
+
+    // Quick "whip id" on ports that have not been asked yet (no reset).
+    const probedRef = useRef(new Set());
+    const quickProbe = async (paths) => {
+        const fresh = paths.filter((path) => !probedRef.current.has(path));
+        fresh.forEach((path) => probedRef.current.add(path));
+        await runPool(fresh, async (path) => {
+            const result = await ipcRenderer.invoke('flash-probe', { port: path, deep: false });
+            if (result && result.success && !result.source) {
+                return;
+            }
+            patchRow(path, probePatch(result));
+        });
+    };
+
     const refreshPorts = async () => {
         const result = await ipcRenderer.invoke('flash-ports');
         if (!result || !result.success) {
@@ -156,6 +223,17 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             return [];
         }
         const ports = result.ports || [];
+        const known = new Set(ports.map((port) => port.path));
+        probedRef.current.forEach((path) => {
+            if (!known.has(path)) {
+                probedRef.current.delete(path);
+            }
+        });
+        if (!batchBusy && !buildBusy) {
+            // Only USB ids that look like an ESP32 or RP board; other serial
+            // devices never get a stray line written to them.
+            quickProbe(ports.filter((port) => usbClass(port.vendorId, port.productId)).map((port) => port.path)).catch(() => {});
+        }
         setRows((prev) => {
             const byPath = new Map(prev.map((row) => [row.path, row]));
             return ports.map((port) => {
@@ -492,7 +570,8 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
         }
     };
 
-    const handleIdentify = () => runBatch(async () => {
+    // Firmware answer first; ports that do not answer are read by esptool.
+    const handleDetect = () => runBatch(async () => {
         const targets = selectedRows;
         if (!targets.length) {
             setError('Select at least one COM port');
@@ -503,28 +582,28 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             patchRow(row.path, {
                 error: '',
                 downloadMode: false,
-                label: 'Identifying',
+                label: 'Detecting',
                 lastLog: '',
                 percent: 0
             });
-            const result = await ipcRenderer.invoke('flash-identify', { port: row.path });
-            if (!result || !result.success) {
-                patchRow(row.path, {
-                    error: (result && result.error) || 'Identify failed',
-                    downloadMode: Boolean(result && result.downloadMode),
-                    label: 'Failed'
-                });
-                return;
+            const result = await ipcRenderer.invoke('flash-probe', { port: row.path, deep: true });
+            const patch = probePatch(result);
+            if (result && result.success && result.mac) {
+                patch.name = resolveNodeName(namePattern, result.mac, index, nameOpts).long;
             }
-            const names = resolveNodeName(namePattern, result.mac, index, nameOpts);
-            patchRow(row.path, {
-                chip: result.chip || '',
-                mac: result.mac || '',
-                name: names.long,
-                label: 'Identified'
-            });
+            patchRow(row.path, patch);
         });
     });
+
+    const boardOf = (row) => boards.find((item) => item.id === (row.boardId || boardId)) || board;
+
+    // The form's pins carried over to this row's board (by XIAO pad).
+    const pinsForRow = (row, formPixels) => pinsForBoard(board, boardOf(row), {
+        pixels: formPixels,
+        sdPins
+    });
+
+    const logLine = (line) => setLog((prev) => [...prev, line]);
 
     const handleFlash = () => runBatch(async () => {
         const targets = selectedRows;
@@ -536,6 +615,20 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
         if (!pixelCheck.ok) {
             setError(pixelCheck.error);
             return;
+        }
+        const rpRow = targets.find((row) => row.fam === 'rp');
+        if (rpRow) {
+            setError(`${rpRow.path} is an RP2040/RP2350. USB flashing for those comes in a later step; untick it.`);
+            return;
+        }
+        for (const row of targets) {
+            const rowBoard = boardOf(row);
+            const mapped = pinsForRow(row, pixelCheck.pixels);
+            const rowCheck = validatePixels(mapped.pixels, mapped.sdPins, targets.length, rowBoard && rowBoard.gpio);
+            if (!rowCheck.ok) {
+                setError(`${row.path} (${rowBoard ? rowBoard.name : 'board'}): ${rowCheck.error}`);
+                return;
+            }
         }
         persist({
             flashSsid: ssid,
@@ -565,10 +658,15 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 waiting: false,
                 provisioned: false
             });
+            const rowBoard = boardOf(row);
+            const mapped = pinsForRow(row, pixelCheck.pixels);
+            if (mapped.mapped) {
+                logLine(`${row.path}: ${rowBoard.name} gets LED data ${mapped.pixels.data}, SD CS/SCK/MISO/MOSI ${mapped.sdPins.cs}/${mapped.sdPins.clk}/${mapped.sdPins.miso}/${mapped.sdPins.mosi}`);
+            }
             const result = await ipcRenderer.invoke('flash-run', {
                 port: row.path,
-                boardId,
-                pins: sdPins,
+                boardId: rowBoard.id,
+                pins: mapped.sdPins,
                 ssid: clearWifi ? '' : ssid,
                 password: clearWifi ? '' : password,
                 namePattern,
@@ -579,7 +677,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 longName: names.long,
                 shortName: names.short,
                 clearWifi,
-                pixels: pixelCheck.pixels,
+                pixels: mapped.pixels,
                 show: showRole === 'standalone'
                     ? null
                     : { role: showRole, ssid: showSsid.trim(), pass: showPass, ch: showCh }
@@ -629,6 +727,11 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             setError('Select at least one COM port');
             return;
         }
+        const rpRow = targets.find((row) => row.fam === 'rp');
+        if (rpRow) {
+            setError(`${rpRow.path} is an RP2040/RP2350. USB flashing for those comes in a later step; untick it.`);
+            return;
+        }
         setLog([]);
         await runPool(targets, async (row) => {
             patchRow(row.path, {
@@ -642,7 +745,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             });
             const result = await ipcRenderer.invoke('flash-run', {
                 port: row.path,
-                boardId,
+                boardId: boardOf(row).id,
                 keepNvs: true
             });
             if (!result || !result.success) {
@@ -730,8 +833,9 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                     type: 'button',
                     className: 'btn-quiet w-full justify-center',
                     disabled: busy || !selectedRows.length,
-                    onClick: handleIdentify
-                }, batchBusy ? 'Working…' : `Identify selected (${selectedRows.length})`),
+                    title: 'Ask each port which board it is (reads the chip when no whIP firmware answers)',
+                    onClick: handleDetect
+                }, batchBusy ? 'Working…' : `Detect selected (${selectedRows.length})`),
                 React.createElement('button', {
                     type: 'button',
                     className: 'btn-primary w-full justify-center',
@@ -776,9 +880,32 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                             React.createElement('div', {
                                 className: 'readout truncate'
                             }, row.friendlyName),
+                            row.fam === 'rp'
+                                ? React.createElement('div', { className: 'readout text-warn' }, 'RP2040 / RP2350')
+                                : React.createElement('div', { className: 'flex items-center gap-1 mt-0.5' },
+                                    React.createElement('select', {
+                                        className: 'field py-0 text-xs min-w-0 flex-1',
+                                        value: row.boardId || boardId,
+                                        disabled: busy || !boards.length,
+                                        'aria-label': `Board on ${row.path}`,
+                                        onChange: (event) => patchRow(row.path, {
+                                            boardId: event.target.value,
+                                            boardSource: 'manual'
+                                        })
+                                    },
+                                        boards.map((item) => React.createElement('option', {
+                                            key: item.id,
+                                            value: item.id
+                                        }, item.name))
+                                    ),
+                                    React.createElement('span', {
+                                        className: `readout flex-none ${row.boardSource === 'guess' || !row.boardSource ? 'text-warn' : ''}`,
+                                        title: 'How this board was chosen'
+                                    }, SOURCE_LABEL[row.boardSource] || 'form')
+                                ),
                             React.createElement('div', {
                                 className: 'readout truncate'
-                            }, [row.chip, row.mac].filter(Boolean).join(' · ') || '—'),
+                            }, [row.chip, row.mac, row.fwVer && `v${row.fwVer}`].filter(Boolean).join(' · ') || '—'),
                             React.createElement('div', {
                                 className: 'readout truncate'
                             }, preview ? (addr ? `${preview} · ${addr}` : preview) : '—'),
@@ -896,7 +1023,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                     })
                 )
             ),
-            React.createElement(Field, { label: 'Board' },
+            React.createElement(Field, { label: 'Pins set for' },
                 React.createElement('select', {
                     className: 'field',
                     value: boardId,
@@ -909,6 +1036,9 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                     }, item.name))
                 )
             ),
+            React.createElement('p', {
+                className: 'readout -mt-1'
+            }, 'Each port flashes its own board (left rail). LED and SD pins here are for this board; other XIAO boards get the same pads (D0, D1, D7–D10), other boards their own defaults.'),
             React.createElement('p', {
                 className: 'readout -mt-1'
             }, nameMode === 'seq'

@@ -73,6 +73,7 @@ const INVOKE = new Set([
     'flash-ports',
     'flash-set-settings',
     'flash-identify',
+    'flash-probe',
     'flash-run',
     'flash-wlan',
     'flash-build',
