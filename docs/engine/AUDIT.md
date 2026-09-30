@@ -201,6 +201,13 @@ Companion-only (stays in `src/main/`): `main.js` (window, `compmedia`, MIDI perm
 
 Adapter: `src/main/engineHost.js` creates the engine, maps each IPC channel to an engine command/query (table), forwards engine events to `webContents.send` with today's payload shapes (the grid stream frame is decoded back to the 512-entry array with `null` for never-woken channels), and subscribes/unsubscribes the monitor events on `set-ui-view` so hidden tabs still get nothing.
 
+### As built (Phase J)
+
+- `src/engine/`: `api/` (version, envelope, router, inProcess), `settingsStore.js`, `library/store.js`, `monitor/universeMonitor.js`, `output/liveOutput.js`, `receive.js`, `recording.js`, `playback.js`, `fileTasks.js` + `fileWorker.js`, `index.js`, `headless.js`. `src/services/**` is required from there and stays in place.
+- Companion adapters: `src/main/engineHost.js` (engine lifetime, channel tables from `src/main/engineChannels.js`, event forwarding, view-gated subscriptions), `src/main/ipc/studioDialogs.js` (file picker, audio picker + ffmpeg, unsaved prompt), `src/main/ipc/library.js` (handlers, dialogs, `fs.watch`; helpers re-exported from the engine store), `src/main/ipc/network.js` (devices, push, OTA; ArtPoll through the engine), `src/main/ipc/cuebus.js`, `src/main/ipc/settings.js`, `src/main/firmwareFlash.js`, `src/main/settings.js` (Electron paths into the engine store).
+- Deleted: `src/main/ipc/live.js`, `src/main/ipc/recording.js`, `src/main/ipc/playback.js`, `src/main/monitor/`, `src/main/liveOutput.js`, `src/main/fileTasks.js`, `src/main/fileWorker.js`.
+- `src/main/engineChannels.test.js` proves every preload channel is an engine route or named companion-only, and every route has an engine handler.
+
 ## 6. Risks and things that make a move non-trivial
 
 1. **`playback.js` is one 2100-line closure.** Transport, EDL editing and punch-in share mutable `let` state and call each other directly. Splitting it is a real refactor; moving it whole keeps behavior but the module keeps its size. Deferred (NOTES.md).

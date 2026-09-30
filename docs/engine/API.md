@@ -229,4 +229,6 @@ Direction: R→M = renderer to main (`invoke` unless marked `send`), M→R = mai
 | cuebus-update | M→R | — | later phase |
 | flash-progress / flash-log | M→R | — | companion |
 
-The companion adapter (`src/main/engineHost.js`) keeps every channel name and payload shape above, so `src/preload.js` and the renderer are unchanged in Phase J.
+The companion adapter (`src/main/engineHost.js`, tables in `src/main/engineChannels.js`) keeps every channel name and payload shape above, so `src/preload.js` and the renderer are unchanged in Phase J. `src/main/engineChannels.test.js` reconciles the tables with the preload allow-lists on every `npm test`.
+
+Additional queries built for hosts and tests: `playback.state` (source, transport flags, playhead, frame count, duration, network, session summary) and `record.state` (recording, filePath, elapsedMs, totalFrames). The `record.stats` event carries `forced: true` on the start/stop emits so a host can forward those even while Studio is hidden.
