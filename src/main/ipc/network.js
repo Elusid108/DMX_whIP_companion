@@ -173,7 +173,7 @@ function setupNetworkHandlers(mainWindow, engineHost) {
             clearTimeout(emitTimer);
             emitTimer = null;
         }
-        if (!devicesUiWanted()) {
+        if (!devicesWanted()) {
             return;
         }
         sendToRenderer('devices-update', snapshotDevices());
@@ -187,9 +187,12 @@ function setupNetworkHandlers(mainWindow, engineHost) {
     const quietRecord = () => Boolean(
         getUiView().recording || (recordingHandler && recordingHandler.isRecording())
     );
+    // The engine owns the take now; a running take pauses device polling as
+    // the recorder's UI flag used to.
+    const devicesWanted = () => devicesUiWanted() && !quietRecord();
 
     const syncUiEmit = () => {
-        if (devicesUiWanted()) {
+        if (devicesWanted()) {
             startPoll();
         } else {
             stopPoll();
@@ -946,6 +949,7 @@ function setupNetworkHandlers(mainWindow, engineHost) {
     const stopBoundWatch = engineHost.onReceiversBound(() => {
         syncUiEmit();
     });
+    const stopRecordWatch = engineHost.onRecordingChange(syncUiEmit);
 
     const handleScan = () => {
         if (quietRecord()) {
@@ -973,6 +977,7 @@ function setupNetworkHandlers(mainWindow, engineHost) {
     return () => {
         stopPoll();
         stopBoundWatch();
+        stopRecordWatch();
         client.unsubscribe(pollReplySub);
         if (emitTimer) {
             clearTimeout(emitTimer);

@@ -128,7 +128,11 @@ function createEngineHost(mainWindow) {
         engine.receive.syncEmit();
     };
     const stopUiWatch = onUiViewChange(syncSubscriptions);
-    const stopRecordWatch = recordingHandler.onStateChange(syncSubscriptions);
+    const stopRecordWatch = recordingHandler.onStateChange(() => {
+        syncSubscriptions();
+        recordListeners.forEach((fn) => fn());
+    });
+    const recordListeners = new Set();
     syncSubscriptions();
 
     const close = () => {
@@ -167,6 +171,11 @@ function createEngineHost(mainWindow) {
         onReceiversBound: (fn) => {
             boundListeners.add(fn);
             return () => boundListeners.delete(fn);
+        },
+        // fn runs when the engine starts or stops a take.
+        onRecordingChange: (fn) => {
+            recordListeners.add(fn);
+            return () => recordListeners.delete(fn);
         },
         syncSubscriptions,
         close
