@@ -134,7 +134,7 @@ Behavior-preserving only: no new features. The engine is a Node package with no 
 - [x] Move Art-Net/sACN receive, send and monitor state behind the API
 - [x] Move clock-based playback and the live-output merge behind the API
 - [x] Convert the existing IPC handlers into thin adapters that call the engine
-- [ ] Add a loopback regression test: play a look, record it back, compare packets (alongside the sACN encoder check in npm test)
+- [x] Add a loopback regression test: play a look, record it back, compare packets (alongside the sACN encoder check in npm test)
 - [ ] Walk the README behaviors by hand (record, play, live merge, Push to SD, MIDI control) and note the results
 - [ ] Add a headless entry point that starts the engine with no window; verify it on a Pi 5 or any Linux box
 - [ ] Bump the minor version and update Current state
