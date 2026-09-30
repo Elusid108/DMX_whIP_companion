@@ -17,12 +17,11 @@ protocol.registerSchemesAsPrivileged([
 ]);
 const setupNetworkHandlers = require('./ipc/network');
 const setupCueBusHandlers = require('./ipc/cuebus');
-const setupRecordingHandlers = require('./ipc/recording');
-const setupPlaybackHandlers = require('./ipc/playback');
+const setupStudioDialogHandlers = require('./ipc/studioDialogs');
 const { setupLibraryHandlers } = require('./ipc/library');
 const setupSettingsHandlers = require('./ipc/settings');
 const setupFirmwareFlashHandlers = require('./firmwareFlash');
-const { stopFileTasks } = require('./fileTasks');
+const { stopFileTasks } = require('../engine/fileTasks');
 const { loadSettings, saveSettings } = require('./settings');
 const { createEngineHost, shutdownEngine } = require('./engineHost');
 
@@ -181,11 +180,11 @@ function createWindow() {
     });
     mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
-    const recordingHandler = setupRecordingHandlers(mainWindow);
-    const engineHost = createEngineHost(mainWindow, { recordingHandler });
-    const cleanupNetwork = setupNetworkHandlers(mainWindow, recordingHandler, engineHost);
+    const engineHost = createEngineHost(mainWindow);
+    const cleanupNetwork = setupNetworkHandlers(mainWindow, engineHost);
     const cleanupCueBus = setupCueBusHandlers(mainWindow);
-    const playback = setupPlaybackHandlers(mainWindow, recordingHandler, engineHost.engine.live);
+    const cleanupStudioDialogs = setupStudioDialogHandlers(mainWindow, engineHost);
+    const playback = engineHost.engine.playback;
     protocol.handle('compmedia', (request) => {
         try {
             const parsed = new URL(request.url);
@@ -199,20 +198,19 @@ function createWindow() {
             return new Response('Bad request', { status: 400 });
         }
     });
-    const cleanupLibrary = setupLibraryHandlers(mainWindow, recordingHandler);
+    const cleanupLibrary = setupLibraryHandlers(mainWindow, engineHost);
     const cleanupSettings = setupSettingsHandlers();
     const cleanupFlash = setupFirmwareFlashHandlers(mainWindow);
 
     mainWindow.on('closed', () => {
         protocol.unhandle('compmedia');
-        if (playback && playback.close) playback.close();
         if (cleanupNetwork) cleanupNetwork();
         if (cleanupCueBus) cleanupCueBus();
+        if (cleanupStudioDialogs) cleanupStudioDialogs();
         if (cleanupLibrary) cleanupLibrary();
         if (cleanupSettings) cleanupSettings();
-        engineHost.close();
         if (cleanupFlash) cleanupFlash();
-        if (recordingHandler && recordingHandler.close) recordingHandler.close();
+        engineHost.close();
         mainWindow = null;
     });
 

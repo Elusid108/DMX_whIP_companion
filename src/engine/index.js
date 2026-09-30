@@ -9,9 +9,12 @@ const { createInProcessClient } = require('./api/inProcess');
 const { ENGINE_API_VERSION } = require('./api/version');
 const { createReceive } = require('./receive');
 const { createDefaultLiveOutput } = require('./output/liveOutput');
+const { createRecording } = require('./recording');
+const { createPlayback } = require('./playback');
+const { createLibraryStore } = require('./library/store');
 const { getNetworkInterfaces } = require('../services/shared/networkUtils');
 
-const CAPABILITIES = ['monitor', 'live', 'stream'];
+const CAPABILITIES = ['monitor', 'live', 'stream', 'record', 'playback', 'library'];
 
 const createEngine = ({ settings, appVersion = '0.0.0', ports = {} } = {}) => {
     if (!settings || typeof settings.load !== 'function' || typeof settings.save !== 'function') {
@@ -24,6 +27,11 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports = {} } = {}) => {
         const s = settings.load();
         live.configure({ nic: s.outputNic, dest: s.live.dest });
     }
+    const library = createLibraryStore(settings);
+    const recording = createRecording({ router });
+    receive.setRecording(recording);
+    recording.onStateChange(() => receive.syncEmit());
+    const playback = createPlayback({ router, recording, liveOutput: live, library, ports });
 
     router.query('network.interfaces', () => getNetworkInterfaces());
 
@@ -67,7 +75,9 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports = {} } = {}) => {
             return;
         }
         closed = true;
+        playback.close();
         receive.close();
+        recording.close();
         live.shutdown();
         router.close();
     };
@@ -79,6 +89,9 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports = {} } = {}) => {
         ports,
         receive,
         live,
+        library,
+        recording,
+        playback,
         client: (options) => createInProcessClient(router, options),
         close
     };

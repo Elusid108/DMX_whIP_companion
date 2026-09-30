@@ -1,4 +1,6 @@
-const { ipcMain } = require('electron');
+// DMXREC capture: one open file, frames encoded as they arrive from the
+// receive path, chunked writes, stats at most every 100 ms. Moved from
+// src/main/ipc/recording.js; IPC became router commands and events.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -9,18 +11,21 @@ const {
     encodeFrame,
     shouldRecordUniverseFrame,
     universeKey
-} = require('../../services/shared/dmxRecording');
-const { maskedRecordData } = require('../../services/shared/recordTriggers');
-const { setUiView, studioVisible } = require('../uiView');
+} = require('../services/shared/dmxRecording');
+const { maskedRecordData } = require('../services/shared/recordTriggers');
 
-const sendSafe = (mainWindow, channel, payload) => {
-    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
-        return;
-    }
-    mainWindow.webContents.send(channel, payload);
-};
-
-function setupRecordingHandlers(mainWindow) {
+function createRecording({ router }) {
+    const emit = (name, payload) => router.emit(name, payload);
+    const stateListeners = new Set();
+    const notifyState = () => {
+        stateListeners.forEach((fn) => {
+            try {
+                fn(isRecording);
+            } catch (err) {
+                console.error('Recording state listener error:', err);
+            }
+        });
+    };
     let isRecording = false;
     let recordingPath = null;
     let fd = null;
@@ -87,16 +92,14 @@ function setupRecordingHandlers(mainWindow) {
         if (!force && now - lastStatsSent < 100) {
             return;
         }
-        if (!force && !studioVisible()) {
-            return;
-        }
         lastStatsSent = now;
         const cutoff = now - 1000;
         fpsTimes = fpsTimes.filter((time) => time > cutoff);
-        sendSafe(mainWindow, 'recording-stats-update', {
+        emit('record.stats', {
             currentFps: fpsTimes.length,
             totalFrames: frameCount,
-            droppedFrames
+            droppedFrames,
+            forced: Boolean(force)
         });
     };
 
@@ -115,7 +118,7 @@ function setupRecordingHandlers(mainWindow) {
         recordingPath = dest;
         isRecording = true;
         recordingOriginNs = process.hrtime.bigint();
-        setUiView({ recording: true });
+        notifyState();
         sendStats(true);
         return { success: true, filePath: dest };
     };
@@ -125,7 +128,7 @@ function setupRecordingHandlers(mainWindow) {
             return { success: false, error: 'Not recording', filePath: recordingPath, totalFrames: frameCount };
         }
         isRecording = false;
-        setUiView({ recording: false });
+        notifyState();
         suppressChannel = null;
         try {
             flushChunk();
@@ -141,44 +144,58 @@ function setupRecordingHandlers(mainWindow) {
             totalFrames: frameCount
         };
         if (emitSaved) {
-            sendSafe(mainWindow, 'recording-saved', result);
+            emit('record.saved', result);
         }
         return result;
     };
 
-    const onStartRecording = () => {
+    // record.start: the renderer's fire-and-forget start; errors are events.
+    router.command('record.start', ({ filePath } = {}) => {
         try {
-            const result = startAt(recordingPath);
+            const result = startAt(typeof filePath === 'string' && filePath ? filePath : recordingPath);
             if (!result.success) {
-                sendSafe(mainWindow, 'recording-error', { error: result.error });
+                emit('record.error', { error: result.error });
             }
+            return result;
         } catch (error) {
             closeFd();
             isRecording = false;
             console.error('Error starting recording:', error);
-            sendSafe(mainWindow, 'recording-error', { error: error.message });
+            emit('record.error', { error: error.message });
+            return { success: false, error: error.message };
         }
-    };
-    const onStopRecording = () => {
-        stopAt({ emitSaved: true });
-    };
-    ipcMain.on('start-recording', onStartRecording);
-    ipcMain.on('stop-recording', onStopRecording);
+    });
+    router.command('record.stop', ({ emitSaved } = {}) => stopAt({ emitSaved: emitSaved !== false }));
 
-    ipcMain.removeHandler('cancel-recording');
-    ipcMain.handle('cancel-recording', async () => {
+    const cancel = () => {
         if (!isRecording) {
             return { success: false, error: 'Not recording', filePath: recordingPath };
         }
         const filePath = recordingPath;
         isRecording = false;
-        setUiView({ recording: false });
+        notifyState();
         pending = [];
         pendingBytes = 0;
         closeFd();
         resetSession();
         return { success: true, filePath };
+    };
+    router.command('record.cancel', () => cancel());
+    router.command('record.setPath', ({ filePath } = {}) => {
+        if (isRecording) {
+            return { success: false, error: 'Already recording' };
+        }
+        recordingPath = filePath || null;
+        return { success: true, filePath: recordingPath };
     });
+    router.query('record.state', () => ({
+        recording: isRecording,
+        filePath: recordingPath,
+        elapsedMs: isRecording && recordingOriginNs != null
+            ? Number((process.hrtime.bigint() - recordingOriginNs) / 1000000n)
+            : 0,
+        totalFrames: frameCount
+    }));
 
     return {
         isRecording: () => isRecording,
@@ -248,6 +265,11 @@ function setupRecordingHandlers(mainWindow) {
         },
         start: (filePath) => startAt(filePath),
         stop: (options) => stopAt(options),
+        cancel,
+        onStateChange: (fn) => {
+            stateListeners.add(fn);
+            return () => stateListeners.delete(fn);
+        },
         getElapsedMs: () => {
             if (!isRecording || recordingOriginNs == null) {
                 return 0;
@@ -282,7 +304,7 @@ function setupRecordingHandlers(mainWindow) {
         close: () => {
             if (isRecording) {
                 isRecording = false;
-                setUiView({ recording: false });
+                notifyState();
                 try {
                     flushChunk();
                     writeFrameCount();
@@ -291,11 +313,9 @@ function setupRecordingHandlers(mainWindow) {
                 }
             }
             closeFd();
-            ipcMain.removeHandler('cancel-recording');
-            ipcMain.removeListener('start-recording', onStartRecording);
-            ipcMain.removeListener('stop-recording', onStopRecording);
+            stateListeners.clear();
         }
     };
 }
 
-module.exports = setupRecordingHandlers;
+module.exports = { createRecording };

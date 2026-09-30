@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const { getNetworkInterfaces } = require('../../services/shared/networkUtils');
 const { analyzePush, slicePlan } = require('../../services/shared/pushFit');
-const { runFileTask } = require('../fileTasks');
+const { runFileTask } = require('../../engine/fileTasks');
 const { getUiView, setUiView, onUiViewChange, devicesUiWanted } = require('../uiView');
 const { assertInLibrary, sanitizeBaseName, uniqueDmxPath, writeSidecar, ensureLibrary } = require('./library');
 const {
@@ -122,8 +122,9 @@ function whipRejectReason(reply) {
 
 // Devices, push, OTA and node HTTP. Receive and the universe monitor live
 // in the engine; this module hears ArtPollReply through the engine host.
-function setupNetworkHandlers(mainWindow, recordingHandler, engineHost) {
+function setupNetworkHandlers(mainWindow, engineHost) {
     const client = engineHost.client;
+    const recordingHandler = engineHost.recording;
     const devices = new Map();
     let pollTimer = null;
     let selectedNic = nicInfo('0.0.0.0');
