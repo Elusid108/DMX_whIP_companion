@@ -5,6 +5,7 @@ const {
     validDataGpio,
     validatePixels,
     validateOutputs,
+    validateSdPins,
     strappingWarning
 } = require('./pixelMap');
 
@@ -72,5 +73,20 @@ test('catalog boards are self-consistent', () => {
                 `${board.id} D7-D10`
             );
         }
+    });
+});
+
+test('SD pins follow the board', () => {
+    const rp = boardById('seeed-xiao-rp2040');
+    assert.strictEqual(validateSdPins(rp.defaults.sd, rp).ok, true);
+    // D4/D5/D6 (GPIO 6, 7, 0) are the other SPI0 pins on a XIAO RP2040.
+    assert.strictEqual(validateSdPins({ cs: 1, clk: 6, mosi: 7, miso: 0 }, rp).ok, true);
+    assert.match(validateSdPins({ cs: 1, clk: 26, mosi: 3, miso: 4 }, rp).error, /CLK must be GPIO 2, 6, 18, 22/);
+    assert.match(validateSdPins({ cs: 3, clk: 2, mosi: 3, miso: 4 }, rp).error, /different/);
+    const c6 = boardById('seeed-xiao-esp32-c6');
+    assert.strictEqual(validateSdPins(c6.defaults.sd, c6).ok, true);
+    assert.strictEqual(validateSdPins({ cs: 3, clk: 19, mosi: 18, miso: 20 }, c6).ok, false);
+    catalog.boards.forEach((board) => {
+        assert.strictEqual(validateSdPins(board.defaults.sd, board).ok, true, board.id);
     });
 });

@@ -84,3 +84,27 @@ test('a real release bundle parses (when one has been built)', (t) => {
         });
     });
 });
+
+test('an RP board carries a uf2', () => {
+    const rp = (over = {}) => ({
+        env: 'xiao-rp2040',
+        family: 'rp',
+        chip: 'rp2040',
+        uf2: {
+            file: 'seeed-xiao-rp2040/firmware.uf2',
+            familyId: '0xe48bff56',
+            size: 352768,
+            sha256: sha,
+            tag: 'WHIPFW:seeed-xiao-rp2040:0.53.0:3;',
+            ...over
+        }
+    });
+    const m = parseManifest(manifest({ boards: { 'seeed-xiao-rp2040': rp() } }));
+    const board = m.boards['seeed-xiao-rp2040'];
+    assert.strictEqual(board.family, 'rp');
+    assert.strictEqual(board.uf2.size, 352768);
+    assert.strictEqual(board.uf2.tag.version, '0.53.0');
+    assert.throws(() => parseManifest(manifest({ boards: { 'seeed-xiao-rp2040': rp({ tag: 'WHIPFW:other:0.53.0:3;' }) } })), /uf2 tag/);
+    assert.throws(() => parseManifest(manifest({ boards: { 'seeed-xiao-rp2040': rp({ file: '../x.uf2' }) } })), /missing uf2/);
+    assert.throws(() => parseManifest(manifest({ boards: { 'seeed-xiao-rp2040': { family: 'rp' } } })), /missing uf2/);
+});

@@ -13,6 +13,7 @@ const { parseManifest, pickNewest } = require('../services/shared/firmwareManife
 //   firmware/releases/<name>/manifest.json   release bundles shipped with the app
 //   ../DMX_whIP_embedded/dist/<name>/        bundles from scripts/release.py
 //   firmware/artifacts/<class>/              loose bootloader/partitions/firmware
+//                                            (RP boards: firmware.uf2 + firmware.bin)
 //   ../DMX_whIP_embedded/.pio/build/<env>/   the last PIO build of that env
 //
 // Bundles carry their own offsets and layout; loose images use the catalog's
@@ -88,9 +89,36 @@ const allBundles = () => [
     ...bundlesIn(path.join(siblingRoot(), 'dist'), 'DMX_whIP_embedded/dist')
 ];
 
+// RP2040 / RP2350: one firmware.uf2, copied onto the board's USB drive.
+const fromBundleRp = (bundle, board, entry) => {
+    const file = path.join(bundle.dir, ...entry.uf2.file.split('/'));
+    const stat = statOf(file);
+    if (!stat) {
+        return null;
+    }
+    return {
+        board: board.id,
+        family: 'rp',
+        version: bundle.manifest.version,
+        api: entry.uf2.tag.api,
+        source: bundle.source,
+        mtimeMs: stat.mtimeMs,
+        size: entry.uf2.size,
+        path: file,
+        files: { uf2: file },
+        sha256: { uf2: entry.uf2.sha256 }
+    };
+};
+
 const fromBundle = (bundle, board) => {
     const entry = bundle.manifest.boards[board.id];
-    if (!entry || entry.family !== 'esp') {
+    if (!entry || entry.family !== (board.family || 'esp')) {
+        return null;
+    }
+    if (entry.family === 'rp') {
+        return fromBundleRp(bundle, board, entry);
+    }
+    if (entry.family !== 'esp') {
         return null;
     }
     const abs = (part) => path.join(bundle.dir, ...part.file.split('/'));
@@ -139,7 +167,38 @@ const looseDirs = (board) => {
     return dirs;
 };
 
+// The tag is read from firmware.bin next to the UF2: inside a UF2 it can
+// straddle two blocks.
+const fromLooseRp = ({ dir, source }, board) => {
+    const uf2 = path.join(dir, 'firmware.uf2');
+    const stat = statOf(uf2);
+    if (!stat) {
+        return null;
+    }
+    const read = readTag(path.join(dir, 'firmware.bin'));
+    const tag = read && read.tag;
+    if (tag && tag.board !== board.id) {
+        return null;
+    }
+    return {
+        board: board.id,
+        family: 'rp',
+        version: tag ? tag.version : '0.0.0',
+        api: tag ? tag.api : 0,
+        tagged: Boolean(tag),
+        source,
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        path: uf2,
+        files: { uf2 },
+        sha256: null
+    };
+};
+
 const fromLoose = ({ dir, source }, board) => {
+    if (board.family === 'rp') {
+        return fromLooseRp({ dir, source }, board);
+    }
     const files = {
         bootloader: path.join(dir, 'bootloader.bin'),
         partitions: path.join(dir, 'partitions.bin'),
@@ -231,6 +290,10 @@ const listImages = () => {
     }
     const out = {};
     catalog.boards.forEach((board) => {
+        // No radio, no over-the-air update.
+        if (board.family === 'rp') {
+            return;
+        }
         const image = imageFor(board);
         if (!image || image.version === '0.0.0') {
             return;

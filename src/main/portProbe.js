@@ -36,7 +36,10 @@ const whipQuery = (portPath, cmd, { timeoutMs = 1500 } = {}) => new Promise((res
             text = text.slice(-8192);
         }
         const reply = parseWhipReply(text);
-        if (reply && reply.cmd === cmd.split(' ')[0]) {
+        // "set" answers with the settings as they now are, labelled "get";
+        // a refused "set" is labelled "set".
+        const sent = cmd.split(' ')[0];
+        if (reply && (reply.cmd === sent || (sent === 'set' && reply.cmd === 'get'))) {
             finish(reply);
         }
     });

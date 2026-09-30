@@ -156,6 +156,32 @@ const validDataGpio = (pin, sdPins, rules) => {
     return !sdPinList(sdPins).includes(n);
 };
 
+// SD pins against the board: inside its GPIO range, not reserved, all
+// different, and (RP2040 / RP2350, catalog board.sdSpi) on pins its SPI bus
+// can use. The firmware refuses anything else.
+const validateSdPins = (sdPins = {}, board = {}) => {
+    const rules = gpioRules(board.gpio);
+    const pins = sdPinList(sdPins);
+    if (pins.some((pin) => !Number.isInteger(pin) || pin < 0 || pin > rules.max || rules.reserved.includes(pin))) {
+        return { ok: false, error: 'An SD pin is out of range or reserved on this board' };
+    }
+    if (new Set(pins).size !== pins.length) {
+        return { ok: false, error: 'SD pins must all be different' };
+    }
+    const spi = board.sdSpi;
+    if (spi) {
+        const bad = ['clk', 'mosi', 'miso'].find((key) => Array.isArray(spi[key])
+            && !spi[key].includes(Number(sdPins[key])));
+        if (bad) {
+            return {
+                ok: false,
+                error: `SD ${bad.toUpperCase()} must be GPIO ${spi[bad].join(', ')} on this board`
+            };
+        }
+    }
+    return { ok: true, error: '' };
+};
+
 // Play / pause button GPIO (null = none): a free, non-reserved pin that is
 // not an SD pin or the LED data / clock pin.
 const validateButton = (button, pixels = {}, sdPins, rules) => {
@@ -373,6 +399,7 @@ module.exports = {
     gpioRules,
     strappingWarning,
     validateButton,
+    validateSdPins,
     normalizePixels,
     validatePixels,
     pixelsSummary,

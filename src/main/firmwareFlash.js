@@ -11,7 +11,8 @@ const NodeSerialDevice = require('./nodeSerialDevice');
 const { repoRoot, siblingRoot, loadCatalog, boardById } = require('./firmwareCatalog');
 const { describeImage, readImageFile, resolveImage } = require('./firmwareImages');
 const { whipQuery } = require('./portProbe');
-const { matchBoard, usbClass } = require('../services/shared/boardDetect');
+const { flashUf2, listUf2Drives, provision, waitForId } = require('./uf2Flash');
+const { boardForUf2, matchBoard, usbClass } = require('../services/shared/boardDetect');
 const { buildNvsImage, shouldWriteNvs } = require('./nvsImage');
 const { readWlan } = require('./wlanInfo');
 const { clipName, resolveNodeName, normalizeNameOpts } = require('../services/shared/flashName');
@@ -20,6 +21,7 @@ const {
     chipByName,
     validatePixels,
     validateButton,
+    validateSdPins,
     buildPmapBlob
 } = require('../services/shared/pixelMap');
 
@@ -266,9 +268,12 @@ const runLoader = async (portPath, { baudrate, log, work }) => {
     }
 };
 
+// Row id of an RP board waiting in its bootloader: it has a drive, no port.
+const uf2RowPath = (driveRoot) => `UF2 ${String(driveRoot).replace(/[\\/]+$/, '')}`;
+
 const listPorts = async () => {
     const ports = await SerialPort.list();
-    return ports.map((port) => ({
+    const rows = ports.map((port) => ({
         path: port.path,
         manufacturer: port.manufacturer || '',
         serialNumber: port.serialNumber || '',
@@ -276,6 +281,27 @@ const listPorts = async () => {
         productId: port.productId || '',
         friendlyName: port.friendlyName || port.path
     }));
+    let catalog = null;
+    try {
+        catalog = loadCatalog();
+    } catch (err) {
+        catalog = { boards: [] };
+    }
+    listUf2Drives().forEach((drive) => {
+        const board = boardForUf2(catalog.boards, drive);
+        rows.push({
+            path: uf2RowPath(drive.root),
+            drive: drive.root,
+            manufacturer: 'Raspberry Pi',
+            serialNumber: '',
+            vendorId: '2E8A',
+            productId: '',
+            friendlyName: `${drive.model || 'UF2 bootloader'} (${drive.root})`,
+            boardId: board ? board.id : '',
+            uf2Board: drive.boardId || ''
+        });
+    });
+    return rows;
 };
 
 const failResult = (error) => {
@@ -393,6 +419,18 @@ function setupFirmwareFlashHandlers(mainWindow) {
         try {
             return await withPort(portPath, async () => {
                 const catalog = loadCatalog();
+                const bootRow = (await listPorts()).find((item) => item.path === portPath && item.drive);
+                if (bootRow) {
+                    return {
+                        success: true,
+                        port: portPath,
+                        usb: 'rp',
+                        source: bootRow.boardId ? 'uf2' : 'rp',
+                        fam: 'rp',
+                        boardId: bootRow.boardId,
+                        chip: bootRow.uf2Board
+                    };
+                }
                 const listed = (await SerialPort.list()).find((item) => item.path === portPath) || {};
                 const usb = usbClass(listed.vendorId, listed.productId);
                 const base = { success: true, port: portPath, usb };
@@ -458,6 +496,73 @@ function setupFirmwareFlashHandlers(mainWindow) {
         }
     });
 
+    // RP2040 / RP2350: copy the UF2 onto the board's bootloader drive, then
+    // set it up over serial. Update (keepExisting) leaves its settings alone:
+    // they live in the board's filesystem, which a UF2 does not touch.
+    const runRp = async ({
+        portPath, drive, board, artifacts, keepExisting, pattern, givenLong, shortName,
+        seqIndex, nameOpts, pixelMap, addr, button, sdPins
+    }) => {
+        const log = (line) => logPort(portPath, line);
+        const progress = (payload) => progressPort(portPath, payload);
+        const data = readImageFile(artifacts, 'uf2');
+        const flashed = await flashUf2({
+            port: drive ? '' : portPath,
+            drive,
+            board,
+            data,
+            log,
+            progress
+        });
+        log(`Back on ${flashed.port}`);
+        progress({ percent: 94, label: 'Waiting for firmware' });
+        const id = await waitForId(flashed.port);
+        if (!id) {
+            throw new Error(`Firmware was copied but does not answer on ${flashed.port}. Unplug and plug the board in again.`);
+        }
+        if (id.board !== board.id) {
+            throw new Error(`The board answers as ${id.board}, not ${board.id}`);
+        }
+        log(`Running ${id.board} v${id.ver}`);
+        let name = id.name || '';
+        let settingsWritten = false;
+        if (keepExisting) {
+            log('Keeping the settings on the board (name, patch, brightness)');
+        } else {
+            progress({ percent: 96, label: 'Writing settings' });
+            const names = pattern
+                ? resolveNodeName(pattern, id.mac, seqIndex, nameOpts)
+                : (givenLong
+                    ? { long: givenLong, short: clipName(shortName || givenLong, 17) }
+                    : { long: '', short: '' });
+            const after = await provision(flashed.port, {
+                names,
+                bri: pixelMap.bri,
+                button,
+                sdPins,
+                pmapBlob: buildPmapBlob([{ ...pixelMap, startUni: addr.uni, startCh: addr.ch }])
+            }, log);
+            name = after.name || names.long;
+            settingsWritten = true;
+        }
+        progress({ percent: 100, label: 'Done' });
+        return {
+            success: true,
+            chip: id.chip || board.chip,
+            mac: id.mac || '',
+            name,
+            ver: id.ver || '',
+            artifacts: describeImage(artifacts),
+            port: flashed.port,
+            net: false,
+            provisioned: false,
+            keptNvs: keepExisting,
+            nvsWritten: settingsWritten,
+            pinsApplied: false,
+            pinsError: ''
+        };
+    };
+
     ipcMain.handle('flash-run', async (event, {
         port,
         boardId,
@@ -475,7 +580,8 @@ function setupFirmwareFlashHandlers(mainWindow) {
         pixels,
         buttonPin,
         keepNvs,
-        show
+        show,
+        drive
     } = {}) => {
         const portPath = String(port || '').trim();
         if (!portPath) {
@@ -522,6 +628,10 @@ function setupFirmwareFlashHandlers(mainWindow) {
                     if (!buttonCheck.ok) {
                         throw new Error(buttonCheck.error);
                     }
+                    const sdCheck = validateSdPins(sdPins, board);
+                    if (!sdCheck.ok) {
+                        throw new Error(sdCheck.error);
+                    }
                     addr = addressAt(pixelMap, seqIndex);
                     saveSettings({
                         flashPort: portPath,
@@ -536,6 +646,24 @@ function setupFirmwareFlashHandlers(mainWindow) {
                     });
                 }
                 logPort(portPath, `Using image from ${describeImage(artifacts)}`);
+                if (board.family === 'rp') {
+                    return runRp({
+                        portPath,
+                        drive: drive ? String(drive) : '',
+                        board,
+                        artifacts,
+                        keepExisting,
+                        pattern,
+                        givenLong,
+                        shortName,
+                        seqIndex,
+                        nameOpts,
+                        pixelMap,
+                        addr,
+                        button,
+                        sdPins
+                    });
+                }
                 if (keepExisting) {
                     logPort(portPath, 'Keeping existing NVS (name, start address, Wi-Fi)');
                 }

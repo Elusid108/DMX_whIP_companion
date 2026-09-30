@@ -16,7 +16,8 @@ const {
     pixelsSummary,
     strappingWarning,
     validateButton,
-    validatePixels
+    validatePixels,
+    validateSdPins
 } = require('../../../services/shared/pixelMap');
 
 const FLASH_CONCURRENCY = 4;
@@ -46,11 +47,13 @@ const emptyRow = (port, selected) => ({
     deviceId: '',
     waiting: false,
     // Board on this port: '' = the form's board. boardSource: fw (the running
-    // firmware said so), chip (esptool, one catalog match), guess, manual, rp.
-    boardId: '',
-    boardSource: '',
+    // firmware said so), chip (esptool, one catalog match), guess, manual,
+    // uf2 (an RP board waiting in its bootloader: a drive, no port), rp.
+    boardId: port.boardId || '',
+    boardSource: port.drive ? (port.boardId ? 'uf2' : 'rp') : '',
     fwVer: '',
-    fam: ''
+    fam: port.drive ? 'rp' : '',
+    drive: port.drive || ''
 });
 
 const SOURCE_LABEL = {
@@ -58,7 +61,8 @@ const SOURCE_LABEL = {
     chip: 'chip',
     guess: 'guess',
     manual: 'set',
-    rp: 'RP2040/RP2350'
+    uf2: 'bootloader',
+    rp: 'pick one'
 };
 
 const runPool = async (items, worker) => {
@@ -195,8 +199,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             patch.label = result.boardId
                 ? `whIP v${result.ver}${result.name ? ` · ${result.name}` : ''}`
                 : `Unknown board ${result.fwBoard} v${result.ver}`;
+        } else if (result.source === 'uf2') {
+            patch.label = 'In its bootloader, ready to flash';
         } else if (result.source === 'rp') {
-            patch.label = 'RP2040/RP2350 — USB flashing comes later';
+            patch.label = 'RP board that does not answer: pick RP2040 or RP2350';
         } else if (result.source === 'chip' || result.source === 'guess') {
             patch.label = result.source === 'guess' ? 'Board guessed from chip; check it' : 'Board from chip';
         } else {
@@ -400,6 +406,8 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
     const gpioMax = (gpio && gpio.max) || 48;
     const strapWarning = strappingWarning(pixels, gpio);
     const buttonError = validateButton(buttonPin === '' ? null : Number(buttonPin), pixels, sdPins, gpio).error;
+    const sdError = board ? validateSdPins(sdPins, board).error : '';
+    const anyRp = rows.some((row) => row.selected && row.fam === 'rp');
     // Only boards with a panel that can overheat (catalog brightnessWarn > 0).
     const heatWarn = !board || Number(board.brightnessWarn) !== 0;
 
@@ -600,7 +608,54 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
         });
     });
 
-    const boardOf = (row) => boards.find((item) => item.id === (row.boardId || boardId)) || board;
+    const boardOf = (row) => {
+        const own = boards.find((item) => item.id === row.boardId);
+        if (own) {
+            return own;
+        }
+        if (row.fam === 'rp') {
+            return boards.find((item) => item.family === 'rp') || board;
+        }
+        return board;
+    };
+
+    // Boards a row can be: its own family once that is known.
+    const boardsFor = (row) => {
+        if (!row.fam) {
+            return boards;
+        }
+        const same = boards.filter((item) => (item.family || 'esp') === row.fam);
+        return same.length ? same : boards;
+    };
+
+    // A board with no radio takes no Wi-Fi settings and never shows on ArtPoll.
+    const finishRp = (row, result, label) => {
+        const next = {
+            chip: result.chip || row.chip,
+            mac: result.mac || row.mac,
+            name: result.name || row.name,
+            fwVer: result.ver || row.fwVer,
+            boardSource: 'fw',
+            boardId: boardOf(row).id,
+            percent: 100,
+            label: `${label} · standalone player${result.ver ? ` v${result.ver}` : ''}`,
+            provisioned: false,
+            waiting: false,
+            error: ''
+        };
+        const moved = result.port && result.port !== row.path;
+        if (!moved) {
+            patchRow(row.path, next);
+            return;
+        }
+        // The board came back on another port (always so for a bootloader row).
+        probedRef.current.add(result.port);
+        setRows((prev) => prev
+            .filter((item) => item.path !== result.port)
+            .map((item) => (item.path === row.path
+                ? { ...item, ...next, path: result.port, drive: '', friendlyName: result.port }
+                : item)));
+    };
 
     // The form's pins carried over to this row's board (by XIAO pad).
     const pinsForRow = (row, formPixels) => pinsForBoard(board, boardOf(row), {
@@ -622,20 +677,17 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             setError(pixelCheck.error);
             return;
         }
-        const rpRow = targets.find((row) => row.fam === 'rp');
-        if (rpRow) {
-            setError(`${rpRow.path} is an RP2040/RP2350. USB flashing for those comes in a later step; untick it.`);
-            return;
-        }
         for (const row of targets) {
             const rowBoard = boardOf(row);
             const mapped = pinsForRow(row, pixelCheck.pixels);
-            const rowCheck = validatePixels(mapped.pixels, mapped.sdPins, targets.length, rowBoard && rowBoard.gpio);
-            const btnCheck = rowCheck.ok
-                ? validateButton(mapped.button, mapped.pixels, mapped.sdPins, rowBoard && rowBoard.gpio)
-                : rowCheck;
-            if (!btnCheck.ok) {
-                setError(`${row.path} (${rowBoard ? rowBoard.name : 'board'}): ${btnCheck.error}`);
+            const checks = [
+                () => validatePixels(mapped.pixels, mapped.sdPins, targets.length, rowBoard && rowBoard.gpio),
+                () => validateButton(mapped.button, mapped.pixels, mapped.sdPins, rowBoard && rowBoard.gpio),
+                () => validateSdPins(mapped.sdPins, rowBoard || {})
+            ];
+            const failed = checks.map((check) => check()).find((check) => !check.ok);
+            if (failed) {
+                setError(`${row.path} (${rowBoard ? rowBoard.name : 'board'}): ${failed.error}`);
                 return;
             }
         }
@@ -689,6 +741,7 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                 clearWifi,
                 pixels: mapped.pixels,
                 buttonPin: mapped.button,
+                drive: row.drive || '',
                 show: showRole === 'standalone'
                     ? null
                     : { role: showRole, ssid: showSsid.trim(), pass: showPass, ch: showCh }
@@ -700,6 +753,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                     label: 'Failed',
                     percent: 0
                 });
+                return;
+            }
+            if (result.net === false) {
+                finishRp(row, result, 'Done');
                 return;
             }
             const flashedName = result.name || names.long;
@@ -738,11 +795,6 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             setError('Select at least one COM port');
             return;
         }
-        const rpRow = targets.find((row) => row.fam === 'rp');
-        if (rpRow) {
-            setError(`${rpRow.path} is an RP2040/RP2350. USB flashing for those comes in a later step; untick it.`);
-            return;
-        }
         setLog([]);
         await runPool(targets, async (row) => {
             patchRow(row.path, {
@@ -757,7 +809,8 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             const result = await ipcRenderer.invoke('flash-run', {
                 port: row.path,
                 boardId: boardOf(row).id,
-                keepNvs: true
+                keepNvs: true,
+                drive: row.drive || ''
             });
             if (!result || !result.success) {
                 patchRow(row.path, {
@@ -766,6 +819,10 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                     label: 'Failed',
                     percent: 0
                 });
+                return;
+            }
+            if (result.net === false) {
+                finishRp(row, result, 'Updated');
                 return;
             }
             patchRow(row.path, {
@@ -891,29 +948,27 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
                             React.createElement('div', {
                                 className: 'readout truncate'
                             }, row.friendlyName),
-                            row.fam === 'rp'
-                                ? React.createElement('div', { className: 'readout text-warn' }, 'RP2040 / RP2350')
-                                : React.createElement('div', { className: 'flex items-center gap-1 mt-0.5' },
-                                    React.createElement('select', {
-                                        className: 'field py-0 text-xs min-w-0 flex-1',
-                                        value: row.boardId || boardId,
-                                        disabled: busy || !boards.length,
-                                        'aria-label': `Board on ${row.path}`,
-                                        onChange: (event) => patchRow(row.path, {
-                                            boardId: event.target.value,
-                                            boardSource: 'manual'
-                                        })
-                                    },
-                                        boards.map((item) => React.createElement('option', {
-                                            key: item.id,
-                                            value: item.id
-                                        }, item.name))
-                                    ),
-                                    React.createElement('span', {
-                                        className: `readout flex-none ${row.boardSource === 'guess' || !row.boardSource ? 'text-warn' : ''}`,
-                                        title: 'How this board was chosen'
-                                    }, SOURCE_LABEL[row.boardSource] || 'form')
+                            React.createElement('div', { className: 'flex items-center gap-1 mt-0.5' },
+                                React.createElement('select', {
+                                    className: 'field py-0 text-xs min-w-0 flex-1',
+                                    value: boardOf(row) ? boardOf(row).id : '',
+                                    disabled: busy || !boards.length,
+                                    'aria-label': `Board on ${row.path}`,
+                                    onChange: (event) => patchRow(row.path, {
+                                        boardId: event.target.value,
+                                        boardSource: 'manual'
+                                    })
+                                },
+                                    boardsFor(row).map((item) => React.createElement('option', {
+                                        key: item.id,
+                                        value: item.id
+                                    }, item.name))
                                 ),
+                                React.createElement('span', {
+                                    className: `readout flex-none ${['guess', 'rp', ''].includes(row.boardSource) ? 'text-warn' : ''}`,
+                                    title: 'How this board was chosen'
+                                }, SOURCE_LABEL[row.boardSource] || 'form')
+                            ),
                             React.createElement('div', {
                                 className: 'readout truncate'
                             }, [row.chip, row.mac, row.fwVer && `v${row.fwVer}`].filter(Boolean).join(' · ') || '—'),
@@ -1327,6 +1382,12 @@ const FlashPanel = ({ onOpenDevice, railHost } = {}) => {
             buttonError && React.createElement('p', {
                 className: 'text-sm text-danger'
             }, buttonError),
+            sdError && React.createElement('p', {
+                className: 'text-sm text-danger'
+            }, sdError),
+            anyRp && React.createElement('p', {
+                className: 'readout'
+            }, 'RP2040 / RP2350 boards have no radio: Wi-Fi and show network settings are not sent to them. They get the name, pixel patch, brightness, button and SD pins over USB, and play from their SD card.'),
             artifactNote && React.createElement('p', {
                 className: 'readout'
             }, `Image: ${artifactNote}`),

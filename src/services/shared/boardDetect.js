@@ -17,7 +17,7 @@ const usbClass = (vendorId, productId) => {
     if (vid === '10C4' || vid === '1A86') {
         return 'esp-uart';
     }
-    if (vid === '2E8A') {
+    if (vid === '2E8A' || vid === '2886') {
         return 'rp';
     }
     return '';
@@ -128,4 +128,34 @@ const parseWhipReply = (text) => {
     return null;
 };
 
-module.exports = { usbClass, usbMatches, matchBoard, pinsForBoard, parseWhipReply };
+// INFO_UF2.TXT in the root of a UF2 bootloader drive:
+//   UF2 Bootloader v3.0
+//   Model: Raspberry Pi RP2
+//   Board-ID: RPI-RP2
+const parseUf2Info = (text) => {
+    const field = (name) => {
+        const m = new RegExp(`^${name}:\\s*(.+)$`, 'mi').exec(String(text || ''));
+        return m ? m[1].trim() : '';
+    };
+    return { model: field('Model'), boardId: field('Board-ID') };
+};
+
+// Catalog board for a UF2 bootloader drive (detect.uf2Board), or null.
+const boardForUf2 = (boards, info) => {
+    const got = String((info && info.boardId) || '').toUpperCase();
+    if (!got) {
+        return null;
+    }
+    return (boards || []).find((board) => board.family === 'rp'
+        && String((board.detect && board.detect.uf2Board) || '').toUpperCase() === got) || null;
+};
+
+module.exports = {
+    usbClass,
+    usbMatches,
+    matchBoard,
+    pinsForBoard,
+    parseWhipReply,
+    parseUf2Info,
+    boardForUf2
+};

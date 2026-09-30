@@ -7,6 +7,9 @@ const { compareVersions, parseFwTag } = require('./firmwareCompat');
 //   boards: { <boardId>: { env, family, chip, flash{mode,freq,size},
 //     layout{appSize,nvs,nvsSize,otadata,otadataSize},
 //     parts: [{ role, file, offset, size, sha256, tag? }] } } }
+//
+// An RP2040 / RP2350 board (family "rp") has no parts, only
+//   uf2: { file, familyId, size, sha256, tag }
 
 const MANIFEST_SCHEMA = 1;
 const ESP_ROLES = ['bootloader', 'partitions', 'app'];
@@ -62,6 +65,21 @@ const parseBoard = (id, raw, version) => {
             throw new Error(`${id}: app tag does not match board ${id} v${version}`);
         }
     }
+    let uf2 = null;
+    if (family === 'rp') {
+        const u = raw.uf2;
+        if (!u || typeof u !== 'object' || !safeFile(u.file)) {
+            throw new Error(`${id}: missing uf2`);
+        }
+        if (!isInt(u.size) || typeof u.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(u.sha256)) {
+            throw new Error(`${id}: bad uf2 size or sha256`);
+        }
+        const tag = u.tag ? parseFwTag(String(u.tag)) : null;
+        if (!tag || tag.board !== id || tag.version !== version) {
+            throw new Error(`${id}: uf2 tag does not match board ${id} v${version}`);
+        }
+        uf2 = { file: u.file, familyId: String(u.familyId || ''), size: u.size, sha256: u.sha256, tag };
+    }
     const layout = raw.layout && typeof raw.layout === 'object' ? raw.layout : {};
     return {
         id,
@@ -76,7 +94,8 @@ const parseBoard = (id, raw, version) => {
             otadata: isInt(layout.otadata) ? layout.otadata : null,
             otadataSize: isInt(layout.otadataSize) ? layout.otadataSize : null
         },
-        parts
+        parts,
+        uf2
     };
 };
 

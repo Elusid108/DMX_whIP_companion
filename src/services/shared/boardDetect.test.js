@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
-const { usbClass, usbMatches, matchBoard, pinsForBoard, parseWhipReply } = require('./boardDetect');
+const {
+    usbClass, usbMatches, matchBoard, pinsForBoard, parseWhipReply, parseUf2Info, boardForUf2
+} = require('./boardDetect');
 
 const catalog = require(path.join(__dirname, '..', '..', '..', 'firmware', 'catalog.json'));
 const boards = catalog.boards;
@@ -70,4 +72,26 @@ test('whip reply is found among log lines', () => {
     assert.strictEqual(parseWhipReply(text).board, 'seeed-xiao-esp32-c6');
     assert.strictEqual(parseWhipReply('[V][log] no reply'), null);
     assert.strictEqual(parseWhipReply('@whip {broken'), null);
+});
+
+test('UF2 drive names its chip', () => {
+    const rp2040 = parseUf2Info('UF2 Bootloader v3.0\r\nModel: Raspberry Pi RP2\r\nBoard-ID: RPI-RP2\r\n');
+    assert.deepStrictEqual(rp2040, { model: 'Raspberry Pi RP2', boardId: 'RPI-RP2' });
+    assert.strictEqual(boardForUf2(boards, rp2040).id, 'seeed-xiao-rp2040');
+    const rp2350 = parseUf2Info('UF2 Bootloader v1.0\nModel: Raspberry Pi RP2350\nBoard-ID: RP2350\n');
+    assert.strictEqual(boardForUf2(boards, rp2350).id, 'seeed-xiao-rp2350');
+    assert.strictEqual(boardForUf2(boards, parseUf2Info('nothing here')), null);
+});
+
+test('pins carry from an ESP32 XIAO to an RP XIAO by pad', () => {
+    const c5 = byId('seeed-xiao-esp32-c5');
+    const rp = byId('seeed-xiao-rp2040');
+    const out = pinsForBoard(c5, rp, {
+        pixels: { data: c5.silk.D0, clk: c5.silk.D1, count: 25 },
+        sdPins: c5.defaults.sd,
+        button: c5.silk.D1
+    });
+    assert.strictEqual(out.pixels.data, 26);
+    assert.deepStrictEqual(out.sdPins, { cs: 1, mosi: 3, clk: 2, miso: 4 });
+    assert.strictEqual(out.button, 27);
 });
