@@ -126,6 +126,19 @@ Prebuilt catalog image (not compiled in this app). PlatformIO stays in `DMX_whIP
 - [x] Upload a per-node shifted or sliced `DMXREC` (library file unchanged) and a sync-group sidecar
 - [x] Firmware SD play assembles consecutive universes onto output 0; cue v2 master/follow by `t_ms`
 
+### Phase J — Headless engine extraction
+Behavior-preserving only: no new features. The engine is a Node package with no Electron or DOM imports. Device discovery, push and show sync move in a later phase.
+- [x] Write the engine API doc (commands, queries, events, message envelope) and add an API version constant
+- [ ] Create src/engine/ with no electron imports; add a check that fails the build if it imports Electron or touches the DOM
+- [ ] Add an in-process adapter for the message envelope (async, request/response plus events)
+- [ ] Move Art-Net/sACN receive, send and monitor state behind the API
+- [ ] Move clock-based playback and the live-output merge behind the API
+- [ ] Convert the existing IPC handlers into thin adapters that call the engine
+- [ ] Add a loopback regression test: play a look, record it back, compare packets (alongside the sACN encoder check in npm test)
+- [ ] Walk the README behaviors by hand (record, play, live merge, Push to SD, MIDI control) and note the results
+- [ ] Add a headless entry point that starts the engine with no window; verify it on a Pi 5 or any Linux box
+- [ ] Bump the minor version and update Current state
+
 ### Backlog (not started unless agreed)
 
 These stay here until we agree to promote an item into the active plan.
