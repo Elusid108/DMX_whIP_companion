@@ -47,7 +47,6 @@ const {
 } = require('../../services/shared/recordTriggers');
 const { convertToStudioWav, tempWavPath } = require('../audioConvert');
 const { studioVisible } = require('../uiView');
-const { getLiveOutput } = require('../liveOutput');
 const {
     ensureLibrary,
     uniqueDmxPath,
@@ -81,7 +80,7 @@ const AUDIO_FILTERS = [
     { name: 'Audio', extensions: ['wav', 'aiff', 'aif', 'mp3', 'm4a', 'flac', 'ogg'] }
 ];
 
-function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
+function setupPlaybackHandlers(mainWindow, recordingHandler = null, liveOutput = null) {
     let playbackData = null;
     let playerData = null;
     let activeSource = 'studio';
@@ -118,7 +117,9 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     let senderSeq = 0;
     let sentAudioVersion = -1;
     const HISTORY_CAP = 100;
-    const liveOutput = getLiveOutput();
+    if (!liveOutput) {
+        throw new Error('Playback needs the engine live output');
+    }
     // Last frame sent per 'protocol:universe' while the sockets are open.
     const lastByUniverse = new Map();
     liveOutput.attachPlayback({

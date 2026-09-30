@@ -3,14 +3,10 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const ArtNetReceiver = require('../../services/artnet/receiver');
-const SacnReceiver = require('../../services/sacn/receiver');
 const { getNetworkInterfaces } = require('../../services/shared/networkUtils');
 const { analyzePush, slicePlan } = require('../../services/shared/pushFit');
 const { runFileTask } = require('../fileTasks');
-const ownOutput = require('../../services/shared/ownOutput');
 const { getUiView, setUiView, onUiViewChange, devicesUiWanted } = require('../uiView');
-const UniverseMonitor = require('../monitor/universeMonitor');
 const { assertInLibrary, sanitizeBaseName, uniqueDmxPath, writeSidecar, ensureLibrary } = require('./library');
 const {
     destUploadPath,
@@ -35,11 +31,6 @@ const ORDER_PREFIX = /^(\d{2})_/;
 const sdBaseName = (sdPath) => String(sdPath || '').split('/').pop() || '';
 
 const sdDisplayName = (sdPath) => sdBaseName(sdPath).replace(/\.dmx$/i, '').replace(ORDER_PREFIX, '');
-
-let artnetReceiver = null;
-let sacnReceiver = null;
-let selectedUniverses = new Set();
-let setupGeneration = 0;
 
 const POLL_MS = 2500;
 const PUSH_PARALLEL = 3;
@@ -129,8 +120,10 @@ function whipRejectReason(reply) {
     return '';
 }
 
-function setupNetworkHandlers(mainWindow, recordingHandler) {
-    const monitor = new UniverseMonitor();
+// Devices, push, OTA and node HTTP. Receive and the universe monitor live
+// in the engine; this module hears ArtPollReply through the engine host.
+function setupNetworkHandlers(mainWindow, recordingHandler, engineHost) {
+    const client = engineHost.client;
     const devices = new Map();
     let pollTimer = null;
     let selectedNic = nicInfo('0.0.0.0');
@@ -195,13 +188,6 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
     );
 
     const syncUiEmit = () => {
-        const ui = getUiView();
-        const quiet = quietRecord();
-        const rail = !quiet && (ui.view === 'monitor' || ui.view === 'studio');
-        monitor.setEmit({
-            snapshot: rail,
-            grid: !quiet && ui.view === 'monitor'
-        });
         if (devicesUiWanted()) {
             startPoll();
         } else {
@@ -315,9 +301,7 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         }
         let ticks = 0;
         const tick = () => {
-            if (artnetReceiver && artnetReceiver.sendPoll) {
-                artnetReceiver.sendPoll();
-            }
+            sendPoll();
             emitDevices();
             if (ticks % FW_REFRESH_TICKS === 1) {
                 refreshFirmware();
@@ -328,139 +312,13 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         pollTimer = setInterval(tick, POLL_MS);
     };
 
-    monitor.start(
-        (snapshot) => sendToRenderer('universes-snapshot', snapshot),
-        (grid) => sendToRenderer('dmx-data-update', grid)
-    );
-
-    const setupReceivers = async (interfaceIp) => {
-        const generation = ++setupGeneration;
-        selectedNic = nicInfo(interfaceIp);
-        stopPoll();
-        clearDevices();
-
-        if (artnetReceiver) {
-            artnetReceiver.stop();
-            artnetReceiver = null;
-        }
-        if (sacnReceiver) {
-            sacnReceiver.stop();
-            sacnReceiver = null;
-        }
-
-        monitor.clear();
-        sendToRenderer('clear-universes');
-
-        const nextArtnet = new ArtNetReceiver();
-        const nextSacn = new SacnReceiver();
-
-        try {
-            await nextArtnet.start(interfaceIp);
-            if (generation !== setupGeneration) {
-                nextArtnet.stop();
-                return;
-            }
-
-            await nextSacn.start(interfaceIp);
-            if (generation !== setupGeneration) {
-                nextArtnet.stop();
-                nextSacn.stop();
-                return;
-            }
-
-            artnetReceiver = nextArtnet;
-            sacnReceiver = nextSacn;
-
-            const maybeRecord = (protocol, universe, dmxData) => {
-                if (!recordingHandler || !recordingHandler.isRecording()) {
-                    return;
-                }
-                if (!selectedUniverses.has(`${protocol}-${universe}`)) {
-                    return;
-                }
-                recordingHandler.addFrame({
-                    protocol,
-                    universe,
-                    data: dmxData
-                });
-            };
-
-            const observeDmx = (protocol, universe, dmxData) => {
-                if (!recordingHandler || !recordingHandler.wantsObserve || !recordingHandler.wantsObserve()) {
-                    return;
-                }
-                const selected = selectedUniverses.has(`${protocol}-${universe}`);
-                const watched = recordingHandler.watchesUniverse
-                    && recordingHandler.watchesUniverse(protocol, universe);
-                if (!selected && !watched) {
-                    return;
-                }
-                recordingHandler.observe({
-                    protocol,
-                    universe,
-                    data: dmxData
-                }, { selected });
-            };
-
-            const dispatchDmx = (protocol, universe, dmxData, ingest, own) => {
-                // Our own playback looping back: show it, never record it or
-                // let it fire a record trigger.
-                if (own) {
-                    if (!(recordingHandler && recordingHandler.isRecording())) {
-                        ingest();
-                    }
-                    return;
-                }
-                const wasRecording = Boolean(recordingHandler && recordingHandler.isRecording());
-                if (!wasRecording) {
-                    observeDmx(protocol, universe, dmxData);
-                }
-                if (recordingHandler && recordingHandler.isRecording()) {
-                    maybeRecord(protocol, universe, dmxData);
-                    if (wasRecording) {
-                        observeDmx(protocol, universe, dmxData);
-                    }
-                    return;
-                }
-                ingest();
-            };
-
-            artnetReceiver.onDmxData('main', (data) => {
-                dispatchDmx('artnet', data.universe, data.dmxData, () => {
-                    monitor.ingest({
-                        protocol: 'artnet',
-                        universe: data.universe,
-                        sourceIp: data.sourceIp,
-                        dmxData: data.dmxData
-                    });
-                }, ownOutput.isOwn(data));
-            });
-
-            artnetReceiver.onPollReply('main', ingestPollReply);
-
-            sacnReceiver.onDmxData('main', (data) => {
-                dispatchDmx('sacn', data.universe, data.dmxData, () => {
-                    monitor.ingest({
-                        protocol: 'sacn',
-                        universe: data.universe,
-                        sourceIp: data.sourceIp,
-                        sourceName: data.sourceName,
-                        dmxData: data.dmxData
-                    });
-                }, ownOutput.isOwn(data));
-            });
-
-            syncUiEmit();
-        } catch (error) {
-            nextArtnet.stop();
-            nextSacn.stop();
-            console.error('Error setting up receivers:', error);
-        }
+    const sendPoll = () => {
+        client.command('artnet.poll').catch((err) => {
+            console.error('ArtPoll failed:', err.message);
+        });
     };
 
-    ipcMain.handle('get-network-interfaces', () => {
-        return getNetworkInterfaces();
-    });
+    const pollReplySub = client.subscribe('artnet.pollReply', ingestPollReply);
 
     ipcMain.handle('device-status', async (event, { ip } = {}) => {
         return fetchStatus(ip);
@@ -1076,18 +934,23 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         }
     });
 
-    const handleSetProtocol = async (event, payload = {}) => {
-        await setupReceivers((payload && payload.interfaceIp) || '0.0.0.0');
+    // The engine host rebinds the receivers on set-protocol; the device list
+    // resets here and polling restarts once the sockets are bound.
+    const handleSetProtocol = (event, payload = {}) => {
+        selectedNic = nicInfo((payload && payload.interfaceIp) || '0.0.0.0');
+        stopPoll();
+        clearDevices();
     };
     ipcMain.on('set-protocol', handleSetProtocol);
+    const stopBoundWatch = engineHost.onReceiversBound(() => {
+        syncUiEmit();
+    });
 
     const handleScan = () => {
         if (quietRecord()) {
             return;
         }
-        if (artnetReceiver && artnetReceiver.sendPoll) {
-            artnetReceiver.sendPoll();
-        }
+        sendPoll();
         emitDevices();
         refreshFirmware();
     };
@@ -1106,27 +969,15 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         syncUiEmit();
     });
 
-    const handleSelectMonitor = (event, { protocol, universe } = {}) => {
-        monitor.setSelected(protocol, universe);
-    };
-    const handleSelectedUniverses = (event, universes) => {
-        selectedUniverses = new Set(Array.isArray(universes) ? universes : []);
-    };
-    ipcMain.on('select-monitor-universe', handleSelectMonitor);
-    ipcMain.on('update-selected-universes', handleSelectedUniverses);
-
     return () => {
-        setupGeneration += 1;
         stopPoll();
+        stopBoundWatch();
+        client.unsubscribe(pollReplySub);
         if (emitTimer) {
             clearTimeout(emitTimer);
             emitTimer = null;
         }
         devices.clear();
-        monitor.stop();
-        if (artnetReceiver) artnetReceiver.stop();
-        if (sacnReceiver) sacnReceiver.stop();
-        ipcMain.removeHandler('get-network-interfaces');
         ipcMain.removeHandler('device-status');
         ipcMain.removeHandler('device-identify');
         ipcMain.removeHandler('device-reboot');
@@ -1156,8 +1007,6 @@ function setupNetworkHandlers(mainWindow, recordingHandler) {
         ipcMain.removeHandler('device-pull-show');
         ipcMain.removeListener('devices-scan', handleScan);
         ipcMain.removeListener('set-protocol', handleSetProtocol);
-        ipcMain.removeListener('select-monitor-universe', handleSelectMonitor);
-        ipcMain.removeListener('update-selected-universes', handleSelectedUniverses);
         ipcMain.removeListener('set-ui-view', handleUiView);
         if (stopUiView) {
             stopUiView();

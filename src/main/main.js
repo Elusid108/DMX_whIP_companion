@@ -21,10 +21,10 @@ const setupRecordingHandlers = require('./ipc/recording');
 const setupPlaybackHandlers = require('./ipc/playback');
 const { setupLibraryHandlers } = require('./ipc/library');
 const setupSettingsHandlers = require('./ipc/settings');
-const setupLiveHandlers = require('./ipc/live');
 const setupFirmwareFlashHandlers = require('./firmwareFlash');
 const { stopFileTasks } = require('./fileTasks');
 const { loadSettings, saveSettings } = require('./settings');
+const { createEngineHost, shutdownEngine } = require('./engineHost');
 
 // Saved bounds only if they still land on a connected display.
 const restoredBounds = () => {
@@ -182,9 +182,10 @@ function createWindow() {
     mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
     const recordingHandler = setupRecordingHandlers(mainWindow);
-    const cleanupNetwork = setupNetworkHandlers(mainWindow, recordingHandler);
+    const engineHost = createEngineHost(mainWindow, { recordingHandler });
+    const cleanupNetwork = setupNetworkHandlers(mainWindow, recordingHandler, engineHost);
     const cleanupCueBus = setupCueBusHandlers(mainWindow);
-    const playback = setupPlaybackHandlers(mainWindow, recordingHandler);
+    const playback = setupPlaybackHandlers(mainWindow, recordingHandler, engineHost.engine.live);
     protocol.handle('compmedia', (request) => {
         try {
             const parsed = new URL(request.url);
@@ -200,7 +201,6 @@ function createWindow() {
     });
     const cleanupLibrary = setupLibraryHandlers(mainWindow, recordingHandler);
     const cleanupSettings = setupSettingsHandlers();
-    const cleanupLive = setupLiveHandlers();
     const cleanupFlash = setupFirmwareFlashHandlers(mainWindow);
 
     mainWindow.on('closed', () => {
@@ -210,7 +210,7 @@ function createWindow() {
         if (cleanupCueBus) cleanupCueBus();
         if (cleanupLibrary) cleanupLibrary();
         if (cleanupSettings) cleanupSettings();
-        if (cleanupLive) cleanupLive();
+        engineHost.close();
         if (cleanupFlash) cleanupFlash();
         if (recordingHandler && recordingHandler.close) recordingHandler.close();
         mainWindow = null;
@@ -227,6 +227,7 @@ function createWindow() {
 app.whenReady().then(createWindow);
 
 app.on('will-quit', () => {
+    shutdownEngine();
     stopFileTasks();
 });
 

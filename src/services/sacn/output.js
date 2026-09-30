@@ -9,6 +9,8 @@ const {
 } = require('./utils');
 const ownOutput = require('../shared/ownOutput');
 
+const SACN_PORT = 5568;
+
 // One socket for every universe (multicast and unicast). Each universe keeps
 // its own reusable packet buffer and E1.31 sequence number.
 class SacnOutput {
@@ -17,6 +19,8 @@ class SacnOutput {
         this.cid = options.cid || crypto.randomBytes(16);
         this.priority = options.priority || 100;
         this.iface = options.iface && options.iface !== '0.0.0.0' ? options.iface : undefined;
+        // Destination port (default 5568; tests use others).
+        this.destPort = Number(options.port) || SACN_PORT;
         this.socket = null;
         this.universes = new Map();
     }
@@ -92,7 +96,7 @@ class SacnOutput {
         const unicast = typeof destIp === 'string' && destIp.trim();
         // Each packet is its own copy: dgram may still hold the previous one.
         const packet = Buffer.from(writeSacnDmx(state.packet, universe, state.sequence, dmxData, options));
-        this.socket.send(packet, 5568, unicast ? destIp.trim() : state.multicast, (err) => {
+        this.socket.send(packet, this.destPort, unicast ? destIp.trim() : state.multicast, (err) => {
             if (err) {
                 console.error('sACN send error:', err);
             }
@@ -109,7 +113,7 @@ class SacnOutput {
                 cid: this.cid,
                 sourceName: this.sourceName
             });
-            this.socket.send(packet, 5568, multicastAddress, (err) => {
+            this.socket.send(packet, this.destPort, multicastAddress, (err) => {
                 if (err) reject(err);
                 else resolve();
             });
@@ -136,5 +140,6 @@ class SacnOutput {
 }
 
 module.exports = {
-    SacnOutput
+    SacnOutput,
+    SACN_PORT
 };

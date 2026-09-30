@@ -131,7 +131,7 @@ Behavior-preserving only: no new features. The engine is a Node package with no 
 - [x] Write the engine API doc (commands, queries, events, message envelope) and add an API version constant
 - [x] Create src/engine/ with no electron imports; add a check that fails the build if it imports Electron or touches the DOM
 - [x] Add an in-process adapter for the message envelope (async, request/response plus events)
-- [ ] Move Art-Net/sACN receive, send and monitor state behind the API
+- [x] Move Art-Net/sACN receive, send and monitor state behind the API
 - [ ] Move clock-based playback and the live-output merge behind the API
 - [ ] Convert the existing IPC handlers into thin adapters that call the engine
 - [ ] Add a loopback regression test: play a look, record it back, compare packets (alongside the sACN encoder check in npm test)

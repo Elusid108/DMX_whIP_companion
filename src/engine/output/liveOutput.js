@@ -283,41 +283,36 @@ const createLiveOutput = (deps) => {
     return { set, releaseAll, merge, kick, configure, attachPlayback, state, shutdown, tick };
 };
 
-// The app's one Live output, on real sockets. Its sACN CID is kept in
-// settings so consoles and nodes see the same source across launches.
-let instance = null;
-const getLiveOutput = () => {
-    if (instance) {
-        return instance;
-    }
+// A Live output on real sockets. The sACN CID is kept in settings so
+// consoles and nodes see the same source across launches.
+// deps: { settings: { load(), save(patch) }, ports: { artnet, sacn } }
+const createDefaultLiveOutput = ({ settings, ports = {} } = {}) => {
     const crypto = require('crypto');
-    const ArtNetSender = require('../services/artnet/sender');
-    const { SacnOutput } = require('../services/sacn/output');
-    const { loadSettings, saveSettings } = require('./settings');
-    let cidHex = loadSettings().liveCid;
+    const ArtNetSender = require('../../services/artnet/sender');
+    const { SacnOutput } = require('../../services/sacn/output');
+    let cidHex = settings.load().liveCid;
     if (!/^[0-9a-f]{32}$/.test(cidHex || '')) {
         cidHex = crypto.randomBytes(16).toString('hex');
-        saveSettings({ liveCid: cidHex });
+        settings.save({ liveCid: cidHex });
     }
-    instance = createLiveOutput({
+    return createLiveOutput({
         cid: Buffer.from(cidHex, 'hex'),
         makeArt: async (nic) => {
-            const sender = new ArtNetSender();
+            const sender = new ArtNetSender({ port: ports.artnet });
             await sender.start(nic);
             return sender;
         },
         makeSacn: async (nic, cid) => {
-            const output = new SacnOutput({ sourceName: 'DMX whIP Live', cid, priority: 100, iface: nic });
+            const output = new SacnOutput({ sourceName: 'DMX whIP Live', cid, priority: 100, iface: nic, port: ports.sacn });
             await output.start();
             return output;
         }
     });
-    return instance;
 };
 
 module.exports = {
     createLiveOutput,
-    getLiveOutput,
+    createDefaultLiveOutput,
     KEEPALIVE_MS,
     RELEASE_MS,
     SEND_MS,

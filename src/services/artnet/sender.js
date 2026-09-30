@@ -2,8 +2,12 @@ const dgram = require('dgram');
 const { createArtNetDmxPacket } = require('./utils');
 const ownOutput = require('../shared/ownOutput');
 
+const ARTNET_PORT = 6454;
+
 class ArtNetSender {
-    constructor() {
+    // options.port: destination port (default 6454; tests use others).
+    constructor(options = {}) {
+        this.destPort = Number(options.port) || ARTNET_PORT;
         this.socket = null;
         this.port = 0;
     }
@@ -54,7 +58,7 @@ class ArtNetSender {
 
         return new Promise((resolve, reject) => {
             const packet = createArtNetDmxPacket(universe, dmxData);
-            this.socket.send(packet, 6454, dest, (err) => {
+            this.socket.send(packet, this.destPort, dest, (err) => {
                 if (err) reject(err);
                 else resolve();
             });
@@ -72,3 +76,4 @@ class ArtNetSender {
 }
 
 module.exports = ArtNetSender;
+module.exports.ARTNET_PORT = ARTNET_PORT;

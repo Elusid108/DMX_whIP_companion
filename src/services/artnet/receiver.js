@@ -3,8 +3,12 @@ const { parseArtNetPacket, createArtPollPacket } = require('./utils');
 
 const RECV_BUFFER = 1024 * 1024;
 
+const ARTNET_PORT = 6454;
+
 class ArtNetReceiver {
-    constructor() {
+    // options.port: listen and poll port (default 6454; tests use others).
+    constructor(options = {}) {
+        this.port = Number(options.port) || ARTNET_PORT;
         this.socket = null;
         this.callbacks = new Map();
         this.pollReplyCallbacks = new Map();
@@ -31,7 +35,7 @@ class ArtNetReceiver {
 
                 this.socket.on('listening', () => {
                     this.socket.removeListener('error', onBindError);
-                    console.log('Art-Net receiver listening on port 6454');
+                    console.log(`Art-Net receiver listening on port ${this.port}`);
                     try {
                         this.socket.setRecvBufferSize(RECV_BUFFER);
                     } catch (err) {
@@ -60,7 +64,7 @@ class ArtNetReceiver {
                     console.error('Art-Net receiver error:', err);
                 });
 
-                this.socket.bind(6454, interfaceIp);
+                this.socket.bind(this.port, interfaceIp);
             } catch (error) {
                 console.error('Error setting up Art-Net receiver:', error);
                 reject(error);
@@ -73,7 +77,7 @@ class ArtNetReceiver {
             return;
         }
         const packet = createArtPollPacket();
-        this.socket.send(packet, 6454, '255.255.255.255', (err) => {
+        this.socket.send(packet, this.port, '255.255.255.255', (err) => {
             if (err) {
                 console.error('ArtPoll send error:', err);
             }
@@ -102,3 +106,4 @@ class ArtNetReceiver {
 }
 
 module.exports = ArtNetReceiver;
+module.exports.ARTNET_PORT = ARTNET_PORT;
