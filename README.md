@@ -130,7 +130,7 @@ Prebuilt catalog image (not compiled in this app). PlatformIO stays in `DMX_whIP
 Behavior-preserving only: no new features. The engine is a Node package with no Electron or DOM imports. Device discovery, push and show sync move in a later phase.
 - [x] Write the engine API doc (commands, queries, events, message envelope) and add an API version constant
 - [x] Create src/engine/ with no electron imports; add a check that fails the build if it imports Electron or touches the DOM
-- [ ] Add an in-process adapter for the message envelope (async, request/response plus events)
+- [x] Add an in-process adapter for the message envelope (async, request/response plus events)
 - [ ] Move Art-Net/sACN receive, send and monitor state behind the API
 - [ ] Move clock-based playback and the live-output merge behind the API
 - [ ] Convert the existing IPC handlers into thin adapters that call the engine
