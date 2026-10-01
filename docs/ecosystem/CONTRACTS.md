@@ -14,11 +14,12 @@ Status at `964d84c` (0.61.0). The sibling repo was not available while this was 
 | Cue bus | `API = 2`, magic `WHP3` ("v3") | `src/services/cuebus/protocol.js` | wire format of `sync_net.h` |
 | Board catalog | `api: 1` | `firmware/catalog.json` | must match firmware `BoardProfile` |
 | Release bundle manifest | `schema: 1` | `src/services/shared/firmwareManifest.js` | written by firmware `scripts/release.py` |
-| NVS pixel-map blob | version byte `1` | `src/services/shared/pixelMap.js` `buildPmapBlob` | read by firmware at boot |
-| DMXREC `.dmx` | none (magic `DMXREC` only) | `src/services/shared/dmxRecording.js` | unversioned on purpose: never changes |
-| Sidecar `.json` next to a `.dmx` | none | `src/engine/library/store.js` | companion-only, firmware never reads it |
-| `library.json` | `version: 1` | `src/engine/library/store.js` | companion-only |
-| `.comp/project.json` | `version: 1`, `kind: 'compilation'` | `src/engine/playback.js` | companion-only |
+| NVS pixel-map blob | version byte `1` | `src/engine/core/pixelMap.js` `buildPmapBlob` (shim at `src/services/shared/pixelMap.js`) | read by firmware at boot |
+| DMXREC `.dmx` | none (magic `DMXREC` only) | `src/engine/core/dmxrec.js` via `src/services/shared/dmxRecording.js` | unversioned on purpose: never changes |
+| Sidecar `.json` next to a `.dmx` | none | `src/engine/core/library.js` | companion-only, firmware never reads it |
+| `library.json` | `version: 1` | `src/engine/core/library.js` | companion-only |
+| `.comp/project.json` | `version: 1`, `kind: 'compilation'` | `src/engine/core/playback.js` | companion-only |
+| `settings.json` `knownNodes` | `version: 1` | `src/engine/core/discovery.js` | companion / console only |
 | Engine API | `ENGINE_API_VERSION = 1` | `src/engine/api/version.js` | not shared with firmware |
 | ArtPollReply | Art-Net 4 layout, OEM `0x00FF`, bind index `1` | `src/services/artnet/utils.js`, `src/main/ipc/network.js` | pairing rule |
 
@@ -26,7 +27,7 @@ Status at `964d84c` (0.61.0). The sibling repo was not available while this was 
 
 | | |
 |---|---|
-| Owner | firmware `include/dmxrec.h` ↔ `src/services/shared/dmxRecording.js` (locked by the Cursor rule) |
+| Owner | firmware `include/dmxrec.h` ↔ `src/services/shared/dmxRecording.js` (locked by the Cursor rule; since Phase K the codec itself is `src/engine/core/dmxrec.js` and that path re-exports it with the file walkers) |
 | Layout | header 10 B: `"DMXREC"` (6 ASCII) + `frameCount` u32 LE. Then `frameCount` records of 522 B: `timestamp` u32 LE ms, `universe` u32 LE, `protocol` u16 LE (0 Art-Net, 1 sACN), 512 B levels |
 | Rules | header count must equal the file length; frames are in time order; records from one console burst share a timestamp (4 ms window, `createBurstStamper`); the file is written in 64 KiB chunks with a header-count rewrite; a universe is skipped until its first non-zero packet |
 | Also used by | `dmxSlice.js` (per-node shifted or sliced copies for Push), `timelineOverview.js`, `scanRecording` (woken spans, fit), the engine recorder and player, the loopback fixture |
@@ -43,12 +44,12 @@ Status at `964d84c` (0.61.0). The sibling repo was not available while this was 
 
 | | |
 |---|---|
-| Owner | firmware `artnet_rx.cpp` ↔ `whipRejectReason()` in `src/main/ipc/network.js` (locked) |
-| Parse | `src/services/artnet/utils.js` `parseArtPollReply`: 239-byte minimum, `Art-Net\0`, OpCode `0x2100`; reads IP (10), port (14), OEM (20-21, big-endian), ESTA (24-25), short name (26, 18), long name (44, 64), node report (108, 64), num ports (173), port type (174), `SwOut` universes (190-193), style (200), MAC (201-206), bind IP (207-210), bind index (211) |
+| Owner | firmware `artnet_rx.cpp` ↔ `whipRejectReason()` in `src/main/ipc/network.js` (locked; since Phase K implemented in `src/engine/core/artnet/pairing.js` and re-exported there) |
+| Parse | `src/engine/core/artnet/packet.js` `parseArtPollReply` (shim at `src/services/artnet/utils.js`): 239-byte minimum, `Art-Net\0`, OpCode `0x2100`; reads IP (10), port (14), OEM (20-21, big-endian), ESTA (24-25), short name (26, 18), long name (44, 64), node report (108, 64), num ports (173), port type (174), `SwOut` universes (190-193), style (200), MAC (201-206), bind IP (207-210), bind index (211) |
 | Pairing rule | `oem === 0x00FF`, `bindIndex === 1`, `portType === 0x80`, `style === 0`, `nodeReport` matches `/^#0001 \[[0-9a-f]{4}\] .+ v\d+\.\d+\.\d+/i` |
 | Timing | companion sends ArtPoll every 2.5 s (`POLL_MS`) while a device-aware tab is visible and not recording; a node is stale after 9 s (`STALE_MS`) |
 | Universe convention | ArtPollReply `SwOut` is the 4-bit low nibble per port; the node's full patch comes from `/status` (`outputs[].uni`), not from the reply |
-| Tests | none for the parser or the pairing rule. **Shared vector candidate**: one real ArtPollReply from each board |
+| Tests | `src/engine/core/core.test.js` (pairing rule). None for the parser. **Shared vector candidate**: one real ArtPollReply from each board |
 
 ## 3. Node HTTP API (port 80, plain HTTP, no authentication)
 

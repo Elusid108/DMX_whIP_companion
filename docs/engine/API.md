@@ -265,7 +265,7 @@ Additional queries built for hosts and tests: `playback.state` (source, transpor
     "cuebus": false
   },
   "discovery": ["artpollBroadcast", "unicastPoll", "manual", "knownNodes"],
-  "limits": { "maxUniverses": 64, "gridStreamHz": 20, "snapshotHz": 5 }
+  "limits": { "gridStreamHz": 20, "snapshotHz": 5 }
 }
 ```
 
@@ -274,7 +274,7 @@ Additional queries built for hosts and tests: `playback.state` (source, transpor
 - `discovery` lists the strategies the `discovery` port supports on this host (§10).
 - `limits` are informational; the engine still enforces its own.
 
-The query is answered from state the host set at `createEngine({ capabilities })`, merged with what the ports report. It is cheap and may be called at any time.
+The query is answered from what the host passed to `createEngine({ ports, hostIo })` (the Node port set carries `host`; `hostIo` names dialogs, ffmpeg, serial and cue bus) merged with each port's `describe()`. It is cheap and may be called at any time. Built in Phase K.
 
 ## 9. Lifecycle
 
@@ -286,7 +286,7 @@ Hosts need to park the engine without losing show state: a tablet going to the b
 | `engine.resume` | Rebinds the receivers on the saved NIC, reopens Live output (same CID, levels restored, nothing is sent until a level changes or the keep-alive tick fires), restores playback senders and leaves playback paused at the saved position (the UI decides whether to resume), restarts discovery with the saved strategies, and resumes the monitor tick if anyone is subscribed. Replies `{ success, restored: { receive: bool, live: bool, playback: bool } }`; a port that fails to come back (NIC gone) is `false` with an `unavailable` error in `result.errors[]`, and the rest still restores. Emits `engine.lifecycle { lifecycle: "running" }`. Idempotent. |
 | `engine.state` | `{ lifecycle, since }`. |
 
-Rules: while suspended every command that would touch I/O (`receive.setNic`, `live.set`, `playback.toggle`, `record.start`, `artnet.poll`, `discovery.*`) returns `conflict` with `data.lifecycle: "suspended"`; queries keep answering from frozen state. `engine.close()` (the host API, not a message) suspends first, then drops subscriptions. Suspend and resume are implemented in Phase K only to the depth the headless host needs (receivers, Live, playback senders); the companion keeps closing the engine on quit.
+Rules: while suspended every command that would touch I/O (`receive.setNic`, `artnet.poll`, `live.set`, `live.releaseAll`, `output.setNic`, `playback.toggle`, `playback.seek`, `player.play`, `record.start`, `punchIn.start`, `discovery.setStrategies`) returns `conflict` with `data.lifecycle: "suspended"` (a router guard); queries keep answering from frozen state. `engine.close()` (the host API, not a message) is unchanged: it stops everything and drops subscriptions. As built in Phase K: suspend finishes a punch-in take into the library (or stops a plain recording and emits `record.saved`), pauses a running transport, closes the Live and playback sockets and the receivers, and stops discovery polling; resume rebinds the receivers on the remembered NIC without clearing the monitor, marks Live dirty so its next tick resends, reopens the sockets of a paused transport and restarts the same discovery strategies. The companion keeps closing the engine on quit.
 
 ## 10. Discovery strategies
 
@@ -299,5 +299,5 @@ Node discovery must never depend on broadcast reaching the nodes (Wi-Fi client i
 | `manual` | `{ ip }` | one node by IP with no ArtPoll at all; identity comes from `/status` (companion side today) or stays `unknown` |
 | `knownNodes` | `{ nodes: [{ mac, ip, name }] }` | a persisted list (settings key `knownNodes`, additive, `version: 1`) polled by unicast and kept even while silent, marked stale instead of dropped |
 
-`discovery.setStrategies { strategies: [{ kind, ...config }] }` replaces the active set; `discovery.state` returns it with the merged `Node[]` (`{ id, mac, ip, name, longName, universes, bindIndex, api?, stale, lastSeen, sources: ["artpollBroadcast", ...] }`); `discovery.nodes` is the debounced event. ArtPollReply parsing stays pure core; sending and receiving use the `udp` port. The HTTP side of a node (`/status`) is **not** part of discovery in this phase; the companion keeps doing it. Phase K designs the port and ships `artpollBroadcast` as the only strategy wired (it is what `artnet.poll` does today); the other three are interfaces plus tests on the merge rule, not live code.
+`discovery.setStrategies { strategies: [{ kind, ...config }] }` replaces the active set (an empty list stops polling and clears the table); `discovery.state` returns it with the persisted `knownNodes` and the merged `Node[]` (`{ id, mac, ip, name, longName, universes, bindIndex, oem, nodeReport, paired, rejectReason, pinned, stale, lastSeen, sources: ["artpollBroadcast", ...] }`); `discovery.nodes` is the debounced event. ArtPollReply parsing and the pairing rule are pure core; sending and receiving use the `udp` port. The HTTP side of a node (`/status`) is **not** part of discovery in this phase; the companion keeps doing it. As built in Phase K: all four strategies run in `src/engine/core/discovery.js` with a fake-clock test, `knownNodes` without a `nodes` list reads `settings.knownNodes`, with one it saves it; nothing polls until a host calls `discovery.setStrategies`, so the companion's own ArtPoll loop is unchanged. `artnet.poll` accepts an optional `dest` for a unicast poll.
 
