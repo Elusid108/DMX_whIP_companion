@@ -4,7 +4,8 @@
 // Nothing in the renderer or preload changes.
 const { app, ipcMain } = require('electron');
 const { createEngine } = require('../engine');
-const { decodeGridFrame } = require('../engine/receive');
+const { createNodePorts } = require('../adapters/node');
+const { decodeGridFrame } = require('../engine/core/receive');
 const { getStore } = require('./settings');
 const { getUiView, onUiViewChange } = require('./uiView');
 const { INVOKE, SEND, EVENTS } = require('./engineChannels');
@@ -16,7 +17,11 @@ const getEngine = () => {
     if (!engineInstance) {
         engineInstance = createEngine({
             settings: getStore(),
-            appVersion: app.getVersion()
+            appVersion: app.getVersion(),
+            // The companion shares one file worker between the engine and its
+            // own library and push code, and adds what Electron brings.
+            ports: createNodePorts({ kind: 'companion', sharedWorkers: true }),
+            hostIo: { dialogs: true, ffmpeg: true, serial: true, cuebus: true }
         });
     }
     return engineInstance;

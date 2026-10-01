@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const { getNetworkInterfaces } = require('../../services/shared/networkUtils');
 const { analyzePush, slicePlan } = require('../../services/shared/pushFit');
-const { runFileTask } = require('../../engine/fileTasks');
+const { runFileTask } = require('../../adapters/node/workers');
 const { getUiView, setUiView, onUiViewChange, devicesUiWanted } = require('../uiView');
 const { assertInLibrary, sanitizeBaseName, uniqueDmxPath, writeSidecar, ensureLibrary } = require('./library');
 const {

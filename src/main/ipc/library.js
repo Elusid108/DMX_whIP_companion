@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { createHeader } = require('../../services/shared/dmxRecording');
-const { runFileTask } = require('../../engine/fileTasks');
+const { runFileTask } = require('../../adapters/node/workers');
 const { saveSettings } = require('../settings');
 const { getEngine } = require('../engineHost');
 const {

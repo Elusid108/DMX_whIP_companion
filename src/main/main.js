@@ -21,7 +21,7 @@ const setupStudioDialogHandlers = require('./ipc/studioDialogs');
 const { setupLibraryHandlers } = require('./ipc/library');
 const setupSettingsHandlers = require('./ipc/settings');
 const setupFirmwareFlashHandlers = require('./firmwareFlash');
-const { stopFileTasks } = require('../engine/fileTasks');
+const { stopFileTasks } = require('../adapters/node/workers');
 const { loadSettings, saveSettings } = require('./settings');
 const { createEngineHost, shutdownEngine } = require('./engineHost');
 
