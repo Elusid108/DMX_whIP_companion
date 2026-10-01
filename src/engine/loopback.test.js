@@ -81,7 +81,7 @@ test('loopback: play a look, record it back, same universes, data and order', { 
             defaultLibraryDir: path.join(recorderDir, 'Shows')
         }),
         appVersion: 'loopback-test',
-        ports
+        udpPorts: ports
     });
     const client = engine.client({ client: 'loopback-test' });
     let child = null;

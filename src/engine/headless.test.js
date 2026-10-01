@@ -38,6 +38,14 @@ test('headless engine starts, answers the handshake, holds state, stops clean', 
         const live = await run.client.query('live.state');
         assert.deepEqual(live.universes, [{ proto: 'artnet', uni: 3, owned: false }]);
 
+        const caps = await run.client.query('engine.capabilities');
+        assert.equal(caps.apiVersion, ENGINE_API_VERSION);
+        assert.equal(caps.host.kind, 'headless');
+        assert.deepEqual(caps.io.udp, { artnet: true, sacn: true, broadcast: true, multicast: true });
+        assert.equal(caps.io.dialogs, false);
+        assert.equal(caps.io.midi, false);
+        assert.ok(caps.features.includes('playback'));
+
         const rec = await run.client.query('record.state');
         assert.equal(rec.recording, false);
         const pb = await run.client.query('playback.state');

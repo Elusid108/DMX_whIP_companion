@@ -13,6 +13,7 @@ const os = require('os');
 const path = require('path');
 const { createSettingsStore } = require('./settingsStore');
 const { createEngine } = require('./index');
+const { createNodePorts } = require('../adapters/node');
 const { ENGINE_API_VERSION } = require('./api/version');
 
 const appVersion = () => {
@@ -34,7 +35,7 @@ const startHeadless = async (opts = {}) => {
         filePath: path.join(dataDir, 'settings.json'),
         defaultLibraryDir: path.join(dataDir, 'Shows')
     });
-    const engine = createEngine({ settings, appVersion: appVersion(), ports });
+    const engine = createEngine({ settings, appVersion: appVersion(), udpPorts: ports, ports: createNodePorts({ kind: 'headless' }) });
     const client = engine.client({ client: 'headless' });
     const hello = await client.hello();
     if (opts.nic) {

@@ -1,10 +1,14 @@
-// The headless DMX whIP engine. One createEngine() per process; hosts talk
-// to it through router envelopes (createInProcessClient) and never reach
-// into the parts directly except through the adapters in src/main.
+// The headless DMX whIP engine: core + ports. Hosts talk to it through
+// router envelopes (createInProcessClient) and never reach into the parts
+// directly except through the adapters in src/main.
 //
 // deps: { settings: settings store (see settingsStore.js), appVersion,
-//         ports: { artnet, sacn } (defaults 6454 / 5568) }
+//         ports: the port set (src/engine/ports; defaults to the Node
+//                adapters in src/adapters/node),
+//         udpPorts: { artnet, sacn } (defaults 6454 / 5568),
+//         hostIo: { dialogs, ffmpeg, serial, cuebus } what the host adds }
 const { createRouter } = require('./api/router');
+const { assertPorts } = require('./ports');
 const { createInProcessClient } = require('./api/inProcess');
 const { ENGINE_API_VERSION } = require('./api/version');
 const { createReceive } = require('./receive');
@@ -12,15 +16,23 @@ const { createDefaultLiveOutput } = require('./output/liveOutput');
 const { createRecording } = require('./recording');
 const { createPlayback } = require('./playback');
 const { createLibraryStore } = require('./library/store');
-const { getNetworkInterfaces } = require('../services/shared/networkUtils');
 
 const CAPABILITIES = ['monitor', 'live', 'stream', 'record', 'playback', 'library'];
 
-const createEngine = ({ settings, appVersion = '0.0.0', ports = {} } = {}) => {
+const createEngine = ({ settings, appVersion = '0.0.0', ports: portsIn, udpPorts = {}, hostIo = {} } = {}) => {
     if (!settings || typeof settings.load !== 'function' || typeof settings.save !== 'function') {
         throw new Error('createEngine needs a settings store');
     }
-    const router = createRouter({ appVersion, capabilities: CAPABILITIES });
+    const io = assertPorts(portsIn || require('../adapters/node').createNodePorts());
+    const hostInfo = (portsIn && portsIn.host) || (io.host) || { kind: 'unknown' };
+    const router = createRouter({
+        appVersion,
+        capabilities: CAPABILITIES,
+        now: io.clock.now,
+        setTimer: io.scheduler.setTimeout,
+        clearTimer: io.scheduler.clearTimeout
+    });
+    const ports = udpPorts;
     const receive = createReceive({ router, ports });
     const live = createDefaultLiveOutput({ settings, ports });
     {
@@ -33,7 +45,29 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports = {} } = {}) => {
     recording.onStateChange(() => receive.syncEmit());
     const playback = createPlayback({ router, recording, liveOutput: live, library, ports });
 
-    router.query('network.interfaces', () => getNetworkInterfaces());
+    router.query('network.interfaces', () => io.udp.interfaces());
+
+    // What this host can do (docs/engine/API.md §8). Built from the ports the
+    // host wired plus what it declares about itself; core never guesses.
+    const describe = (port, fallback) => (port && typeof port.describe === 'function' ? port.describe() : fallback);
+    router.query('engine.capabilities', () => ({
+        apiVersion: ENGINE_API_VERSION,
+        appVersion,
+        host: hostInfo,
+        features: CAPABILITIES.slice(),
+        io: {
+            udp: describe(io.udp, { artnet: true, sacn: true, broadcast: true, multicast: true }),
+            storage: describe(io.storage, { library: true, watch: false, tmp: true }),
+            workers: Boolean(describe(io.workers, true)),
+            midi: Boolean(io.midi),
+            dialogs: Boolean(hostIo.dialogs),
+            ffmpeg: Boolean(hostIo.ffmpeg),
+            serial: Boolean(hostIo.serial),
+            cuebus: Boolean(hostIo.cuebus)
+        },
+        discovery: ['artpollBroadcast'],
+        limits: { gridStreamHz: 20, snapshotHz: 5 }
+    }));
 
     router.command('live.set', ({ changes } = {}) => {
         live.set(Array.isArray(changes) ? changes : []);
@@ -86,6 +120,7 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports = {} } = {}) => {
         apiVersion: ENGINE_API_VERSION,
         router,
         settings,
+        io,
         ports,
         receive,
         live,

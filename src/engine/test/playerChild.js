@@ -18,7 +18,7 @@ const main = async () => {
         filePath: path.join(dataDir, 'settings.json'),
         defaultLibraryDir: path.dirname(fixture)
     });
-    const engine = createEngine({ settings, appVersion: 'player-child', ports });
+    const engine = createEngine({ settings, appVersion: 'player-child', udpPorts: ports });
     const client = engine.client({ client: 'player-child' });
     await client.hello();
     const loaded = await client.command('playback.loadCompilation', {
