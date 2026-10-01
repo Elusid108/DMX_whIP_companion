@@ -4,16 +4,17 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const dgram = require('dgram');
-const { fork } = require('child_process');
-const { parseRecording } = require('../services/shared/dmxRecording');
+const { parseRecording } = require('./core/dmxrec');
 const { createSettingsStore } = require('./settingsStore');
 const { createEngine } = require('./index');
 const { writeFixture, testPorts, FRAME_MS, UNIVERSES } = require('./test/fixture');
 
-// Play a look through one engine (in a child process, so the parent's
-// own-output filter does not drop it), record it with another engine's
-// receivers on loopback, and compare packets. Ports come from
-// DMXWHIP_TEST_PORT_BASE so runs do not clash.
+// Play a synthetic two-protocol look through one engine, record it with a
+// second engine's receivers on loopback in the same process (own-output
+// filtering is per engine, so the recorder does not treat the player's
+// packets as its own), and compare packets: same universes, same bytes,
+// same burst order. Ports come from DMXWHIP_TEST_PORT_BASE so runs do not
+// clash.
 
 const NIC = '127.0.0.1';
 const TIME_TOLERANCE_MS = 50;
@@ -26,22 +27,6 @@ const canBind = (port) => new Promise((resolve) => {
     socket.bind(port, NIC, () => {
         socket.close(() => resolve(true));
     });
-});
-
-const waitFor = (child, type, timeoutMs) => new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`child did not send ${type} within ${timeoutMs} ms`)), timeoutMs);
-    const onMessage = (msg) => {
-        if (msg && msg.type === 'error') {
-            clearTimeout(timer);
-            child.off('message', onMessage);
-            reject(new Error(`player child: ${msg.message}`));
-        } else if (msg && msg.type === type) {
-            clearTimeout(timer);
-            child.off('message', onMessage);
-            resolve(msg);
-        }
-    };
-    child.on('message', onMessage);
 });
 
 const key = (f) => `${f.protocol}:${f.universe}`;
@@ -81,10 +66,18 @@ test('loopback: play a look, record it back, same universes, data and order', { 
             defaultLibraryDir: path.join(recorderDir, 'Shows')
         }),
         appVersion: 'loopback-test',
-        ports
+        udpPorts: ports
     });
     const client = engine.client({ client: 'loopback-test' });
-    let child = null;
+    const player = createEngine({
+        settings: createSettingsStore({
+            filePath: path.join(playerDir, 'settings.json'),
+            defaultLibraryDir: path.join(playerDir, 'Shows')
+        }),
+        appVersion: 'loopback-player',
+        udpPorts: ports
+    });
+    const playerClient = player.client({ client: 'loopback-player' });
     try {
         const hello = await client.hello();
         assert.equal(hello.apiVersion, 1);
@@ -92,26 +85,40 @@ test('loopback: play a look, record it back, same universes, data and order', { 
         assert.equal(bound.success, true, 'receivers bound on loopback');
         await client.command('receive.setUniverses', { universes: UNIVERSES.map((u) => `${u.protocol}-${u.universe}`) });
 
-        child = fork(path.join(__dirname, 'test', 'playerChild.js'), [], {
-            env: {
-                ...process.env,
-                PLAYER_DATA_DIR: playerDir,
-                PLAYER_FIXTURE: fixturePath,
-                PLAYER_PORT_ARTNET: String(ports.artnet),
-                PLAYER_PORT_SACN: String(ports.sacn),
-                PLAYER_DEST: NIC,
-                PLAYER_NIC: NIC
-            },
-            stdio: ['ignore', 'ignore', 'inherit', 'ipc']
+        // The player: the fixture as a one-clip Studio session sent unicast
+        // to loopback, so sACN does not depend on multicast routing here.
+        await playerClient.hello();
+        const loaded = await playerClient.command('playback.loadCompilation', {
+            sources: [{ filePath: fixturePath, name: 'fixture' }],
+            name: 'fixture'
         });
-        const ready = await waitFor(child, 'ready', 10000);
-        assert.equal(ready.frames, expected.length, 'child loaded every fixture frame');
+        assert.equal(loaded.success, true, loaded.error);
+        assert.equal(loaded.frameCount, expected.length, 'player loaded every fixture frame');
+        const edited = await playerClient.command('studio.edit', {
+            op: 'update',
+            clipId: loaded.clips[0].id,
+            patch: { destIp: NIC }
+        });
+        assert.equal(edited.success, true, edited.error);
+        const ended = new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('playback did not end within 15 s')), 15000);
+            let started = false;
+            playerClient.subscribe('playback.stats', (stats) => {
+                if (stats.isPlaying) {
+                    started = true;
+                } else if (started && !stats.isPaused) {
+                    clearTimeout(timer);
+                    resolve(stats.playheadMs);
+                }
+            });
+        });
 
         const takePath = path.join(recorderDir, 'Shows', 'take.dmx');
         const started = await client.command('record.start', { filePath: takePath });
         assert.equal(started.success, true);
-        child.send({ type: 'go' });
-        await waitFor(child, 'ended', 15000);
+        const played = await playerClient.command('playback.toggle', { source: 'studio', playbackNetwork: NIC, loop: false });
+        assert.equal(played.success, true);
+        await ended;
         await new Promise((resolve) => setTimeout(resolve, 200));
         const stopped = await client.command('record.stop', { emitSaved: false });
         assert.equal(stopped.success, true);
@@ -159,16 +166,8 @@ test('loopback: play a look, record it back, same universes, data and order', { 
             );
         });
     } finally {
-        if (child) {
-            child.send({ type: 'exit' });
-            await new Promise((resolve) => {
-                child.once('exit', resolve);
-                setTimeout(() => {
-                    child.kill();
-                    resolve();
-                }, 2000);
-            });
-        }
+        playerClient.close();
+        player.close();
         client.close();
         engine.close();
         fs.rmSync(dir, { recursive: true, force: true });

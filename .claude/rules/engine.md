@@ -1,11 +1,15 @@
-# Engine rules
+# Engine rules (mirror of the Architecture, Performance, Security and Testing sections in `CLAUDE.md`; keep in sync)
 
-- `src/engine/` never imports `electron`, touches the DOM, or uses renderer globals; `src/engine/boundary.test.js` (in `npm test`) checks the transitive require graph.
+- Engine core: `src/engine/core` never imports `electron`, Node built-ins (`node:` or bare), npm packages, the DOM or renderer globals. I/O (UDP, filesystem, clock and timers, workers, MIDI) goes through port interfaces in `src/engine/ports`; Node implementations live in `src/adapters/node`. `src/engine/boundary.test.js` (in `npm test`) checks the transitive require graph. Until the Phase K move is complete, today's `src/engine/**` keeps the Phase J rule: no Electron, no DOM, no requires into `src/main` or `src/renderer`.
+- Core uses `Uint8Array` and `DataView`, not `Buffer`, and an injected clock and scheduler (never `Date.now`, `process.hrtime`, `setTimeout`, `setInterval`, `setImmediate` directly).
+- Packet encoding (Art-Net, sACN, DMXREC, cue bus) is pure core code; sockets live in adapters; the `sacn` package stays a devDependency used only as the byte-identity test reference.
 - The engine owns show and output state; UIs hold view state only.
-- API is message-shaped and async (commands, queries, events with optional rate limit), one envelope for Electron IPC now and WebSocket later; `ENGINE_API_VERSION` travels in the handshake. See `docs/engine/API.md`.
-- High-rate data (DMX grids) goes over the throttled binary stream, never per-frame JSON.
-- Formats stay backward compatible: `.dmx` unchanged, metadata in sidecars, every new schema versioned.
-- Node 22 and Electron's Node; CommonJS; no TypeScript; minimal pinned dependencies with a stated reason and Apache-2.0-compatible licence.
-- Output and playback paths: clock-based, no busy-waits, no per-frame allocations or JSON in hot loops, heavy scans in worker threads.
-- Security: imported files are untrusted (validate size and schema first); no unauthenticated or non-loopback network listener; no plaintext secrets beyond what exists; OTA images are sha256-checked, not signed (known gap).
-- Tests are headless, with injectable clocks and configurable loopback ports; loose timing, strict content and order.
+- API is message-shaped and async (commands, queries, events with optional rate limit), one envelope for Electron IPC now and WebSocket later; `ENGINE_API_VERSION` travels in the handshake; high-rate data (DMX grids, later the visualizer) goes over the throttled binary stream, never per-frame JSON. See `docs/engine/API.md`.
+- The API has a capabilities query and lifecycle commands (suspend/resume with clean state restore): designed in `docs/engine/API.md`, implemented only as far as the extraction needs.
+- Node discovery never requires broadcast: strategies (ArtPoll broadcast, unicast poll, manual IP, known-nodes list) behind the `discovery` port.
+- Formats stay backward compatible: `.dmx` unchanged, metadata in sidecars, every new schema versioned. Later: shows as immutable revisions with a revision chain.
+- Node 22 and Electron's Node (20.18 for Electron 33); CommonJS; no APIs newer than Node 20.18; no TypeScript; minimal pinned dependencies with a stated reason and Apache-2.0-compatible licence (SBOM needed for EU CRA).
+- UI never calls Electron APIs directly: go through `src/renderer/ipc.js` so the UI can run in a browser, kiosk or WebView (Chromium or WebKit). No hover-only or right-click-only actions. No Web MIDI in new UI code.
+- Output and playback paths: clock-based, no busy-waits, no per-frame allocations or JSON in hot loops, heavy scans in worker threads; measure before optimizing.
+- Security: imported files (`.dmx`, `.comp`, sidecars, show packages) are untrusted, check size and schema before parsing, never execute content; no unauthenticated or non-loopback network listener (flag any in the PR); no plaintext secrets beyond what exists (flag existing: `flashPassword` / `flashShowPass` in `settings.json`, Wi-Fi passwords over plain HTTP and in the NVS blob, unauthenticated node HTTP and cue bus); OTA images are sha256-checked, not signed (known gap).
+- Tests are headless without Electron, with injectable clocks and configurable loopback ports; loose timing, strict content and order; `npm test` passes before every commit.

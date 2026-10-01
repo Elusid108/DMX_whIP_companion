@@ -33,11 +33,13 @@ const isZero = (data) => {
 // deps: { makeArt(nic) -> Promise<{ send(uni, data, dest), stop() }>,
 //         makeSacn(nic, cid) -> Promise<{ send(uni, data, dest, options),
 //                                         sendDiscovery(unis), close() }>,
-//         now(), setTimer(fn, ms), clearTimer(id), cid }
+//         now(), setTimer(fn, ms) (an interval), clearTimer(id), log, cid }
 const createLiveOutput = (deps) => {
-    const now = deps.now || (() => Date.now());
-    const setTimer = deps.setTimer || ((fn, ms) => setInterval(fn, ms));
-    const clearTimer = deps.clearTimer || ((id) => clearInterval(id));
+    const { now, setTimer, clearTimer } = deps;
+    if (typeof now !== 'function' || typeof setTimer !== 'function' || typeof clearTimer !== 'function') {
+        throw new Error('Live output needs now, setTimer and clearTimer');
+    }
+    const log = deps.log || { error: () => {} };
 
     const universes = new Map();
     let nic = '0.0.0.0';
@@ -91,7 +93,7 @@ const createLiveOutput = (deps) => {
             sacn = s;
             lastDiscovery = 0;
         })().catch((err) => {
-            console.error('Live output could not open its sockets:', err.message);
+            log.error('Live output could not open its sockets:', err.message);
         }).finally(() => {
             if (gen === senderGen) {
                 starting = null;
@@ -103,7 +105,7 @@ const createLiveOutput = (deps) => {
     const sendUniverse = (u, options = 0) => {
         if (u.proto === 'artnet') {
             Promise.resolve(art.send(u.uni, u.data, dest)).catch((err) => {
-                console.error('Live Art-Net send error:', err.message);
+                log.error('Live Art-Net send error:', err.message);
             });
         } else if (sacn) {
             sacn.send(u.uni, u.data, dest, options);
@@ -280,30 +282,47 @@ const createLiveOutput = (deps) => {
         closeSenders();
     };
 
-    return { set, releaseAll, merge, kick, configure, attachPlayback, state, shutdown, tick };
+    // Lifecycle: suspend closes the sockets and stops the tick but keeps every
+    // level; resume marks them dirty so the next tick sends them again.
+    const suspend = () => {
+        if (timer) {
+            clearTimer(timer);
+            timer = null;
+        }
+        idleSince = 0;
+        closeSenders();
+    };
+    const resume = () => {
+        kick();
+        return true;
+    };
+
+    return { set, releaseAll, merge, kick, configure, attachPlayback, state, shutdown, suspend, resume, tick };
 };
 
 // A Live output on real sockets. The sACN CID is kept in settings so
 // consoles and nodes see the same source across launches.
-// deps: { settings: { load(), save(patch) }, ports: { artnet, sacn } }
-const createDefaultLiveOutput = ({ settings, ports = {} } = {}) => {
-    const crypto = require('crypto');
-    const ArtNetSender = require('../../services/artnet/sender');
-    const { SacnOutput } = require('../../services/sacn/output');
+// deps: { settings: { load(), save(patch) }, io: ports, senders: { artnet(), sacn(opts) } }
+const createDefaultLiveOutput = ({ settings, io, senders } = {}) => {
+    const { fromHex, hex } = require('./bytes');
     let cidHex = settings.load().liveCid;
     if (!/^[0-9a-f]{32}$/.test(cidHex || '')) {
-        cidHex = crypto.randomBytes(16).toString('hex');
+        cidHex = hex(io.random.bytes(16));
         settings.save({ liveCid: cidHex });
     }
     return createLiveOutput({
-        cid: Buffer.from(cidHex, 'hex'),
+        cid: fromHex(cidHex),
+        now: io.clock.now,
+        setTimer: io.scheduler.setInterval,
+        clearTimer: io.scheduler.clearInterval,
+        log: io.log,
         makeArt: async (nic) => {
-            const sender = new ArtNetSender({ port: ports.artnet });
+            const sender = senders.artnet();
             await sender.start(nic);
             return sender;
         },
         makeSacn: async (nic, cid) => {
-            const output = new SacnOutput({ sourceName: 'DMX whIP Live', cid, priority: 100, iface: nic, port: ports.sacn });
+            const output = senders.sacn({ sourceName: 'DMX whIP Live', cid, priority: 100, iface: nic });
             await output.start();
             return output;
         }

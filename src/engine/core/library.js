@@ -1,42 +1,41 @@
 // The show library on disk: paths, sidecars, the folder index and the
-// listing. Moved from src/main/ipc/library.js; the dialogs, fs.watch and
-// IPC handlers stay in the companion. One store per engine, bound to the
-// settings store's libraryDir.
-const path = require('path');
-const fs = require('fs');
+// listing. The dialogs, the folder watch and the IPC handlers stay in the
+// companion. One store per engine, bound to the settings store's
+// libraryDir; every file and path operation goes through the storage port.
 const {
     collectFolderIds,
     hydrateTree,
     pruneAndFill,
     stripTree
-} = require('../../services/shared/libraryTree');
+} = require('./libraryTree');
 
 const INVALID_NAME = new RegExp('[<>:"/\\\\|?*\\x00-\\x1f]', 'g');
 
 
-const createLibraryStore = (settings) => {
+// deps: { storage, clock, settings }
+const createLibraryStore = ({ storage, clock, settings }) => {
     const getLibraryDir = () => settings.getLibraryDir();
 
     const ensureLibrary = () => {
         const dir = getLibraryDir();
-        fs.mkdirSync(dir, { recursive: true });
+        storage.mkdirSync(dir);
         return dir;
     };
 
     const sidecarPath = (dmxPath) => {
-        const parsed = path.parse(dmxPath);
-        return path.join(parsed.dir, `${parsed.name}.json`);
+        const parsed = storage.parse(dmxPath);
+        return storage.join(parsed.dir, `${parsed.name}.json`);
     };
 
     // Real paths, so a symlink or junction inside the library cannot point out.
     const realOrResolved = (target) => {
-        const resolved = path.resolve(target);
+        const resolved = storage.resolve(target);
         try {
-            return fs.realpathSync.native(resolved);
+            return storage.realpathSync(resolved);
         } catch (err) {
             // A path that does not exist yet (new file): resolve its parent.
             try {
-                return path.join(fs.realpathSync.native(path.dirname(resolved)), path.basename(resolved));
+                return storage.join(storage.realpathSync(storage.dirname(resolved)), storage.basename(resolved));
             } catch (parentErr) {
                 return resolved;
             }
@@ -46,8 +45,8 @@ const createLibraryStore = (settings) => {
     const isInsideLibrary = (filePath) => {
         const libDir = realOrResolved(ensureLibrary());
         const resolved = realOrResolved(filePath);
-        const relative = path.relative(libDir, resolved);
-        return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+        const relative = storage.relative(libDir, resolved);
+        return relative !== '' && !relative.startsWith('..') && !storage.isAbsolute(relative);
     };
 
     const assertInLibrary = (filePath) => {
@@ -68,7 +67,7 @@ const createLibraryStore = (settings) => {
     const readSidecar = (dmxPath) => {
         const metaPath = sidecarPath(dmxPath);
         try {
-            const raw = fs.readFileSync(metaPath, 'utf8');
+            const raw = storage.readTextSync(metaPath);
             const parsed = JSON.parse(raw);
             return {
                 name: typeof parsed.name === 'string' ? parsed.name : '',
@@ -84,40 +83,40 @@ const createLibraryStore = (settings) => {
         const next = {
             name: typeof meta.name === 'string' ? meta.name : current.name,
             notes: typeof meta.notes === 'string' ? meta.notes : current.notes,
-            updatedAt: new Date().toISOString()
+            updatedAt: new Date(clock.now()).toISOString()
         };
-        fs.writeFileSync(sidecarPath(dmxPath), `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+        storage.writeFileSync(sidecarPath(dmxPath), `${JSON.stringify(next, null, 2)}\n`);
         return next;
     };
 
     const uniqueDmxPath = (dir, baseName) => {
-        let candidate = path.join(dir, `${baseName}.dmx`);
+        let candidate = storage.join(dir, `${baseName}.dmx`);
         let n = 1;
-        while (fs.existsSync(candidate)) {
+        while (storage.existsSync(candidate)) {
             n += 1;
-            candidate = path.join(dir, `${baseName}_${n}.dmx`);
+            candidate = storage.join(dir, `${baseName}_${n}.dmx`);
         }
         return candidate;
     };
 
     const uniqueCompPath = (dir, baseName) => {
         const stem = String(baseName || 'Stack').replace(/\.comp$/i, '');
-        let candidate = path.join(dir, `${stem}.comp`);
+        let candidate = storage.join(dir, `${stem}.comp`);
         let n = 1;
-        while (fs.existsSync(candidate)) {
+        while (storage.existsSync(candidate)) {
             n += 1;
-            candidate = path.join(dir, `${stem}_${n}.comp`);
+            candidate = storage.join(dir, `${stem}_${n}.comp`);
         }
         return candidate;
     };
 
     const readCompilationSummary = (dirPath) => {
-        const id = path.basename(dirPath);
+        const id = storage.basename(dirPath);
         let name = id.replace(/\.comp$/i, '');
         let notes = '';
         let clipCount = 0;
         try {
-            const raw = JSON.parse(fs.readFileSync(path.join(dirPath, 'project.json'), 'utf8'));
+            const raw = JSON.parse(storage.readTextSync(storage.join(dirPath, 'project.json')));
             if (raw && typeof raw.name === 'string' && raw.name.trim()) {
                 name = raw.name.trim();
             }
@@ -130,7 +129,7 @@ const createLibraryStore = (settings) => {
         } catch (err) {
             // unreadable project still appears in the list
         }
-        const stat = fs.statSync(dirPath);
+        const stat = storage.statSync(dirPath);
         return {
             id,
             dirPath,
@@ -144,17 +143,17 @@ const createLibraryStore = (settings) => {
 
     const listCompilations = () => {
         const dir = ensureLibrary();
-        return fs.readdirSync(dir, { withFileTypes: true })
+        return storage.readdirSync(dir)
             .filter((entry) => entry.isDirectory() && entry.name.toLowerCase().endsWith('.comp'))
-            .map((entry) => readCompilationSummary(path.join(dir, entry.name)));
+            .map((entry) => readCompilationSummary(storage.join(dir, entry.name)));
     };
 
     const findNextScenePath = () => {
         const dir = ensureLibrary();
         let sceneNum = 1;
         while (true) {
-            const testPath = path.join(dir, `scene_${sceneNum}.dmx`);
-            if (!fs.existsSync(testPath)) {
+            const testPath = storage.join(dir, `scene_${sceneNum}.dmx`);
+            if (!storage.existsSync(testPath)) {
                 return testPath;
             }
             sceneNum += 1;
@@ -162,9 +161,9 @@ const createLibraryStore = (settings) => {
     };
 
     const toShowSummary = (filePath) => {
-        const stat = fs.statSync(filePath);
-        const filename = path.basename(filePath);
-        const basename = path.parse(filename).name;
+        const stat = storage.statSync(filePath);
+        const filename = storage.basename(filePath);
+        const basename = storage.parse(filename).name;
         const meta = readSidecar(filePath);
         return {
             filePath,
@@ -179,13 +178,14 @@ const createLibraryStore = (settings) => {
 
     const listShows = () => {
         const dir = ensureLibrary();
-        return fs.readdirSync(dir)
+        return storage.readdirSync(dir)
+            .map((entry) => entry.name)
             .filter((name) => name.toLowerCase().endsWith('.dmx'))
-            .map((name) => toShowSummary(path.join(dir, name)))
+            .map((name) => toShowSummary(storage.join(dir, name)))
             .sort((a, b) => b.modified - a.modified);
     };
 
-    const indexPath = () => path.join(ensureLibrary(), 'library.json');
+    const indexPath = () => storage.join(ensureLibrary(), 'library.json');
 
     const sanitizeFolderName = (name) => {
         const cleaned = String(name || '').trim().replace(INVALID_NAME, '').replace(/[. ]+$/g, '');
@@ -194,7 +194,7 @@ const createLibraryStore = (settings) => {
 
     const readIndexFile = () => {
         try {
-            const raw = JSON.parse(fs.readFileSync(indexPath(), 'utf8'));
+            const raw = JSON.parse(storage.readTextSync(indexPath()));
             return {
                 items: raw && Array.isArray(raw.items) ? raw.items : [],
                 collapsed: raw && Array.isArray(raw.collapsed)
@@ -208,11 +208,11 @@ const createLibraryStore = (settings) => {
     };
 
     const writeIndexFile = (items, collapsed) => {
-        fs.writeFileSync(indexPath(), `${JSON.stringify({
+        storage.writeFileSync(indexPath(), `${JSON.stringify({
             version: 1,
             items,
             collapsed: collapsed || []
-        }, null, 2)}\n`, 'utf8');
+        }, null, 2)}\n`);
     };
 
     const readIndexItems = () => readIndexFile().items;

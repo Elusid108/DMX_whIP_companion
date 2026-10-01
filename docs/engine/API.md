@@ -2,7 +2,9 @@
 
 The engine (`src/engine/`) is a headless Node package. Every UI, the companion's Electron renderer today and the console kiosk later, talks to it through one message-shaped, asynchronous API: **commands** (request/reply, change state), **queries** (request/reply, read state) and **events** (engine → client, subscription based). The same envelope works over Electron IPC now (through the in-process adapter in the main process) and over a WebSocket later. High-rate data uses a separate binary stream.
 
-`ENGINE_API_VERSION` lives in `src/engine/api/version.js` and is `1`.
+`ENGINE_API_VERSION` lives in `src/engine/api/version.js` and is `1`. Sections 8 to 10 (capabilities, lifecycle, discovery) are additive designs for the core/ports extraction (Phase K) and do not bump the version; the handshake already carries `capabilities`, and the new names are registered as they are built.
+
+Inside the engine the API router is the only thing a host talks to. The router calls **core** (`src/engine/core`, pure logic) which reaches the outside world only through **ports** (`src/engine/ports`: clock, scheduler, udp, storage, workers, discovery, midi, log) implemented by **adapters** (`src/adapters/node` today). A host assembles engine = core + adapters and gets a client; the envelope below is the same whatever the adapters are.
 
 ## 1. Envelope
 
@@ -58,6 +60,7 @@ The first request from any client is the query `engine.hello`:
 
 - `apiVersion` is `ENGINE_API_VERSION`. Version 1 accepts only `clientApiVersion: 1`; anything else gets `unsupported_version` with `data.apiVersion`.
 - Compatible additions (new commands, new optional payload fields, new event names) do not bump the version. Removing or renaming a name, changing a payload's meaning, or changing the stream frame layout does.
+- `capabilities` in the hello reply is the short feature list; the full, structured answer is the `engine.capabilities` query (§8).
 
 ## 4. Subscriptions and rate limits
 
@@ -101,6 +104,14 @@ High-rate binary data never travels as per-frame JSON. A client subscribes to a 
 | `engine.hello` | query | `{ clientApiVersion, client? }` → `{ apiVersion, appVersion, capabilities[] }` |
 | `engine.subscribe` | command | `{ name, maxHz?, stream? }` → `{ subscriptionId }` |
 | `engine.unsubscribe` | command | `{ subscriptionId }` → `{}` |
+| `engine.capabilities` | query | `{}` → capabilities object (§8) |
+| `engine.suspend` | command | `{ reason? }` → `{ success, suspended: true }` (§9) |
+| `engine.resume` | command | `{}` → `{ success, restored: { receive, live, playback } }` (§9) |
+| `engine.state` | query | `{}` → `{ lifecycle: "running" \| "suspended", since }` |
+| `engine.lifecycle` | event | `{ lifecycle, reason? }` on every transition |
+| `discovery.setStrategies` | command | `{ strategies: [...] }` (§10) → `{ success }` |
+| `discovery.state` | query | `{}` → `{ strategies, nodes: Node[] }` |
+| `discovery.nodes` | event | `{ nodes: Node[] }` debounced 150 ms |
 
 ### Receive and monitor
 
@@ -232,3 +243,61 @@ Direction: R→M = renderer to main (`invoke` unless marked `send`), M→R = mai
 The companion adapter (`src/main/engineHost.js`, tables in `src/main/engineChannels.js`) keeps every channel name and payload shape above, so `src/preload.js` and the renderer are unchanged in Phase J. `src/main/engineChannels.test.js` reconciles the tables with the preload allow-lists on every `npm test`.
 
 Additional queries built for hosts and tests: `playback.state` (source, transport flags, playhead, frame count, duration, network, session summary) and `record.state` (recording, filePath, elapsedMs, totalFrames). The `record.stats` event carries `forced: true` on the start/stop emits so a host can forward those even while Studio is hidden.
+
+## 8. Capabilities
+
+`engine.capabilities` tells a UI what this host can do, so one UI bundle can hide what is not there (no Flash tab on the console, no ffmpeg on a kiosk, no file dialogs on a tablet). The answer is a plain object; every key is optional and a missing key means "no". Hosts fill it from the adapters they wired; core never guesses.
+
+```json
+{
+  "apiVersion": 1,
+  "appVersion": "0.61.0",
+  "host": { "kind": "companion" | "console" | "headless" | "test", "platform": "win32" | "darwin" | "linux", "node": "22.22.2" },
+  "features": ["monitor", "live", "playback", "record", "library", "stream"],
+  "io": {
+    "udp": { "artnet": true, "sacn": true, "broadcast": true, "multicast": true },
+    "storage": { "library": true, "watch": false, "tmp": true },
+    "workers": true,
+    "midi": false,
+    "dialogs": false,
+    "ffmpeg": false,
+    "serial": false,
+    "cuebus": false
+  },
+  "discovery": ["artpollBroadcast", "unicastPoll", "manual", "knownNodes"],
+  "limits": { "gridStreamHz": 20, "snapshotHz": 5 }
+}
+```
+
+- `features` is the same list the hello reply carries.
+- `io` mirrors the ports the host wired: a key is `true` only when an adapter exists and reports ready. `dialogs`, `ffmpeg`, `serial` and `cuebus` are companion-side today and appear as `false` from the headless host; they are listed so a UI never has to probe.
+- `discovery` lists the strategies the `discovery` port supports on this host (§10).
+- `limits` are informational; the engine still enforces its own.
+
+The query is answered from what the host passed to `createEngine({ ports, hostIo })` (the Node port set carries `host`; `hostIo` names dialogs, ffmpeg, serial and cue bus) merged with each port's `describe()`. It is cheap and may be called at any time. Built in Phase K.
+
+## 9. Lifecycle
+
+Hosts need to park the engine without losing show state: a tablet going to the background, a console switching user, a Wi-Fi interface disappearing, a companion window hidden for a long time. Two commands and one event:
+
+| name | behavior |
+|---|---|
+| `engine.suspend` | Stops every timer and closes every socket (receivers, Live, playback senders, discovery) and flushes any open recording to disk (a recording in progress is stopped and saved, not lost, and `record.saved` is emitted). Playback is paused at its current position (the hold frame is not sent). Monitor state is frozen, not cleared; universes will be marked stale on resume if nothing arrives. Subscriptions are kept. Settings and the library index are already on disk. Replies `{ success, suspended: true }` and emits `engine.lifecycle { lifecycle: "suspended", reason }`. Idempotent. |
+| `engine.resume` | Rebinds the receivers on the saved NIC, reopens Live output (same CID, levels restored, nothing is sent until a level changes or the keep-alive tick fires), restores playback senders and leaves playback paused at the saved position (the UI decides whether to resume), restarts discovery with the saved strategies, and resumes the monitor tick if anyone is subscribed. Replies `{ success, restored: { receive: bool, live: bool, playback: bool } }`; a port that fails to come back (NIC gone) is `false` with an `unavailable` error in `result.errors[]`, and the rest still restores. Emits `engine.lifecycle { lifecycle: "running" }`. Idempotent. |
+| `engine.state` | `{ lifecycle, since }`. |
+
+Rules: while suspended every command that would touch I/O (`receive.setNic`, `artnet.poll`, `live.set`, `live.releaseAll`, `output.setNic`, `playback.toggle`, `playback.seek`, `player.play`, `record.start`, `punchIn.start`, `discovery.setStrategies`) returns `conflict` with `data.lifecycle: "suspended"` (a router guard); queries keep answering from frozen state. `engine.close()` (the host API, not a message) is unchanged: it stops everything and drops subscriptions. As built in Phase K: suspend finishes a punch-in take into the library (or stops a plain recording and emits `record.saved`), pauses a running transport, closes the Live and playback sockets and the receivers, and stops discovery polling; resume rebinds the receivers on the remembered NIC without clearing the monitor, marks Live dirty so its next tick resends, reopens the sockets of a paused transport and restarts the same discovery strategies. The companion keeps closing the engine on quit.
+
+## 10. Discovery strategies
+
+Node discovery must never depend on broadcast reaching the nodes (Wi-Fi client isolation, routed show networks, the console's second interface). The `discovery` port runs a list of strategies and merges their results into one node table keyed by MAC (falling back to IP):
+
+| strategy | config | what it does |
+|---|---|---|
+| `artpollBroadcast` | `{ nic, intervalMs: 2500 }` | today's behavior: ArtPoll to the broadcast address on the NIC, parse ArtPollReply, pairing rule from `src/main/ipc/network.js` `whipRejectReason()` |
+| `unicastPoll` | `{ ips: [...], intervalMs }` | the same ArtPoll sent unicast to each IP (ArtPollReply comes back unicast too) |
+| `manual` | `{ ip }` | one node by IP with no ArtPoll at all; identity comes from `/status` (companion side today) or stays `unknown` |
+| `knownNodes` | `{ nodes: [{ mac, ip, name }] }` | a persisted list (settings key `knownNodes`, additive, `version: 1`) polled by unicast and kept even while silent, marked stale instead of dropped |
+
+`discovery.setStrategies { strategies: [{ kind, ...config }] }` replaces the active set (an empty list stops polling and clears the table); `discovery.state` returns it with the persisted `knownNodes` and the merged `Node[]` (`{ id, mac, ip, name, longName, universes, bindIndex, oem, nodeReport, paired, rejectReason, pinned, stale, lastSeen, sources: ["artpollBroadcast", ...] }`); `discovery.nodes` is the debounced event. ArtPollReply parsing and the pairing rule are pure core; sending and receiving use the `udp` port. The HTTP side of a node (`/status`) is **not** part of discovery in this phase; the companion keeps doing it. As built in Phase K: all four strategies run in `src/engine/core/discovery.js` with a fake-clock test, `knownNodes` without a `nodes` list reads `settings.knownNodes`, with one it saves it; nothing polls until a host calls `discovery.setStrategies`, so the companion's own ArtPoll loop is unchanged. `artnet.poll` accepts an optional `dest` for a unicast poll.
+

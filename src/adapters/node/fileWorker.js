@@ -1,9 +1,9 @@
 // worker_threads entry: whole-file DMXREC walks run here so a large show
 // never stalls the main process (UDP receive, playback timing, IPC).
 const { parentPort } = require('worker_threads');
-const { scanRecording } = require('../services/shared/dmxRecording');
-const { sliceRecordingMulti } = require('../services/shared/dmxSlice');
-const { buildTimelineOverview } = require('../services/shared/timelineOverview');
+const { scanRecording } = require('../../services/shared/dmxRecording');
+const { sliceRecordingMulti } = require('../../services/shared/dmxSlice');
+const { buildTimelineOverview } = require('../../services/shared/timelineOverview');
 
 const ops = {
     scan: ({ filePath }) => scanRecording(filePath),

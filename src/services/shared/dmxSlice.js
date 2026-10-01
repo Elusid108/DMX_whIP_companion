@@ -122,7 +122,7 @@ const feed = (t, frameBuf, info) => {
         data = Buffer.alloc(UNIVERSE_SIZE);
         t.current.set(uni, data);
     }
-    frameBuf.copy(data, 0, 10, 10 + UNIVERSE_SIZE);
+    data.set(frameBuf.subarray(10, 10 + UNIVERSE_SIZE), 0);
     markDirty(t, uni);
 };
 

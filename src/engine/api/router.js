@@ -22,6 +22,9 @@ const createRouter = (options = {}) => {
     const byName = new Map();
     const changeListeners = new Set();
     let nextSub = 1;
+    // Optional host check run before every handler: returns an EngineError
+    // to refuse the request (the lifecycle guard) or null to let it through.
+    let guard = null;
 
     const register = (map, otherMap, kind, name, handler) => {
         if (typeof handler !== 'function') {
@@ -40,6 +43,12 @@ const createRouter = (options = {}) => {
         const bad = validateRequest(envelope);
         if (bad) {
             return replyError(envelope && typeof envelope.id === 'string' ? envelope.id : '', bad);
+        }
+        if (guard) {
+            const blocked = guard(envelope);
+            if (blocked) {
+                return replyError(envelope.id, blocked);
+            }
         }
         const map = envelope.kind === 'command' ? commands : queries;
         const handler = map.get(envelope.name);
@@ -204,6 +213,9 @@ const createRouter = (options = {}) => {
         query,
         handle,
         has: (name) => commands.has(name) || queries.has(name),
+        setGuard: (fn) => {
+            guard = typeof fn === 'function' ? fn : null;
+        },
         subscribe,
         unsubscribe,
         hasSubscribers,
