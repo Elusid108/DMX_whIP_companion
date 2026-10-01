@@ -2,7 +2,7 @@
 
 Companion application for DMX whIP to monitor, record, and play back network DMX (Art-Net and sACN).
 
-**Version:** 0.61.0
+**Version:** 0.61.1
 
 ## How to run
 
@@ -138,6 +138,19 @@ Behavior-preserving only: no new features. The engine is a Node package with no 
 - [ ] Walk the README behaviors by hand (record, play, live merge, Push to SD, MIDI control) and note the results
 - [x] Add a headless entry point that starts the engine with no window; verify it on a Pi 5 or any Linux box
 - [x] Bump the minor version and update Current state
+
+### Phase K — Headless engine extraction
+Behavior-preserving only: no new features. Engine core has no Electron, DOM or Node built-in imports; I/O goes through ports. Device discovery, push and show sync move in a later phase.
+- [x] Write the engine API doc (envelope, commands, queries, events, capabilities, lifecycle) and add an API version constant
+- [ ] Create src/engine/core and src/engine/ports; add a check that fails npm test if core imports Electron, Node built-ins or the DOM
+- [ ] Add Node adapters (UDP, clock/timers, storage) and an in-process client for the message envelope
+- [ ] Move Art-Net/sACN receive, send and monitor state behind the API
+- [ ] Move clock-based playback and the live-output merge behind the API
+- [ ] Convert the existing IPC handlers into thin adapters that call the engine
+- [ ] Add a loopback regression test: play a look, record it back, compare packets (alongside the sACN encoder check)
+- [ ] Walk the README behaviors by hand (record, play, live merge, Push to SD, MIDI control) and note the results
+- [ ] Add a headless entry point that starts the engine with no window; verify on Linux, then on the CM5 under Raspberry Pi OS
+- [ ] Bump the minor version and update Current state
 
 ### Backlog (not started unless agreed)
 
