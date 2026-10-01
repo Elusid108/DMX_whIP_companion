@@ -11,7 +11,10 @@ const { createRouter } = require('./api/router');
 const { assertPorts } = require('./ports');
 const { createInProcessClient } = require('./api/inProcess');
 const { ENGINE_API_VERSION } = require('./api/version');
-const { createReceive } = require('./receive');
+const { createReceive } = require('./core/receive');
+const { createOwnOutput } = require('./core/ownOutput');
+const { createArtNetSender, createSacnOutput } = require('./core/send');
+const { createDiscovery } = require('./core/discovery');
 const { createDefaultLiveOutput } = require('./output/liveOutput');
 const { createRecording } = require('./recording');
 const { createPlayback } = require('./playback');
@@ -33,8 +36,41 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports: portsIn, udpPorts
         clearTimer: io.scheduler.clearTimeout
     });
     const ports = udpPorts;
-    const receive = createReceive({ router, ports });
-    const live = createDefaultLiveOutput({ settings, ports });
+    const ownOutput = createOwnOutput({ localIps: io.udp.localIps, now: io.clock.now });
+    // Senders for playback and Live: ephemeral sockets through the udp port.
+    // Playback gets a new random sACN CID per Play, as before.
+    const senders = {
+        artnet: () => createArtNetSender({ udp: io.udp, ownOutput, log: io.log, port: udpPorts.artnet }),
+        sacn: ({ sourceName, iface, cid, priority } = {}) => createSacnOutput({
+            udp: io.udp,
+            ownOutput,
+            log: io.log,
+            port: udpPorts.sacn,
+            cid: cid || io.random.bytes(16),
+            sourceName,
+            iface,
+            priority
+        })
+    };
+    const receive = createReceive({
+        router,
+        udp: io.udp,
+        clock: io.clock,
+        scheduler: io.scheduler,
+        log: io.log,
+        ownOutput,
+        udpPorts
+    });
+    const discovery = createDiscovery({
+        router,
+        clock: io.clock,
+        scheduler: io.scheduler,
+        log: io.log,
+        settings,
+        poll: (dest) => receive.sendPoll(dest),
+        onPollReply: (fn) => receive.onPollReply(fn)
+    });
+    const live = createDefaultLiveOutput({ settings, io, senders });
     {
         const s = settings.load();
         live.configure({ nic: s.outputNic, dest: s.live.dest });
@@ -43,7 +79,7 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports: portsIn, udpPorts
     const recording = createRecording({ router });
     receive.setRecording(recording);
     recording.onStateChange(() => receive.syncEmit());
-    const playback = createPlayback({ router, recording, liveOutput: live, library, ports });
+    const playback = createPlayback({ router, recording, liveOutput: live, library, ports, senders, io });
 
     router.query('network.interfaces', () => io.udp.interfaces());
 
@@ -65,7 +101,7 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports: portsIn, udpPorts
             serial: Boolean(hostIo.serial),
             cuebus: Boolean(hostIo.cuebus)
         },
-        discovery: ['artpollBroadcast'],
+        discovery: ['artpollBroadcast', 'unicastPoll', 'manual', 'knownNodes'],
         limits: { gridStreamHz: 20, snapshotHz: 5 }
     }));
 
@@ -110,6 +146,7 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports: portsIn, udpPorts
         }
         closed = true;
         playback.close();
+        discovery.close();
         receive.close();
         recording.close();
         live.shutdown();
@@ -123,6 +160,8 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports: portsIn, udpPorts
         io,
         ports,
         receive,
+        discovery,
+        ownOutput,
         live,
         library,
         recording,

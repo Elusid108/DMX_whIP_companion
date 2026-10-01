@@ -144,7 +144,7 @@ Behavior-preserving only: no new features. Engine core has no Electron, DOM or N
 - [x] Write the engine API doc (envelope, commands, queries, events, capabilities, lifecycle) and add an API version constant
 - [x] Create src/engine/core and src/engine/ports; add a check that fails npm test if core imports Electron, Node built-ins or the DOM
 - [x] Add Node adapters (UDP, clock/timers, storage) and an in-process client for the message envelope
-- [ ] Move Art-Net/sACN receive, send and monitor state behind the API
+- [x] Move Art-Net/sACN receive, send and monitor state behind the API
 - [ ] Move clock-based playback and the live-output merge behind the API
 - [ ] Convert the existing IPC handlers into thin adapters that call the engine
 - [ ] Add a loopback regression test: play a look, record it back, compare packets (alongside the sACN encoder check)

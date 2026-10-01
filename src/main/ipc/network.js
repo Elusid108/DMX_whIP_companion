@@ -84,41 +84,9 @@ function nicInfo(interfaceIp) {
     return match || { name: 'Unknown', ip: interfaceIp || '0.0.0.0' };
 }
 
-function deviceId(reply) {
-    if (reply.mac && reply.mac !== '00:00:00:00:00:00') {
-        return reply.mac;
-    }
-    return reply.ip || reply.sourceIp;
-}
-
-const WHIP_OEM = 0x00FF;
-const WHIP_REPORT = /^#0001 \[[0-9a-f]{4}\] .+ v\d+\.\d+\.\d+/i;
-
-function isWhipPollReply(reply) {
-    return !whipRejectReason(reply);
-}
-
-function whipRejectReason(reply) {
-    if (!reply) {
-        return 'no-reply';
-    }
-    if (reply.oem !== WHIP_OEM) {
-        return `oem:${reply.oem}`;
-    }
-    if (reply.bindIndex !== 1) {
-        return `bind:${reply.bindIndex}`;
-    }
-    if (reply.portType !== 0x80) {
-        return `port:${reply.portType}`;
-    }
-    if (reply.style !== 0) {
-        return `style:${reply.style}`;
-    }
-    if (!WHIP_REPORT.test(String(reply.nodeReport || ''))) {
-        return `report:${reply.nodeReport || ''}`;
-    }
-    return '';
-}
+// The pairing rule is core code (src/engine/core/artnet/pairing.js, owner:
+// firmware artnet_rx.cpp); re-exported here under its long-standing name.
+const { WHIP_OEM, WHIP_REPORT, whipRejectReason, isWhipPollReply, deviceId } = require('../../engine/core/artnet/pairing');
 
 // Devices, push, OTA and node HTTP. Receive and the universe monitor live
 // in the engine; this module hears ArtPollReply through the engine host.
@@ -1021,3 +989,4 @@ function setupNetworkHandlers(mainWindow, engineHost) {
 }
 
 module.exports = setupNetworkHandlers;
+module.exports.whipRejectReason = whipRejectReason;

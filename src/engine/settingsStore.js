@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { normalizePixels } = require('../services/shared/pixelMap');
 const { normalizeLive } = require('../services/shared/liveControl');
+const { normalizeKnownNodes } = require('./core/discovery');
 
 const defaultSdPins = { cs: 7, mosi: 6, clk: 5, miso: 4 };
 
@@ -95,7 +96,9 @@ const normalize = (raw = {}, defaultLibraryDir) => ({
     // Output adapter for playback and Live (the Settings menu's Output NIC).
     outputNic: typeof raw.outputNic === 'string' && /^[\d.]{7,15}$/.test(raw.outputNic) ? raw.outputNic : '0.0.0.0',
     live: normalizeLive(raw.live),
-    liveCid: typeof raw.liveCid === 'string' && /^[0-9a-f]{32}$/.test(raw.liveCid) ? raw.liveCid : ''
+    liveCid: typeof raw.liveCid === 'string' && /^[0-9a-f]{32}$/.test(raw.liveCid) ? raw.liveCid : '',
+    // Nodes to find by unicast when broadcast cannot reach them (schema 1).
+    knownNodes: normalizeKnownNodes(raw.knownNodes)
 });
 
 // { filePath, defaultLibraryDir } -> { load(), save(patch), getLibraryDir(), filePath }

@@ -1,6 +1,8 @@
-// Consoles often send an idle universe only about once a second (Art-Net
-// and sACN keep-alives), so "inactive" follows the E1.31 data-loss timeout
-// (2.5 s) rather than the frame rate.
+// Universe monitor state: per protocol/universe levels with woken channels,
+// FPS over a 1 s window, stale after 2.5 s (the E1.31 data-loss timeout, so
+// a console's once-a-second keep-alive stays active), removed after 10 s. A
+// 50 ms tick emits the snapshot every 200 ms and the selected grid whenever
+// dirty, and runs only while something wants to show them.
 const STALE_MS = 2500;
 const REMOVE_MS = 10000;
 const TICK_MS = 50;
@@ -11,7 +13,7 @@ const emptyGrid = () => new Array(512).fill(null);
 
 const packLevels = (values) => {
     const out = new Uint8Array(512);
-    for (let i = 0; i < 512; i++) {
+    for (let i = 0; i < 512; i += 1) {
         const value = values[i];
         out[i] = value == null ? 0 : value;
     }
@@ -20,8 +22,11 @@ const packLevels = (values) => {
 
 const keyFor = (protocol, universe) => `${protocol}-${universe}`;
 
+// deps: { clock, scheduler }
 class UniverseMonitor {
-    constructor() {
+    constructor({ clock, scheduler }) {
+        this.clock = clock;
+        this.scheduler = scheduler;
         this.universes = new Map();
         this.selectedProtocol = null;
         this.selectedUniverse = null;
@@ -54,9 +59,9 @@ class UniverseMonitor {
         const wanted = Boolean((this.onSnapshot || this.onGrid) && (this.emitSnapshot || this.emitGrid));
         if (wanted && !this.interval) {
             this.lastSnapshotAt = 0;
-            this.interval = setInterval(() => this.tick(), TICK_MS);
+            this.interval = this.scheduler.setInterval(() => this.tick(), TICK_MS);
         } else if (!wanted && this.interval) {
-            clearInterval(this.interval);
+            this.scheduler.clearInterval(this.interval);
             this.interval = null;
         }
     }
@@ -65,7 +70,7 @@ class UniverseMonitor {
         this.onSnapshot = onSnapshot;
         this.onGrid = onGrid;
         if (this.interval) {
-            clearInterval(this.interval);
+            this.scheduler.clearInterval(this.interval);
             this.interval = null;
         }
         this.gridDirty = true;
@@ -74,7 +79,7 @@ class UniverseMonitor {
 
     stop() {
         if (this.interval) {
-            clearInterval(this.interval);
+            this.scheduler.clearInterval(this.interval);
             this.interval = null;
         }
         this.onSnapshot = null;
@@ -103,11 +108,9 @@ class UniverseMonitor {
         if (!protocol || universe == null) {
             return;
         }
-
         const key = keyFor(protocol, universe);
-        const now = Date.now();
+        const now = this.clock.now();
         let entry = this.universes.get(key);
-
         if (!entry) {
             entry = {
                 protocol,
@@ -123,7 +126,6 @@ class UniverseMonitor {
             };
             this.universes.set(key, entry);
         }
-
         entry.sourceIp = sourceIp || entry.sourceIp;
         if (sourceName) {
             entry.sourceName = sourceName;
@@ -137,15 +139,14 @@ class UniverseMonitor {
         this.refreshFps(entry, now);
 
         const data = dmxData || [];
-        for (let i = 0; i < 512; i++) {
+        for (let i = 0; i < 512; i += 1) {
             const value = Number(data[i]) || 0;
             if (value > 0 || entry.values[i] !== null) {
                 entry.values[i] = Math.min(255, Math.max(0, value));
             }
         }
-
         let woken = 0;
-        for (let i = 0; i < 512; i++) {
+        for (let i = 0; i < 512; i += 1) {
             if (entry.values[i] !== null) {
                 woken += 1;
             }
@@ -153,7 +154,7 @@ class UniverseMonitor {
         entry.activeChannels = woken;
     }
 
-    refreshFps(entry, now = Date.now()) {
+    refreshFps(entry, now = this.clock.now()) {
         const cutoff = now - FPS_WINDOW_MS;
         while (entry.frameTimes.length && entry.frameTimes[0] <= cutoff) {
             entry.frameTimes.shift();
@@ -162,7 +163,7 @@ class UniverseMonitor {
     }
 
     tick() {
-        const now = Date.now();
+        const now = this.clock.now();
         for (const [key, entry] of this.universes) {
             const age = now - entry.lastSeen;
             if (age > REMOVE_MS) {
@@ -202,7 +203,6 @@ class UniverseMonitor {
         if (!this.onSnapshot) {
             return;
         }
-
         const artnet = [];
         const sacn = [];
         const levels = { artnet: {}, sacn: {} };
@@ -227,28 +227,17 @@ class UniverseMonitor {
             return;
         }
         this.gridDirty = false;
-
         const protocol = this.selectedProtocol;
         const universe = this.selectedUniverse;
         if (protocol == null || universe == null) {
-            this.onGrid({
-                protocol,
-                universe,
-                data: emptyGrid()
-            });
+            this.onGrid({ protocol, universe, data: emptyGrid() });
             return;
         }
-
         const entry = this.universes.get(keyFor(protocol, universe));
         if (!entry) {
-            this.onGrid({
-                protocol,
-                universe,
-                data: emptyGrid()
-            });
+            this.onGrid({ protocol, universe, data: emptyGrid() });
             return;
         }
-
         this.onGrid({
             protocol,
             universe,
@@ -259,4 +248,6 @@ class UniverseMonitor {
     }
 }
 
-module.exports = UniverseMonitor;
+const createUniverseMonitor = (deps) => new UniverseMonitor(deps);
+
+module.exports = { UniverseMonitor, createUniverseMonitor, STALE_MS, REMOVE_MS, TICK_MS, SNAPSHOT_MS, FPS_WINDOW_MS };

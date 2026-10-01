@@ -7,8 +7,6 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const ArtNetSender = require('../services/artnet/sender');
-const { SacnOutput } = require('../services/sacn/output');
 const { parseRecording, writeRecording } = require('../services/shared/dmxRecording');
 const { buildTimelineOverviewFromFrames } = require('../services/shared/timelineOverview');
 const { runFileTask } = require('./fileTasks');
@@ -83,9 +81,12 @@ const EVENT_NAMES = {
     'punch-in-failed': 'punchIn.failed'
 };
 
-function createPlayback({ router, recording: recordingHandler = null, liveOutput = null, library, ports = {} } = {}) {
+function createPlayback({ router, recording: recordingHandler = null, liveOutput = null, library, ports = {}, senders, io } = {}) {
     if (!router || !library) {
         throw new Error('Playback needs the router and the library store');
+    }
+    if (!senders || typeof senders.artnet !== 'function' || typeof senders.sacn !== 'function') {
+        throw new Error('Playback needs the engine senders');
     }
     const {
         ensureLibrary,
@@ -372,17 +373,13 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         const seq = senderSeq;
         activeNetwork = playbackNetwork || '0.0.0.0';
 
-        const art = new ArtNetSender({ port: ports.artnet });
+        const art = senders.artnet();
         let sacn = null;
         try {
             await art.start(activeNetwork);
             const universes = sacnUniversesInClip();
             if (universes.length > 0 || options.forceSacn) {
-                sacn = new SacnOutput({
-                    sourceName: 'DMX whIP Playback',
-                    iface: activeNetwork,
-                    port: ports.sacn
-                });
+                sacn = senders.sacn({ sourceName: 'DMX whIP Playback', iface: activeNetwork });
                 await sacn.start();
             }
         } catch (err) {
