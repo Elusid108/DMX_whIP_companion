@@ -8,6 +8,7 @@ const {
 const DISCOVERY_TIMEOUT_MS = 20000;
 const DISCOVERY_SWEEP_MS = 1000;
 const RECV_BUFFER = 1024 * 1024;
+const SACN_PORT = 5568;
 
 const membershipIface = (interfaceIp) => {
     if (!interfaceIp || interfaceIp === '0.0.0.0') {
@@ -17,7 +18,9 @@ const membershipIface = (interfaceIp) => {
 };
 
 class SacnReceiver {
-    constructor() {
+    // options.port: listen port (default 5568; tests use others).
+    constructor(options = {}) {
+        this.port = Number(options.port) || SACN_PORT;
         this.socket = null;
         this.interfaceIp = null;
         this.callbacks = new Map();
@@ -50,7 +53,7 @@ class SacnReceiver {
 
                 this.socket.on('listening', () => {
                     this.socket.removeListener('error', onBindError);
-                    console.log('sACN receiver listening on port 5568');
+                    console.log(`sACN receiver listening on port ${this.port}`);
 
                     try {
                         this.socket.setRecvBufferSize(RECV_BUFFER);
@@ -92,7 +95,7 @@ class SacnReceiver {
                     console.error('sACN receiver error:', err);
                 });
 
-                this.socket.bind(5568, interfaceIp);
+                this.socket.bind(this.port, interfaceIp);
             } catch (error) {
                 console.error('Error setting up sACN receiver:', error);
                 reject(error);
@@ -238,3 +241,4 @@ class SacnReceiver {
 }
 
 module.exports = SacnReceiver;
+module.exports.SACN_PORT = SACN_PORT;

@@ -1,12 +1,17 @@
-const { ipcMain, dialog, BrowserWindow } = require('electron');
+// Playback transport (clock scheduler, senders, the Live HTP merge), the
+// Studio compilation session (clips, undo/redo, audio lane, save/export) and
+// punch-in recording. Moved whole from src/main/ipc/playback.js: IPC
+// handlers became router commands and queries, renderer pushes became
+// events, and the three dialog-bound paths (file picker, audio picker +
+// ffmpeg, unsaved prompt) stayed in the companion.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const ArtNetSender = require('../../services/artnet/sender');
-const { SacnOutput } = require('../../services/sacn/output');
-const { parseRecording, writeRecording } = require('../../services/shared/dmxRecording');
-const { buildTimelineOverviewFromFrames } = require('../../services/shared/timelineOverview');
-const { runFileTask } = require('../fileTasks');
+const ArtNetSender = require('../services/artnet/sender');
+const { SacnOutput } = require('../services/sacn/output');
+const { parseRecording, writeRecording } = require('../services/shared/dmxRecording');
+const { buildTimelineOverviewFromFrames } = require('../services/shared/timelineOverview');
+const { runFileTask } = require('./fileTasks');
 const {
     newId,
     mediaDurationMs,
@@ -32,8 +37,8 @@ const {
     trackHasOverlap,
     liveFrameKey,
     blendLookAtWithLive
-} = require('../../services/shared/compilationEdl');
-const { describeWav } = require('../../services/shared/audioWav');
+} = require('../services/shared/compilationEdl');
+const { describeWav } = require('../services/shared/audioWav');
 const {
     normalizeTriggerConfig,
     createWatch,
@@ -44,19 +49,7 @@ const {
     omitTriggerChannel,
     formatLookTimestamp,
     isRedundantCompilation
-} = require('../../services/shared/recordTriggers');
-const { convertToStudioWav, tempWavPath } = require('../audioConvert');
-const { studioVisible } = require('../uiView');
-const { getLiveOutput } = require('../liveOutput');
-const {
-    ensureLibrary,
-    uniqueDmxPath,
-    uniqueCompPath,
-    writeSidecar,
-    sanitizeBaseName,
-    listLibrary,
-    assertInLibrary
-} = require('./library');
+} = require('../services/shared/recordTriggers');
 
 const ZERO_DMX = new Uint8Array(512);
 
@@ -77,11 +70,32 @@ const safeMediaId = (id) => {
 };
 
 let audioVersionSeq = 0;
-const AUDIO_FILTERS = [
-    { name: 'Audio', extensions: ['wav', 'aiff', 'aif', 'mp3', 'm4a', 'flac', 'ogg'] }
-];
 
-function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
+// Renderer channel names the moved code still uses -> engine event names.
+const EVENT_NAMES = {
+    'playback-stats': 'playback.stats',
+    'file-loaded': 'playback.fileLoaded',
+    'compilation-updated': 'studio.compilationUpdated',
+    'library-updated': 'library.updated',
+    'punch-in-progress': 'punchIn.progress',
+    'punch-in-started': 'punchIn.started',
+    'punch-in-auto-stopped': 'punchIn.autoStopped',
+    'punch-in-failed': 'punchIn.failed'
+};
+
+function createPlayback({ router, recording: recordingHandler = null, liveOutput = null, library, ports = {} } = {}) {
+    if (!router || !library) {
+        throw new Error('Playback needs the router and the library store');
+    }
+    const {
+        ensureLibrary,
+        uniqueDmxPath,
+        uniqueCompPath,
+        writeSidecar,
+        sanitizeBaseName,
+        listLibrary,
+        assertInLibrary
+    } = library;
     let playbackData = null;
     let playerData = null;
     let activeSource = 'studio';
@@ -118,7 +132,9 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     let senderSeq = 0;
     let sentAudioVersion = -1;
     const HISTORY_CAP = 100;
-    const liveOutput = getLiveOutput();
+    if (!liveOutput) {
+        throw new Error('Playback needs the engine live output');
+    }
     // Last frame sent per 'protocol:universe' while the sockets are open.
     const lastByUniverse = new Map();
     liveOutput.attachPlayback({
@@ -186,10 +202,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     }
 
     const sendSafe = (channel, payload) => {
-        if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
-            return;
-        }
-        mainWindow.webContents.send(channel, payload);
+        router.emit(EVENT_NAMES[channel], payload);
     };
 
     const clipDurationMs = () => {
@@ -359,7 +372,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         const seq = senderSeq;
         activeNetwork = playbackNetwork || '0.0.0.0';
 
-        const art = new ArtNetSender();
+        const art = new ArtNetSender({ port: ports.artnet });
         let sacn = null;
         try {
             await art.start(activeNetwork);
@@ -367,7 +380,8 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             if (universes.length > 0 || options.forceSacn) {
                 sacn = new SacnOutput({
                     sourceName: 'DMX whIP Playback',
-                    iface: activeNetwork
+                    iface: activeNetwork,
+                    port: ports.sacn
                 });
                 await sacn.start();
             }
@@ -993,30 +1007,20 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         return map;
     };
 
-    ipcMain.removeHandler('load-recording');
-    ipcMain.handle('load-recording', async (event, payload = {}) => {
+    // The companion shows the file picker when the renderer names no path.
+    router.command('playback.load', async (payload = {}) => {
+        const filePath = payload && payload.filePath;
+        if (!filePath) {
+            const result = { success: false, error: 'No file selected' };
+            sendSafe('file-loaded', result);
+            return result;
+        }
         try {
-            let filePath = payload && payload.filePath;
-            if (!filePath) {
-                const { filePaths, canceled } = await dialog.showOpenDialog({
-                    title: 'Load Recording',
-                    filters: [{ name: 'DMX Recordings', extensions: ['dmx'] }],
-                    properties: ['openFile']
-                });
-
-                if (canceled || !filePaths || !filePaths.length) {
-                    const result = { success: false, error: 'No file selected' };
-                    sendSafe('file-loaded', result);
-                    return result;
-                }
-                filePath = filePaths[0];
-            } else {
-                const active = recordingHandler && recordingHandler.getRecordingPath
-                    ? recordingHandler.getRecordingPath()
-                    : null;
-                if (!active || path.resolve(active) !== path.resolve(filePath)) {
-                    assertInLibrary(filePath);
-                }
+            const active = recordingHandler && recordingHandler.getRecordingPath
+                ? recordingHandler.getRecordingPath()
+                : null;
+            if (!active || path.resolve(active) !== path.resolve(filePath)) {
+                assertInLibrary(filePath);
             }
 
             return await loadFromPath(filePath, payload.displayName);
@@ -1030,8 +1034,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.removeHandler('timeline-overview');
-    ipcMain.handle('timeline-overview', async (event, payload = {}) => {
+    router.query('playback.overview', async (payload = {}) => {
         try {
             if (playbackData && playbackData.length && (!payload.filePath || editSession.kind === 'compilation')) {
                 const overview = buildTimelineOverviewFromFrames(playbackData, {
@@ -1063,8 +1066,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.removeHandler('load-compilation');
-    ipcMain.handle('load-compilation', async (event, payload = {}) => {
+    router.command('playback.loadCompilation', async (payload = {}) => {
         try {
             const trackId = Math.max(0, Math.round(Number(payload.trackId) || 0));
             const append = Boolean(payload.append) && canAppendToSession();
@@ -1097,8 +1099,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.removeHandler('inspect-clip');
-    ipcMain.handle('inspect-clip', async (event, payload = {}) => {
+    router.query('studio.inspectClip', async (payload = {}) => {
         try {
             const clip = editSession.clips.find((item) => item.id === payload.clipId);
             if (!clip) {
@@ -1110,35 +1111,25 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.removeHandler('import-audio');
-    ipcMain.handle('import-audio', async (event, payload = {}) => {
+    // wavPath is a 16-bit 44.1 kHz stereo WAV the companion already made
+    // with ffmpeg from the picked file; name is the picked file's name.
+    router.command('studio.audio.add', async (payload = {}) => {
         try {
             if (editSession.kind !== 'compilation' || editSession.clips.length === 0) {
                 throw new Error('Load a look or compilation first');
             }
-            // Audio always comes from the picker; the renderer never names a path.
-            let filePath = null;
-            {
-                const { filePaths, canceled } = await dialog.showOpenDialog({
-                    title: 'Import audio',
-                    filters: AUDIO_FILTERS,
-                    properties: ['openFile']
-                });
-                if (canceled || !filePaths || !filePaths.length) {
-                    return { success: false, error: 'No file selected' };
-                }
-                filePath = filePaths[0];
+            const dest = typeof payload.wavPath === 'string' ? payload.wavPath : '';
+            if (!dest) {
+                return { success: false, error: 'No file selected' };
             }
             const mediaId = newId();
-            const dest = tempWavPath(mediaId);
-            await convertToStudioWav(filePath, dest);
             const bytes = await fs.promises.readFile(dest);
             const info = rememberAudio(mediaId, dest, bytes);
             pushHistory();
             const startMs = Math.max(0, Math.round(Number(payload.startMs) || 0));
             editSession.audioClips.push({
                 id: newId(),
-                name: path.parse(filePath).name || 'Audio',
+                name: (typeof payload.name === 'string' && payload.name) || path.parse(dest).name || 'Audio',
                 mediaId,
                 startMs,
                 sourceInMs: 0,
@@ -1153,8 +1144,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.removeHandler('edit-compilation');
-    ipcMain.handle('edit-compilation', async (event, payload = {}) => {
+    router.command('studio.edit', async (payload = {}) => {
         try {
             if (editSession.kind !== 'compilation') {
                 throw new Error('No compilation is loaded');
@@ -1377,8 +1367,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.removeHandler('undo-compilation');
-    ipcMain.handle('undo-compilation', async () => {
+    router.command('studio.undo', async () => {
         try {
             if (!undoStack.length) {
                 return { success: false, error: 'Nothing to undo' };
@@ -1395,8 +1384,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.removeHandler('redo-compilation');
-    ipcMain.handle('redo-compilation', async () => {
+    router.command('studio.redo', async () => {
         try {
             if (!redoStack.length) {
                 return { success: false, error: 'Nothing to redo' };
@@ -1413,34 +1401,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.removeHandler('confirm-unsaved-compilation');
-    ipcMain.handle('confirm-unsaved-compilation', async (event, payload = {}) => {
-        const win = event && event.sender
-            ? BrowserWindow.fromWebContents(event.sender)
-            : null;
-        const reason = payload && payload.reason === 'leave' ? 'leave' : 'new';
-        const options = {
-            type: 'question',
-            buttons: ['Save', "Don't Save", 'Cancel'],
-            defaultId: 0,
-            cancelId: 2,
-            title: 'Unsaved compilation',
-            message: 'The compilation has unsaved changes.',
-            detail: reason === 'leave'
-                ? 'Save it before leaving Studio?'
-                : 'Save it before clearing Studio?'
-        };
-        const result = win
-            ? await dialog.showMessageBox(win, options)
-            : await dialog.showMessageBox(options);
-        const choice = result.response === 0
-            ? 'save'
-            : (result.response === 1 ? 'discard' : 'cancel');
-        return { choice };
-    });
-
-    ipcMain.removeHandler('save-compilation');
-    ipcMain.handle('save-compilation', async (event, payload = {}) => {
+    router.command('studio.save', async (payload = {}) => {
         try {
             if (editSession.kind !== 'compilation' || editSession.clips.length === 0) {
                 throw new Error('No compilation is loaded');
@@ -1501,8 +1462,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.removeHandler('export-flattened');
-    ipcMain.handle('export-flattened', async (event, payload = {}) => {
+    router.command('studio.exportFlattened', async (payload = {}) => {
         try {
             const frames = flattenToFrames(editSession.media, editSession.clips, { ignoreDest: true });
             if (!frames.length) {
@@ -1579,9 +1539,6 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         );
         for (const frame of blended) {
             outputFrame(frame, false);
-        }
-        if (!studioVisible()) {
-            return;
         }
         const now = Date.now();
         if (now - lastPunchProgressAt < 100) {
@@ -1868,8 +1825,7 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         });
     }
 
-    ipcMain.removeHandler('start-punch-in');
-    ipcMain.handle('start-punch-in', async (event, payload = {}) => {
+    router.command('punchIn.start', async (payload = {}) => {
         try {
             if (!recordingHandler || !recordingHandler.start) {
                 throw new Error('Recording is unavailable');
@@ -1918,11 +1874,9 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
     });
 
-    ipcMain.removeHandler('stop-punch-in');
-    ipcMain.handle('stop-punch-in', async () => finishPunchIn({ notify: false }));
+    router.command('punchIn.stop', async () => finishPunchIn({ notify: false }));
 
-    ipcMain.removeHandler('cancel-punch-in');
-    ipcMain.handle('cancel-punch-in', async () => {
+    router.command('punchIn.cancel', async () => {
         try {
             if (recordingHandler && recordingHandler.isRecording()) {
                 recordingHandler.stop({ emitSaved: false });
@@ -1939,7 +1893,10 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     const onSetLoop = (event, payload = {}) => {
         loopEnabled = Boolean(payload.loop);
     };
-    ipcMain.on('set-playback-loop', onSetLoop);
+    router.command('playback.setLoop', (payload) => {
+        onSetLoop(null, payload);
+        return { success: true };
+    });
 
     const onToggle = async (event, { loop, playbackNetwork, source } = {}) => {
         const wanted = source === 'player' ? 'player' : 'studio';
@@ -1999,7 +1956,10 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             startingPlayback = false;
         }
     };
-    ipcMain.on('toggle-playback', onToggle);
+    router.command('playback.toggle', async (payload) => {
+        await onToggle(null, payload);
+        return { success: true };
+    });
 
     const onSeek = async (event, payload = {}) => {
         const wanted = payload.source === 'player' ? 'player' : 'studio';
@@ -2029,7 +1989,10 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
             console.error('Error seeking playback:', error);
         }
     };
-    ipcMain.on('seek-playback', onSeek);
+    router.command('playback.seek', async (payload) => {
+        await onSeek(null, payload);
+        return { success: true };
+    });
 
     const onStop = (event, payload = {}) => {
         if (payload && payload.source && payload.source !== activeSource) {
@@ -2037,10 +2000,12 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         }
         stopPlaybackInternal(false);
     };
-    ipcMain.on('stop-playback', onStop);
+    router.command('playback.stop', (payload) => {
+        onStop(null, payload);
+        return { success: true };
+    });
 
-    ipcMain.removeHandler('player-play');
-    ipcMain.handle('player-play', async (event, { filePath, playbackNetwork, loop } = {}) => {
+    router.command('player.play', async ({ filePath, playbackNetwork, loop } = {}) => {
         try {
             if (recordingHandler && recordingHandler.isRecording()) {
                 return { success: false, error: 'Recording in progress' };
@@ -2091,25 +2056,35 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
         redoStack = [];
         clipClipboard = { light: [], audio: [] };
     };
-    ipcMain.on('unload-recording', onUnload);
+    router.command('playback.unload', () => {
+        onUnload();
+        return { success: true };
+    });
 
-    const HANDLED = [
-        'load-recording', 'timeline-overview', 'load-compilation', 'inspect-clip',
-        'import-audio', 'edit-compilation', 'undo-compilation', 'redo-compilation',
-        'confirm-unsaved-compilation', 'save-compilation', 'export-flattened',
-        'start-punch-in', 'stop-punch-in', 'cancel-punch-in', 'player-play'
-    ];
+    router.query('studio.audioPath', ({ mediaId } = {}) => ({ filePath: resolveAudioPath(mediaId) }));
+
+    // What is loaded and playing, for hosts and tests.
+    router.query('playback.state', () => ({
+        source: activeSource,
+        isPlaying,
+        isPaused,
+        loop: loopEnabled,
+        playheadMs: playheadClockMs(),
+        frameCount: (activeFrames() || []).length,
+        durationMs: activeEndMs(),
+        network: activeNetwork,
+        session: editSession.kind ? {
+            name: editSession.name,
+            projectPath: editSession.projectPath,
+            dirty: editSession.dirty,
+            clips: publicClips(editSession.clips)
+        } : null
+    }));
 
     const close = () => {
         clearPunchIn({ deleteTemp: true });
         haltTransport({ cleanup: true });
         liveOutput.attachPlayback(null);
-        HANDLED.forEach((channel) => ipcMain.removeHandler(channel));
-        ipcMain.removeListener('set-playback-loop', onSetLoop);
-        ipcMain.removeListener('toggle-playback', onToggle);
-        ipcMain.removeListener('seek-playback', onSeek);
-        ipcMain.removeListener('stop-playback', onStop);
-        ipcMain.removeListener('unload-recording', onUnload);
         if (recordingHandler && recordingHandler.setObserver) {
             recordingHandler.setObserver(null);
         }
@@ -2118,4 +2093,4 @@ function setupPlaybackHandlers(mainWindow, recordingHandler = null) {
     return { resolveAudioPath, close };
 }
 
-module.exports = setupPlaybackHandlers;
+module.exports = { createPlayback };
