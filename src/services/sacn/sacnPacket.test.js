@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { Packet } = require('sacn/dist/packet');
-const { createSacnDmxPacket, parseSacnPacket } = require('./utils');
+const { createSacnDmxPacket, parseSacnPacket } = require('../../engine/core/sacn/packet');
 
 const cid = Buffer.from('00112233445566778899aabbccddeeff', 'hex');
 const levels = () => {
@@ -34,7 +34,7 @@ test('E1.31 data packet is byte-identical to the sacn reference encoder', () => 
         useRawDmxValues: true
     }).buffer;
     assert.equal(packet.length, 638);
-    assert.deepEqual(packet, reference);
+    assert.deepEqual(Buffer.from(packet), reference);
 });
 
 test('receiver drops non-zero start codes, preview and stream-terminated data', () => {
