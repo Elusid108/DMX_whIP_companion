@@ -7,7 +7,7 @@ const rig = () => {
     let t = 1000;
     const sent = [];
     const live = createLiveOutput({
-        cid: Buffer.alloc(16),
+        cid: new Uint8Array(16),
         now: () => t,
         setTimer: () => 1,
         clearTimer: () => {},

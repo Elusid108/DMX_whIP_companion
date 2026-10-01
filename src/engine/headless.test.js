@@ -46,6 +46,24 @@ test('headless engine starts, answers the handshake, holds state, stops clean', 
         assert.equal(caps.io.midi, false);
         assert.ok(caps.features.includes('playback'));
 
+        // Lifecycle: suspend parks the sockets and keeps state; resume rebinds.
+        const lifecycleEvents = [];
+        run.client.subscribe('engine.lifecycle', (e) => lifecycleEvents.push(e.lifecycle));
+        const suspended = await run.client.command('engine.suspend', { reason: 'test' });
+        assert.deepEqual(suspended, { success: true, suspended: true });
+        assert.equal((await run.client.query('engine.state')).lifecycle, 'suspended');
+        assert.equal((await run.client.query('monitor.state')).bound, false, 'receivers closed');
+        await assert.rejects(
+            run.client.command('live.set', { changes: [{ proto: 'artnet', uni: 3, ch: 2, value: 1 }] }),
+            (err) => err.code === 'conflict' && err.data.lifecycle === 'suspended'
+        );
+        assert.deepEqual((await run.client.query('live.state')).universes, [{ proto: 'artnet', uni: 3, owned: false }], 'levels kept');
+        const resumed = await run.client.command('engine.resume');
+        assert.deepEqual(resumed, { success: true, restored: { receive: true, live: true, playback: true } });
+        assert.equal((await run.client.query('monitor.state')).bound, true, 'receivers back on the same NIC');
+        assert.equal((await run.client.query('engine.state')).lifecycle, 'running');
+        assert.deepEqual(lifecycleEvents, ['suspended', 'running']);
+
         const rec = await run.client.query('record.state');
         assert.equal(rec.recording, false);
         const pb = await run.client.query('playback.state');

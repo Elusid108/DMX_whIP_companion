@@ -1,9 +1,7 @@
 // DMXREC capture: one open file, frames encoded as they arrive from the
-// receive path, chunked writes, stats at most every 100 ms. Moved from
-// src/main/ipc/recording.js; IPC became router commands and events.
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+// receive path, chunked writes, stats at most every 100 ms. The file goes
+// through the storage port (synchronously, on the UDP path, as before);
+// origins come from the monotonic clock.
 const {
     CHUNK_TARGET,
     createBurstStamper,
@@ -11,10 +9,12 @@ const {
     encodeFrame,
     shouldRecordUniverseFrame,
     universeKey
-} = require('../services/shared/dmxRecording');
-const { maskedRecordData } = require('../services/shared/recordTriggers');
+} = require('./dmxrec');
+const { maskedRecordData } = require('./recordTriggers');
+const { writeU32LE, concat } = require('./bytes');
 
-function createRecording({ router }) {
+// deps: { router, storage, clock, log }
+function createRecording({ router, storage, clock, log }) {
     const emit = (name, payload) => router.emit(name, payload);
     const stateListeners = new Set();
     const notifyState = () => {
@@ -22,7 +22,7 @@ function createRecording({ router }) {
             try {
                 fn(isRecording);
             } catch (err) {
-                console.error('Recording state listener error:', err);
+                log.error('Recording state listener error:', err);
             }
         });
     };
@@ -48,9 +48,9 @@ function createRecording({ router }) {
             return;
         }
         try {
-            fs.closeSync(fd);
+            storage.closeSync(fd);
         } catch (err) {
-            console.error('Error closing recording file:', err);
+            log.error('Error closing recording file:', err);
         }
         fd = null;
     };
@@ -59,16 +59,16 @@ function createRecording({ router }) {
         if (fd == null) {
             return;
         }
-        const countBuf = Buffer.alloc(4);
-        countBuf.writeUInt32LE(frameCount >>> 0);
-        fs.writeSync(fd, countBuf, 0, 4, 6);
+        const countBuf = new Uint8Array(4);
+        writeU32LE(countBuf, frameCount >>> 0, 0);
+        storage.writeSync(fd, countBuf, 0, 4, 6);
     };
 
     const flushChunk = () => {
         if (fd == null || pendingBytes === 0) {
             return;
         }
-        fs.writeSync(fd, Buffer.concat(pending, pendingBytes));
+        storage.writeSync(fd, concat(pending, pendingBytes));
         pending = [];
         pendingBytes = 0;
         writeFrameCount();
@@ -88,7 +88,7 @@ function createRecording({ router }) {
     };
 
     const sendStats = (force = false) => {
-        const now = Date.now();
+        const now = clock.now();
         if (!force && now - lastStatsSent < 100) {
             return;
         }
@@ -107,17 +107,14 @@ function createRecording({ router }) {
         if (isRecording) {
             return { success: false, error: 'Already recording' };
         }
-        const dest = filePath || recordingPath || path.join(
-            os.tmpdir(),
-            `dmxwhip-punch-${process.pid}-${Date.now()}.dmx`
-        );
+        const dest = filePath || recordingPath || storage.tempFile('dmxwhip-punch', '.dmx');
         closeFd();
         resetSession();
-        fd = fs.openSync(dest, 'w');
-        fs.writeSync(fd, createHeader(0));
+        fd = storage.openWriteSync(dest);
+        storage.writeSync(fd, createHeader(0));
         recordingPath = dest;
         isRecording = true;
-        recordingOriginNs = process.hrtime.bigint();
+        recordingOriginNs = clock.monotonicNs();
         notifyState();
         sendStats(true);
         return { success: true, filePath: dest };
@@ -134,7 +131,7 @@ function createRecording({ router }) {
             flushChunk();
             writeFrameCount();
         } catch (error) {
-            console.error('Error finalizing recording:', error);
+            log.error('Error finalizing recording:', error);
         }
         closeFd();
         sendStats(true);
@@ -160,7 +157,7 @@ function createRecording({ router }) {
         } catch (error) {
             closeFd();
             isRecording = false;
-            console.error('Error starting recording:', error);
+            log.error('Error starting recording:', error);
             emit('record.error', { error: error.message });
             return { success: false, error: error.message };
         }
@@ -192,7 +189,7 @@ function createRecording({ router }) {
         recording: isRecording,
         filePath: recordingPath,
         elapsedMs: isRecording && recordingOriginNs != null
-            ? Number((process.hrtime.bigint() - recordingOriginNs) / 1000000n)
+            ? Number((clock.monotonicNs() - recordingOriginNs) / 1000000n)
             : 0,
         totalFrames: frameCount
     }));
@@ -212,7 +209,7 @@ function createRecording({ router }) {
                 return;
             }
 
-            const nowNs = process.hrtime.bigint();
+            const nowNs = clock.monotonicNs();
             const elapsed = Number((nowNs - recordingOriginNs) / 1000000n);
             const recordedData = maskedRecordData(frame, suppressChannel);
             const writeFrame = shouldRecordUniverseFrame(
@@ -242,7 +239,7 @@ function createRecording({ router }) {
                     droppedFrames += 1;
                 }
                 lastFrameNs = nowNs;
-                fpsTimes.push(Date.now());
+                fpsTimes.push(clock.now());
 
                 if (pendingBytes >= CHUNK_TARGET) {
                     flushChunk();
@@ -259,7 +256,7 @@ function createRecording({ router }) {
                         data: frame.data
                     }, timestamp);
                 } catch (error) {
-                    console.error('Live frame hook error:', error);
+                    log.error('Live frame hook error:', error);
                 }
             }
         },
@@ -274,7 +271,7 @@ function createRecording({ router }) {
             if (!isRecording || recordingOriginNs == null) {
                 return 0;
             }
-            return Number((process.hrtime.bigint() - recordingOriginNs) / 1000000n);
+            return Number((clock.monotonicNs() - recordingOriginNs) / 1000000n);
         },
         setOnLiveFrame: (fn) => {
             onLiveFrame = typeof fn === 'function' ? fn : null;
@@ -298,7 +295,7 @@ function createRecording({ router }) {
             try {
                 observer.observe(frame, meta);
             } catch (error) {
-                console.error('Record trigger error:', error);
+                log.error('Record trigger error:', error);
             }
         },
         close: () => {
@@ -309,7 +306,7 @@ function createRecording({ router }) {
                     flushChunk();
                     writeFrameCount();
                 } catch (error) {
-                    console.error('Error closing recording:', error);
+                    log.error('Error closing recording:', error);
                 }
             }
             closeFd();

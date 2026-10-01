@@ -15,10 +15,11 @@ const { createReceive } = require('./core/receive');
 const { createOwnOutput } = require('./core/ownOutput');
 const { createArtNetSender, createSacnOutput } = require('./core/send');
 const { createDiscovery } = require('./core/discovery');
-const { createDefaultLiveOutput } = require('./output/liveOutput');
-const { createRecording } = require('./recording');
-const { createPlayback } = require('./playback');
-const { createLibraryStore } = require('./library/store');
+const { createDefaultLiveOutput } = require('./core/liveOutput');
+const { createRecording } = require('./core/recording');
+const { createPlayback } = require('./core/playback');
+const { createLibraryStore } = require('./core/library');
+const { ERROR_CODES, EngineError } = require('./api/envelope');
 
 const CAPABILITIES = ['monitor', 'live', 'stream', 'record', 'playback', 'library'];
 
@@ -75,8 +76,8 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports: portsIn, udpPorts
         const s = settings.load();
         live.configure({ nic: s.outputNic, dest: s.live.dest });
     }
-    const library = createLibraryStore(settings);
-    const recording = createRecording({ router });
+    const library = createLibraryStore({ storage: io.storage, clock: io.clock, settings });
+    const recording = createRecording({ router, storage: io.storage, clock: io.clock, log: io.log });
     receive.setRecording(recording);
     recording.onStateChange(() => receive.syncEmit());
     const playback = createPlayback({ router, recording, liveOutput: live, library, ports, senders, io });
@@ -138,6 +139,68 @@ const createEngine = ({ settings, appVersion = '0.0.0', ports: portsIn, udpPorts
         }
     });
     router.query('live.state', () => live.state());
+
+    // Lifecycle (docs/engine/API.md §9): suspend parks every socket and timer
+    // and keeps show state; resume brings the I/O back. While suspended the
+    // commands that would touch I/O answer `conflict`.
+    let lifecycle = 'running';
+    let since = io.clock.now();
+    const IO_COMMANDS = new Set([
+        'receive.setNic', 'artnet.poll', 'live.set', 'live.releaseAll', 'output.setNic',
+        'playback.toggle', 'playback.seek', 'player.play', 'record.start', 'punchIn.start',
+        'discovery.setStrategies'
+    ]);
+    router.setGuard((envelope) => (
+        lifecycle === 'suspended' && envelope.kind === 'command' && IO_COMMANDS.has(envelope.name)
+            ? new EngineError(ERROR_CODES.CONFLICT, 'Engine is suspended', { lifecycle })
+            : null
+    ));
+    const setLifecycle = (next, reason) => {
+        lifecycle = next;
+        since = io.clock.now();
+        router.emit('engine.lifecycle', reason ? { lifecycle, reason } : { lifecycle });
+    };
+    router.command('engine.suspend', async ({ reason } = {}) => {
+        if (lifecycle === 'suspended') {
+            return { success: true, suspended: true };
+        }
+        await playback.suspend();
+        if (recording.isRecording()) {
+            recording.stop({ emitSaved: true });
+        }
+        live.suspend();
+        discovery.suspend();
+        receive.suspend();
+        setLifecycle('suspended', typeof reason === 'string' ? reason : undefined);
+        return { success: true, suspended: true };
+    });
+    router.command('engine.resume', async () => {
+        if (lifecycle !== 'suspended') {
+            return { success: true, restored: { receive: true, live: true, playback: true } };
+        }
+        const errors = [];
+        const attempt = async (name, fn) => {
+            try {
+                const ok = await fn();
+                if (!ok) {
+                    errors.push({ code: ERROR_CODES.UNAVAILABLE, message: `${name} did not come back` });
+                }
+                return Boolean(ok);
+            } catch (error) {
+                errors.push({ code: ERROR_CODES.UNAVAILABLE, message: `${name}: ${error.message}` });
+                return false;
+            }
+        };
+        setLifecycle('running');
+        const restored = {
+            receive: await attempt('receive', () => receive.resume()),
+            live: await attempt('live', () => live.resume()),
+            playback: await attempt('playback', () => playback.resume())
+        };
+        discovery.resume();
+        return errors.length ? { success: true, restored, errors } : { success: true, restored };
+    });
+    router.query('engine.state', () => ({ lifecycle, since }));
 
     let closed = false;
     const close = () => {

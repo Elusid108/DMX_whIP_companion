@@ -1,15 +1,12 @@
 // Playback transport (clock scheduler, senders, the Live HTP merge), the
 // Studio compilation session (clips, undo/redo, audio lane, save/export) and
-// punch-in recording. Moved whole from src/main/ipc/playback.js: IPC
-// handlers became router commands and queries, renderer pushes became
-// events, and the three dialog-bound paths (file picker, audio picker +
-// ffmpeg, unsaved prompt) stayed in the companion.
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { parseRecording, writeRecording } = require('../services/shared/dmxRecording');
-const { buildTimelineOverviewFromFrames } = require('../services/shared/timelineOverview');
-const { runFileTask } = require('./fileTasks');
+// punch-in recording. Moved whole from src/main/ipc/playback.js in Phase J
+// and onto the ports in Phase K: the clock and scheduler are injected, files
+// go through storage, whole-file scans through workers, sockets come from
+// the engine's senders. The three dialog-bound paths (file picker, audio
+// picker + ffmpeg, unsaved prompt) stay in the companion.
+const { parseRecording, createHeader, encodeFrame, FRAME_SIZE } = require('./dmxrec');
+const { buildTimelineOverviewFromFrames } = require('./timelineOverview');
 const {
     newId,
     mediaDurationMs,
@@ -35,8 +32,8 @@ const {
     trackHasOverlap,
     liveFrameKey,
     blendLookAtWithLive
-} = require('../services/shared/compilationEdl');
-const { describeWav } = require('../services/shared/audioWav');
+} = require('./compilationEdl');
+const { describeWav } = require('./audioWav');
 const {
     normalizeTriggerConfig,
     createWatch,
@@ -47,7 +44,7 @@ const {
     omitTriggerChannel,
     formatLookTimestamp,
     isRedundantCompilation
-} = require('../services/shared/recordTriggers');
+} = require('./recordTriggers');
 
 const ZERO_DMX = new Uint8Array(512);
 
@@ -69,6 +66,30 @@ const safeMediaId = (id) => {
 
 let audioVersionSeq = 0;
 
+// Stream a frame list into a DMXREC file through the storage port, 256
+// records per write (the shape src/services/shared/dmxRecording.js uses).
+const writeRecordingTo = (storage, filePath, frames = []) => {
+    const fd = storage.openWriteSync(filePath);
+    try {
+        storage.writeSync(fd, createHeader(frames.length));
+        const block = new Uint8Array(FRAME_SIZE * 256);
+        let used = 0;
+        for (const frame of frames) {
+            block.set(encodeFrame(frame), used);
+            used += FRAME_SIZE;
+            if (used === block.length) {
+                storage.writeSync(fd, block, 0, used);
+                used = 0;
+            }
+        }
+        if (used) {
+            storage.writeSync(fd, block, 0, used);
+        }
+    } finally {
+        storage.closeSync(fd);
+    }
+};
+
 // Renderer channel names the moved code still uses -> engine event names.
 const EVENT_NAMES = {
     'playback-stats': 'playback.stats',
@@ -88,6 +109,11 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
     if (!senders || typeof senders.artnet !== 'function' || typeof senders.sacn !== 'function') {
         throw new Error('Playback needs the engine senders');
     }
+    if (!io || !io.storage || !io.clock || !io.scheduler || !io.workers) {
+        throw new Error('Playback needs the storage, clock, scheduler and workers ports');
+    }
+    const { storage, clock, scheduler, workers } = io;
+    const log = io.log || { error: () => {} };
     const {
         ensureLibrary,
         uniqueDmxPath,
@@ -230,7 +256,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         return timelineEndMs();
     };
 
-    const elapsedMs = () => Number((process.hrtime.bigint() - playbackOriginNs) / 1000000n);
+    const elapsedMs = () => Number((clock.monotonicNs() - playbackOriginNs) / 1000000n);
 
     const playheadClockMs = () => (isPlaying ? elapsedMs() : pausedElapsed);
 
@@ -289,7 +315,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         lastByUniverse.clear();
         liveOutput.kick();
         if (discoveryInterval) {
-            clearInterval(discoveryInterval);
+            scheduler.clearInterval(discoveryInterval);
             discoveryInterval = null;
         }
         const art = artnetSender;
@@ -305,7 +331,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             }
         };
         if (graceMs > 0 && (art || sacn)) {
-            setTimeout(close, graceMs);
+            scheduler.setTimeout(close, graceMs);
         } else {
             close();
         }
@@ -334,7 +360,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
     };
 
     const emitStats = (extra = {}) => {
-        const now = Date.now();
+        const now = clock.now();
         const cutoff = now - 1000;
         framesSentWindow = framesSentWindow.filter((time) => time > cutoff);
         const lastTimestamp = lastSentFrame ? lastSentFrame.timestamp : 0;
@@ -362,7 +388,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             return;
         }
         sacnOutput.sendDiscovery(universes).catch((err) => {
-            console.error('Playback discovery error:', err);
+            log.error('Playback discovery error:', err);
         });
     };
 
@@ -400,7 +426,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         sacnOutput = sacn;
         if (sacnOutput) {
             sendDiscovery();
-            discoveryInterval = setInterval(sendDiscovery, 10000);
+            discoveryInterval = scheduler.setInterval(sendDiscovery, 10000);
         }
         return true;
     };
@@ -421,7 +447,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             if (artnetSender) {
                 lastByUniverse.set(`artnet:${frame.universe}`, frame);
                 artnetSender.send(frame.universe, data, frame.destIp).catch((err) => {
-                    console.error('Art-Net playback send error:', err);
+                    log.error('Art-Net playback send error:', err);
                 });
             }
             return;
@@ -435,7 +461,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
     const outputFrame = (frame, countFps) => {
         lastSentFrame = frame;
         if (countFps) {
-            framesSentWindow.push(Date.now());
+            framesSentWindow.push(clock.now());
         }
         emitFrame(frame);
     };
@@ -453,26 +479,26 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
 
     const clearPlayTimeout = () => {
         if (playTimeout) {
-            clearTimeout(playTimeout);
+            scheduler.clearTimeout(playTimeout);
             playTimeout = null;
         }
         if (playImmediate) {
-            clearImmediate(playImmediate);
+            scheduler.clearImmediate(playImmediate);
             playImmediate = null;
         }
     };
 
     const armTick = (waitMs) => {
         if (waitMs <= 0) {
-            playImmediate = setImmediate(scheduleTick);
+            playImmediate = scheduler.setImmediate(scheduleTick);
             return;
         }
-        playTimeout = setTimeout(scheduleTick, Math.max(1, waitMs - 1));
+        playTimeout = scheduler.setTimeout(scheduleTick, Math.max(1, waitMs - 1));
     };
 
     const stopHoldOutput = () => {
         if (pauseInterval) {
-            clearInterval(pauseInterval);
+            scheduler.clearInterval(pauseInterval);
             pauseInterval = null;
         }
     };
@@ -540,7 +566,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         }
         isPlaying = true;
         isPaused = false;
-        playbackOriginNs = process.hrtime.bigint() - BigInt(from) * 1000000n;
+        playbackOriginNs = clock.monotonicNs() - BigInt(from) * 1000000n;
         if (from > 0) {
             sendLookAt(from);
         }
@@ -565,7 +591,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             currentPlaybackFrame += 1;
         }
 
-        const now = Date.now();
+        const now = clock.now();
         if (now - lastStatsSent >= 100) {
             lastStatsSent = now;
             emitStats();
@@ -576,7 +602,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                 currentPlaybackFrame = 0;
                 lastSentFrame = null;
                 holdFrames = [];
-                playbackOriginNs = process.hrtime.bigint();
+                playbackOriginNs = clock.monotonicNs();
                 emitStats({ playheadMs: 0 });
                 armTick(0);
                 return;
@@ -600,7 +626,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         if (holdFrames.length === 0 && !lastSentFrame) {
             return;
         }
-        pauseInterval = setInterval(() => {
+        pauseInterval = scheduler.setInterval(() => {
             if (!isPaused) {
                 stopHoldOutput();
                 return;
@@ -624,7 +650,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         pausedElapsed = t;
         sendLookAt(t);
         if (isPlaying) {
-            playbackOriginNs = process.hrtime.bigint() - BigInt(t) * 1000000n;
+            playbackOriginNs = clock.monotonicNs() - BigInt(t) * 1000000n;
             scheduleTick();
         }
         return t;
@@ -760,8 +786,8 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
     };
 
     const loadFromPath = async (filePath, displayName) => {
-        const fileData = await fs.promises.readFile(filePath);
-        const label = displayName || path.parse(filePath).name;
+        const fileData = await storage.readFile(filePath);
+        const label = displayName || storage.parse(filePath).name;
         editSession = emptyEditSession();
         editSession.kind = 'compilation';
         editSession.name = label;
@@ -782,8 +808,8 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                 continue;
             }
             try {
-                const fileData = await fs.promises.readFile(source.filePath);
-                addMediaFromBuffer(fileData, source.name || path.parse(source.filePath).name);
+                const fileData = await storage.readFile(source.filePath);
+                addMediaFromBuffer(fileData, source.name || storage.parse(source.filePath).name);
             } catch (error) {
                 skipped.push({ filePath: source.filePath, error: error.message });
             }
@@ -828,10 +854,10 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                 continue;
             }
             try {
-                const fileData = await fs.promises.readFile(source.filePath);
+                const fileData = await storage.readFile(source.filePath);
                 const created = addMediaFromBuffer(
                     fileData,
-                    source.name || path.parse(source.filePath).name,
+                    source.name || storage.parse(source.filePath).name,
                     cursor,
                     row
                 );
@@ -861,8 +887,8 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         if (row >= editSession.trackCount) {
             editSession.trackCount = row + 1;
         }
-        const projectFile = path.join(dirPath, 'project.json');
-        const raw = JSON.parse(await fs.promises.readFile(projectFile, 'utf8'));
+        const projectFile = storage.join(dirPath, 'project.json');
+        const raw = JSON.parse(await storage.readText(projectFile));
         const clips = Array.isArray(raw && raw.clips) ? raw.clips.slice() : [];
         clips.sort((a, b) => (Number(a.startMs) || 0) - (Number(b.startMs) || 0));
         if (clips.length === 0) {
@@ -876,8 +902,8 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             const oldId = safeMediaId(clip.mediaId);
             if (!mediaMap[oldId]) {
                 const nextId = newId();
-                const mediaPath = path.join(dirPath, 'media', `${oldId}.dmx`);
-                const fileData = await fs.promises.readFile(mediaPath);
+                const mediaPath = storage.join(dirPath, 'media', `${oldId}.dmx`);
+                const fileData = await storage.readFile(mediaPath);
                 editSession.media[nextId] = parseRecording(fileData);
                 editSession.mediaBytes[nextId] = fileData;
                 mediaMap[oldId] = nextId;
@@ -906,8 +932,8 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         const audioClips = Array.isArray(raw && raw.audioClips) ? raw.audioClips : [];
         for (const clip of audioClips) {
             const nextId = newId();
-            const audioPath = path.join(dirPath, 'audio', `${safeMediaId(clip.mediaId)}.wav`);
-            const bytes = await fs.promises.readFile(audioPath);
+            const audioPath = storage.join(dirPath, 'audio', `${safeMediaId(clip.mediaId)}.wav`);
+            const bytes = await storage.readFile(audioPath);
             rememberAudio(nextId, audioPath, bytes);
             const sourceInMs = Number(clip.sourceInMs) || 0;
             const sourceOutMs = Number(clip.sourceOutMs) || editSession.audioMedia[nextId].durationMs;
@@ -927,19 +953,19 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
     };
 
     const loadCompilationPackage = async (dirPath) => {
-        const projectFile = path.join(dirPath, 'project.json');
-        const raw = JSON.parse(await fs.promises.readFile(projectFile, 'utf8'));
+        const projectFile = storage.join(dirPath, 'project.json');
+        const raw = JSON.parse(await storage.readText(projectFile));
         editSession = emptyEditSession();
         editSession.kind = 'compilation';
-        editSession.name = (raw && raw.name) || path.basename(dirPath, '.comp');
+        editSession.name = (raw && raw.name) || storage.basename(dirPath, '.comp');
         editSession.notes = (raw && raw.notes) || '';
         editSession.projectPath = dirPath;
         const clips = Array.isArray(raw && raw.clips) ? raw.clips : [];
         let cursor = 0;
         for (const clip of clips) {
             safeMediaId(clip.mediaId);
-            const mediaPath = path.join(dirPath, 'media', `${clip.mediaId}.dmx`);
-            const fileData = await fs.promises.readFile(mediaPath);
+            const mediaPath = storage.join(dirPath, 'media', `${clip.mediaId}.dmx`);
+            const fileData = await storage.readFile(mediaPath);
             editSession.media[clip.mediaId] = parseRecording(fileData);
             editSession.mediaBytes[clip.mediaId] = fileData;
             const sourceInMs = Number(clip.sourceInMs) || 0;
@@ -975,8 +1001,8 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         editSession.trackNames = normalizeTrackNames(editSession.trackCount, raw.trackNames);
         const audioClips = Array.isArray(raw && raw.audioClips) ? raw.audioClips : [];
         for (const clip of audioClips) {
-            const audioPath = path.join(dirPath, 'audio', `${safeMediaId(clip.mediaId)}.wav`);
-            const bytes = await fs.promises.readFile(audioPath);
+            const audioPath = storage.join(dirPath, 'audio', `${safeMediaId(clip.mediaId)}.wav`);
+            const bytes = await storage.readFile(audioPath);
             rememberAudio(clip.mediaId, audioPath, bytes);
             const sourceInMs = Number(clip.sourceInMs) || 0;
             const sourceOutMs = Number(clip.sourceOutMs) || editSession.audioMedia[clip.mediaId].durationMs;
@@ -1016,13 +1042,13 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             const active = recordingHandler && recordingHandler.getRecordingPath
                 ? recordingHandler.getRecordingPath()
                 : null;
-            if (!active || path.resolve(active) !== path.resolve(filePath)) {
+            if (!active || storage.resolve(active) !== storage.resolve(filePath)) {
                 assertInLibrary(filePath);
             }
 
             return await loadFromPath(filePath, payload.displayName);
         } catch (error) {
-            console.error('Error loading recording:', error);
+            log.error('Error loading recording:', error);
             stopPlaybackInternal(false);
             playbackData = null;
             const result = { success: false, error: error.message };
@@ -1052,13 +1078,13 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             if (!filePath) {
                 return { success: false, error: 'No file path' };
             }
-            const overview = await runFileTask('overview', {
+            const overview = await workers.run('overview', {
                 filePath,
                 options: { bucketMs: payload.bucketMs }
             });
             return { success: true, ...overview };
         } catch (error) {
-            console.error('Error building timeline overview:', error);
+            log.error('Error building timeline overview:', error);
             return { success: false, error: error.message };
         }
     });
@@ -1086,7 +1112,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             }
             return await loadFromSources(payload.sources || [], payload.name);
         } catch (error) {
-            console.error('Error loading compilation:', error);
+            log.error('Error loading compilation:', error);
             stopPlaybackInternal(false);
             playbackData = null;
             editSession = emptyEditSession();
@@ -1120,13 +1146,13 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                 return { success: false, error: 'No file selected' };
             }
             const mediaId = newId();
-            const bytes = await fs.promises.readFile(dest);
+            const bytes = await storage.readFile(dest);
             const info = rememberAudio(mediaId, dest, bytes);
             pushHistory();
             const startMs = Math.max(0, Math.round(Number(payload.startMs) || 0));
             editSession.audioClips.push({
                 id: newId(),
-                name: (typeof payload.name === 'string' && payload.name) || path.parse(dest).name || 'Audio',
+                name: (typeof payload.name === 'string' && payload.name) || storage.parse(dest).name || 'Audio',
                 mediaId,
                 startMs,
                 sourceInMs: 0,
@@ -1136,7 +1162,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             emitCompilationUpdated();
             return { success: true, dirty: true };
         } catch (error) {
-            console.error('Error importing audio:', error);
+            log.error('Error importing audio:', error);
             return { success: false, error: error.message };
         }
     });
@@ -1219,10 +1245,10 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                             undoStack.pop();
                             throw error;
                         }
-                        const currentBase = path.parse(existing.libraryPath).name;
+                        const currentBase = storage.parse(existing.libraryPath).name;
                         if (nextBase !== currentBase) {
-                            const dest = path.join(path.dirname(existing.libraryPath), `${nextBase}.dmx`);
-                            if (fs.existsSync(dest)) {
+                            const dest = storage.join(storage.dirname(existing.libraryPath), `${nextBase}.dmx`);
+                            if (storage.existsSync(dest)) {
                                 undoStack.pop();
                                 throw new Error('A show with that filename already exists');
                             }
@@ -1240,21 +1266,21 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                         assertInLibrary(renamed.libraryPath);
                         writeSidecar(renamed.libraryPath, { name: patch.name });
                         const nextBase = sanitizeBaseName(patch.name);
-                        const currentBase = path.parse(renamed.libraryPath).name;
+                        const currentBase = storage.parse(renamed.libraryPath).name;
                         if (nextBase !== currentBase) {
-                            const dir = path.dirname(renamed.libraryPath);
-                            const dest = path.join(dir, `${nextBase}.dmx`);
-                            const oldSidecar = path.join(dir, `${currentBase}.json`);
-                            const nextSidecar = path.join(dir, `${nextBase}.json`);
-                            fs.renameSync(renamed.libraryPath, dest);
-                            if (fs.existsSync(oldSidecar)) {
-                                fs.renameSync(oldSidecar, nextSidecar);
+                            const dir = storage.dirname(renamed.libraryPath);
+                            const dest = storage.join(dir, `${nextBase}.dmx`);
+                            const oldSidecar = storage.join(dir, `${currentBase}.json`);
+                            const nextSidecar = storage.join(dir, `${nextBase}.json`);
+                            storage.renameSync(renamed.libraryPath, dest);
+                            if (storage.existsSync(oldSidecar)) {
+                                storage.renameSync(oldSidecar, nextSidecar);
                             }
                             renamed.libraryPath = dest;
                         }
                         sendSafe('library-updated', listLibrary());
                     } catch (error) {
-                        console.error('Error updating look sidecar:', error);
+                        log.error('Error updating look sidecar:', error);
                         throw error;
                     }
                 }
@@ -1406,27 +1432,27 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             const dir = ensureLibrary();
             const name = sanitizeBaseName(payload.name || editSession.name || 'Stack');
             let dest = editSession.projectPath;
-            if (!dest || !fs.existsSync(dest)) {
+            if (!dest || !storage.existsSync(dest)) {
                 dest = uniqueCompPath(dir, name);
             }
-            fs.mkdirSync(path.join(dest, 'media'), { recursive: true });
-            fs.mkdirSync(path.join(dest, 'audio'), { recursive: true });
+            storage.mkdirSync(storage.join(dest, 'media'));
+            storage.mkdirSync(storage.join(dest, 'audio'));
             const mediaIds = new Set(editSession.clips.map((clip) => clip.mediaId));
             for (const mediaId of mediaIds) {
-                const mediaPath = path.join(dest, 'media', `${safeMediaId(mediaId)}.dmx`);
+                const mediaPath = storage.join(dest, 'media', `${safeMediaId(mediaId)}.dmx`);
                 if (editSession.mediaBytes[mediaId]) {
-                    fs.writeFileSync(mediaPath, editSession.mediaBytes[mediaId]);
+                    storage.writeFileSync(mediaPath, editSession.mediaBytes[mediaId]);
                 } else {
-                    writeRecording(mediaPath, editSession.media[mediaId] || []);
+                    writeRecordingTo(storage, mediaPath, editSession.media[mediaId] || []);
                 }
             }
             const audioIds = new Set(editSession.audioClips.map((clip) => clip.mediaId));
             for (const mediaId of audioIds) {
-                const audioPath = path.join(dest, 'audio', `${safeMediaId(mediaId)}.wav`);
+                const audioPath = storage.join(dest, 'audio', `${safeMediaId(mediaId)}.wav`);
                 if (editSession.audioBytes[mediaId]) {
-                    fs.writeFileSync(audioPath, editSession.audioBytes[mediaId]);
+                    storage.writeFileSync(audioPath, editSession.audioBytes[mediaId]);
                 } else if (editSession.audioMedia[mediaId] && editSession.audioMedia[mediaId].filePath) {
-                    fs.copyFileSync(editSession.audioMedia[mediaId].filePath, audioPath);
+                    storage.copyFileSync(editSession.audioMedia[mediaId].filePath, audioPath);
                 }
                 if (editSession.audioMedia[mediaId]) {
                     editSession.audioMedia[mediaId].filePath = audioPath;
@@ -1442,7 +1468,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                 clips: serializeClips(editSession.clips),
                 audioClips: serializeAudioClips(editSession.audioClips)
             };
-            fs.writeFileSync(path.join(dest, 'project.json'), `${JSON.stringify(project, null, 2)}\n`);
+            storage.writeFileSync(storage.join(dest, 'project.json'), `${JSON.stringify(project, null, 2)}\n`);
             editSession.name = name;
             editSession.projectPath = dest;
             editSession.dirty = false;
@@ -1454,7 +1480,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             sendSafe('file-loaded', result);
             return result;
         } catch (error) {
-            console.error('Error saving compilation:', error);
+            log.error('Error saving compilation:', error);
             return { success: false, error: error.message };
         }
     });
@@ -1468,19 +1494,19 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             const dir = ensureLibrary();
             const name = sanitizeBaseName(payload.name || `${editSession.name || 'Stack'} flat`);
             const filePath = uniqueDmxPath(dir, name);
-            writeRecording(filePath, frames);
+            writeRecordingTo(storage, filePath, frames);
             writeSidecar(filePath, { name, notes: payload.notes || '' });
             sendSafe('library-updated', listLibrary());
             return { success: true, filePath };
         } catch (error) {
-            console.error('Error exporting flattened recording:', error);
+            log.error('Error exporting flattened recording:', error);
             return { success: false, error: error.message };
         }
     });
 
     const stopPunchTimer = () => {
         if (punchTimer) {
-            clearInterval(punchTimer);
+            scheduler.clearInterval(punchTimer);
             punchTimer = null;
         }
     };
@@ -1537,7 +1563,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         for (const frame of blended) {
             outputFrame(frame, false);
         }
-        const now = Date.now();
+        const now = clock.now();
         if (now - lastPunchProgressAt < 100) {
             return;
         }
@@ -1566,7 +1592,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
 
     const stopWatchTimer = () => {
         if (watchTimer) {
-            clearInterval(watchTimer);
+            scheduler.clearInterval(watchTimer);
             watchTimer = null;
         }
     };
@@ -1587,11 +1613,11 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         if (recordingHandler && recordingHandler.isRecording && recordingHandler.isRecording()) {
             recordingHandler.stop({ emitSaved: false });
         }
-        if (deleteTemp && punchIn && punchIn.tempPath && fs.existsSync(punchIn.tempPath)) {
+        if (deleteTemp && punchIn && punchIn.tempPath && storage.existsSync(punchIn.tempPath)) {
             try {
-                fs.unlinkSync(punchIn.tempPath);
+                storage.unlinkSync(punchIn.tempPath);
             } catch (error) {
-                console.error('Error removing punch-in temp:', error);
+                log.error('Error removing punch-in temp:', error);
             }
         }
         punchIn = null;
@@ -1619,10 +1645,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             editSession.trackCount = trackId + 1;
         }
         syncTracks();
-        const tempPath = path.join(
-            os.tmpdir(),
-            `dmxwhip-punch-${process.pid}-${Date.now()}.dmx`
-        );
+        const tempPath = storage.tempFile('dmxwhip-punch', '.dmx');
         punchIn = {
             startMs,
             trackId,
@@ -1644,7 +1667,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         const senderPromise = initializeSenders(request.playbackNetwork || activeNetwork, { forceSacn: true });
         lastPunchProgressAt = 0;
         stopPunchTimer();
-        punchTimer = setInterval(tickPunchIn, 40);
+        punchTimer = scheduler.setInterval(tickPunchIn, 40);
         tickPunchIn();
         pausedElapsed = startMs;
         emitStats({
@@ -1672,11 +1695,11 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         if (mode !== 'signal-cut' && mode !== 'blackout') {
             return;
         }
-        watchTimer = setInterval(() => {
+        watchTimer = scheduler.setInterval(() => {
             if (!recordWatch || punchStopLock) {
                 return;
             }
-            if (pollStop(recordWatch, Date.now()) === 'stop') {
+            if (pollStop(recordWatch, clock.now()) === 'stop') {
                 finishPunchIn({ notify: true });
             }
         }, 200);
@@ -1707,28 +1730,28 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                 punchIn = null;
                 cleanupSenders();
                 if (!stopped || !stopped.success || !stopped.totalFrames) {
-                    if (filePath && fs.existsSync(filePath)) {
+                    if (filePath && storage.existsSync(filePath)) {
                         try {
-                            fs.unlinkSync(filePath);
+                            storage.unlinkSync(filePath);
                         } catch (error) {
-                            console.error('Error removing empty punch-in:', error);
+                            log.error('Error removing empty punch-in:', error);
                         }
                     }
                     throw new Error('Nothing was recorded');
                 }
-                const fileData = await fs.promises.readFile(filePath);
-                const libraryPath = uniqueDmxPath(ensureLibrary(), formatLookTimestamp());
-                const lookName = path.parse(libraryPath).name;
-                fs.writeFileSync(libraryPath, fileData);
+                const fileData = await storage.readFile(filePath);
+                const libraryPath = uniqueDmxPath(ensureLibrary(), formatLookTimestamp(new Date(clock.now())));
+                const lookName = storage.parse(libraryPath).name;
+                storage.writeFileSync(libraryPath, fileData);
                 writeSidecar(libraryPath, { name: lookName, notes: '' });
                 pushHistory();
                 const added = addMediaFromBuffer(fileData, lookName, take.startMs, take.trackId, {
                     libraryPath
                 });
                 try {
-                    fs.unlinkSync(filePath);
+                    storage.unlinkSync(filePath);
                 } catch (error) {
-                    console.error('Error removing punch-in temp:', error);
+                    log.error('Error removing punch-in temp:', error);
                 }
                 sendSafe('library-updated', listLibrary());
                 syncTracks();
@@ -1753,7 +1776,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                 }
                 return result;
             } catch (error) {
-                console.error('Error stopping punch-in:', error);
+                log.error('Error stopping punch-in:', error);
                 clearPunchIn({ deleteTemp: true });
                 const failure = { success: false, error: error.message };
                 if (notify) {
@@ -1773,7 +1796,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             return;
         }
         const selected = Boolean(meta && meta.selected);
-        const now = Date.now();
+        const now = clock.now();
         if (recordWatch.phase === 'armed') {
             if (feedArmed(recordWatch, frame, selected) !== 'start') {
                 return;
@@ -1785,10 +1808,10 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                 sendSafe('punch-in-started', opened.result);
                 startWatchTimer();
                 opened.senderPromise.catch((error) => {
-                    console.error('Error opening punch-in output:', error);
+                    log.error('Error opening punch-in output:', error);
                 });
             } catch (error) {
-                console.error('Error starting triggered recording:', error);
+                log.error('Error starting triggered recording:', error);
                 clearPunchIn({ deleteTemp: true });
                 sendSafe('punch-in-failed', { error: error.message });
             }
@@ -1843,8 +1866,8 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             if (config.startMode === 'none') {
                 const opened = openPunchFile(request);
                 if (config.stopMode !== 'none') {
-                    recordWatch = createWatch(config, Date.now());
-                    beginRecordingWatch(recordWatch, null, false, Date.now());
+                    recordWatch = createWatch(config, clock.now());
+                    beginRecordingWatch(recordWatch, null, false, clock.now());
                     startWatchTimer();
                 }
                 try {
@@ -1856,11 +1879,11 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                 }
                 return opened.result;
             }
-            recordWatch = createWatch(config, Date.now());
+            recordWatch = createWatch(config, clock.now());
             recordWatch.payload = request;
             return { success: true, armed: true };
         } catch (error) {
-            console.error('Error starting punch-in:', error);
+            log.error('Error starting punch-in:', error);
             const kept = error.message === 'Already recording'
                 || error.message === 'Already waiting for a trigger'
                 || error.message === 'Recording is unavailable';
@@ -1923,7 +1946,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             stopHoldOutput();
             isPaused = false;
             isPlaying = true;
-            playbackOriginNs = process.hrtime.bigint() - BigInt(pausedElapsed) * 1000000n;
+            playbackOriginNs = clock.monotonicNs() - BigInt(pausedElapsed) * 1000000n;
             scheduleTick();
             emitStats();
             return;
@@ -1947,7 +1970,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         try {
             await beginPlayback(playbackNetwork, pausedElapsed);
         } catch (error) {
-            console.error('Error starting playback:', error);
+            log.error('Error starting playback:', error);
             stopPlaybackInternal(false);
         } finally {
             startingPlayback = false;
@@ -1983,7 +2006,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
             }
             emitStats({ playheadMs: t });
         } catch (error) {
-            console.error('Error seeking playback:', error);
+            log.error('Error seeking playback:', error);
         }
     };
     router.command('playback.seek', async (payload) => {
@@ -2008,7 +2031,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                 return { success: false, error: 'Recording in progress' };
             }
             assertInLibrary(filePath);
-            const fileData = await fs.promises.readFile(filePath);
+            const fileData = await storage.readFile(filePath);
             const frames = parseRecording(fileData);
             if (!frames.length) {
                 return { success: false, error: 'Recording is empty' };
@@ -2031,7 +2054,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
                 success: true,
                 filePath,
                 durationMs: frames[frames.length - 1].timestamp,
-                displayName: path.parse(filePath).name
+                displayName: storage.parse(filePath).name
             };
         } catch (error) {
             return { success: false, error: error.message };
@@ -2078,6 +2101,39 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         } : null
     }));
 
+    // Lifecycle: a running transport pauses, the hold output stops and the
+    // sockets close while the loaded session stays; resume reopens the
+    // sockets for a paused transport and holds its frame again. A punch-in
+    // take in progress is finished into the library rather than lost.
+    const suspend = async () => {
+        if (punchIn) {
+            await finishPunchIn({ notify: true });
+        } else if (recordWatch) {
+            clearRecordWatch();
+        }
+        if (isPlaying) {
+            pausedElapsed = elapsedMs();
+            isPlaying = false;
+            isPaused = true;
+            clearPlayTimeout();
+            holdFrames = lookAt(pausedElapsed);
+        }
+        stopHoldOutput();
+        cleanupSenders();
+        if (isPaused) {
+            emitStats();
+        }
+    };
+    const resume = async () => {
+        if (!isPaused) {
+            return true;
+        }
+        await ensureSenders(activeNetwork);
+        startHoldOutput();
+        emitStats();
+        return true;
+    };
+
     const close = () => {
         clearPunchIn({ deleteTemp: true });
         haltTransport({ cleanup: true });
@@ -2087,7 +2143,7 @@ function createPlayback({ router, recording: recordingHandler = null, liveOutput
         }
     };
 
-    return { resolveAudioPath, close };
+    return { resolveAudioPath, suspend, resume, close };
 }
 
 module.exports = { createPlayback };
